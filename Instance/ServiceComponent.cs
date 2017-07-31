@@ -11,9 +11,8 @@ using net.vieapps.Components.Utility;
 
 namespace net.vieapps.Services.Users
 {
-	public class ServiceComponent : BaseService, IService, IDisposable
+	public class ServiceComponent : BaseService
 	{
-		public string ServiceName { get { return "users"; } }
 
 		#region Constructor & Destructor
 		public ServiceComponent() { }
@@ -23,25 +22,32 @@ namespace net.vieapps.Services.Users
 			this.Dispose();
 		}
 
-		internal void Start(string[] args = null)
+		internal void Start(string[] args = null, Func<Task> continueWith = null)
 		{
 			Task.Run(async () =>
 			{
 				await this.StartAsync(
 					() => {
-						Console.WriteLine("The service [net.vieapps.services." + this.ServiceName + "] is registered");
+						Console.WriteLine("The service [" + this.ServiceURI + "] is registered");
 					},
 					(ex) => {
-						Console.WriteLine("Error occurred while registering the service [net.vieapps.services." + this.ServiceName + "]: " + ex.Message + "\r\n\r\n" + ex.StackTrace);
+						Console.WriteLine("Error occurred while registering the service [" + this.ServiceURI + "]: " + ex.Message + "\r\n\r\n" + ex.StackTrace);
 					},
 					this.OnInterCommunicateMessageReceived
 				);
-			}).ConfigureAwait(false);
+			})
+			.ContinueWith(async (task) =>
+			{
+				if (continueWith != null)
+					await continueWith().ConfigureAwait(false);
+			})
+			.ConfigureAwait(false);
 		}
 		#endregion
 
-		[WampProcedure("net.vieapps.services.users")]
-		public async Task<JObject> ProcessRequestAsync(RequestInfo requestInfo, NameValueCollection extra = null)
+		public override string ServiceName { get { return "users"; } }
+
+		public override async Task<JObject> ProcessRequestAsync(RequestInfo requestInfo)
 		{
 			try
 			{
@@ -51,7 +57,7 @@ namespace net.vieapps.Services.Users
 						switch (requestInfo.Verb)
 						{
 							case "GET":
-								return await this.InitializeSessionAsync(requestInfo, extra);
+								return await this.InitializeSessionAsync(requestInfo);
 
 							default:
 								throw new InvalidRequestException("Invalid [" + requestInfo.ServiceName + "." + requestInfo.ObjectName + "]");
@@ -93,13 +99,25 @@ namespace net.vieapps.Services.Users
 		#endregion
 
 		#region Initialize session
-		async Task<JObject> InitializeSessionAsync(RequestInfo requestInfo, NameValueCollection extra = null)
+		async Task<JObject> InitializeSessionAsync(RequestInfo requestInfo)
 		{
 			// prepare
-			var sessionID = requestInfo.Session.SessionID;
+			if (string.IsNullOrWhiteSpace(requestInfo.Session.SessionID))
+				requestInfo.Session.SessionID = UtilityService.GetUUID();
+
 			var deviceID = requestInfo.GetDeviceID();
 			if (string.IsNullOrWhiteSpace(deviceID))
-				deviceID = "pwa@" + requestInfo.Session.AppAgent.GetHMACSHA256(requestInfo.Session.SessionID, true);
+			{
+				var appName = requestInfo.GetAppName();
+				if (string.IsNullOrWhiteSpace(appName))
+					appName = "N/A (" + UtilityService.NewUID + ")";
+
+				var appPlatform = requestInfo.GetAppPlatform();
+				if (string.IsNullOrWhiteSpace(appPlatform))
+					appPlatform = "N/A (" + UtilityService.NewUID + ")";
+
+				deviceID = "pwa@" + (appName + "/" + appPlatform + "@" + requestInfo.Session.AppAgent).GetHMACSHA256(requestInfo.Session.SessionID, true);
+			}
 
 			// update into cache to mark the session is issued by the system
 			await Global.Cache.SetAbsoluteAsync("Session#" + requestInfo.Session.SessionID, deviceID + "|0");
@@ -117,7 +135,7 @@ namespace net.vieapps.Services.Users
 		#endregion
 
 		#region Sign In
-		public Task<JObject> SignBuiltInAccountInAsync(RequestInfo requestInfo, NameValueCollection extra = null)
+		public Task<JObject> SignBuiltInAccountInAsync(RequestInfo requestInfo)
 		{
 			return null;
 		}

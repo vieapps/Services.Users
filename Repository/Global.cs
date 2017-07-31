@@ -18,7 +18,7 @@ using net.vieapps.Components.Repository;
 
 namespace net.vieapps.Services.Users
 {
-	internal static class Global
+	public static class Global
 	{
 
 		#region Caching mechanism
