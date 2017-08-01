@@ -71,7 +71,7 @@ namespace net.vieapps.Services.Users
 			}
 			catch (Exception ex)
 			{
-				throw this.GetException(requestInfo,"Error occurred while processing with users ", ex);
+				throw this.GetException(requestInfo, ex);
 			} 
 		}
 
