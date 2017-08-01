@@ -76,6 +76,7 @@ namespace net.vieapps.Services.Users
 		}
 
 		#region Initialize keys
+		/*
 		public JObject GenerateKeys(RequestInfo requestInfo)
 		{
 			if (!requestInfo.Verb.IsEquals("get"))
@@ -98,6 +99,7 @@ namespace net.vieapps.Services.Users
 				{ "JWT", Global.GenerateJWTKey() }
 			};
 		}
+		*/
 		#endregion
 
 		#region Initialize session
