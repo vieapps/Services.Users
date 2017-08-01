@@ -26,15 +26,22 @@ namespace net.vieapps.Services.Users
 		{
 			Task.Run(async () =>
 			{
-				await this.StartAsync(
-					() => {
-						Console.WriteLine("The service [" + this.ServiceURI + "] is registered");
-					},
-					(ex) => {
-						Console.WriteLine("Error occurred while registering the service [" + this.ServiceURI + "]: " + ex.Message + "\r\n\r\n" + ex.StackTrace);
-					},
-					this.OnInterCommunicateMessageReceived
-				);
+				try
+				{
+					await this.StartAsync(
+						() => {
+							Console.WriteLine("The service [" + this.ServiceURI + "] is registered");
+						},
+						(ex) => {
+							Console.WriteLine("Error occurred while registering the service [" + this.ServiceURI + "]: " + ex.Message + "\r\n\r\n" + ex.StackTrace);
+						},
+						this.OnInterCommunicateMessageReceived
+					);
+				}
+				catch (Exception ex)
+				{
+					Console.WriteLine("Error occurred while starting the service [" + this.ServiceURI + "]: " + ex.Message + "\r\n\r\n" + ex.StackTrace);
+				}
 			})
 			.ContinueWith(async (task) =>
 			{

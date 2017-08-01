@@ -115,7 +115,7 @@
     </Reference>
     <Reference Include="System.Windows" />
     <Reference Include="WampSharp, Version=1.0.0.0, Culture=neutral, processorArchitecture=MSIL">
-      <HintPath>..\..\..\packages\WampSharp.1.2.5.39-beta\lib\net45\WampSharp.dll</HintPath>
+      <HintPath>..\..\..\packages\WampSharp.1.2.5.40-beta\lib\net45\WampSharp.dll</HintPath>
     </Reference>
     <Reference Include="WindowsBase" />
   </ItemGroup>
