@@ -149,9 +149,9 @@
       <Project>{c496cef5-9ff8-4364-9860-fcdefed4e277}</Project>
       <Name>VIEApps.Services.Base</Name>
     </ProjectReference>
-    <ProjectReference Include="..\Repository\VIEApps.Services.Users.Repository.csproj">
+    <ProjectReference Include="..\Component\VIEApps.Services.Users.Component.csproj">
       <Project>{c57f1914-ea25-4f11-910c-d4de6c8969e0}</Project>
-      <Name>VIEApps.Services.Users.Repository</Name>
+      <Name>VIEApps.Services.Users.Component</Name>
     </ProjectReference>
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />

@@ -17,11 +17,6 @@ namespace net.vieapps.Services.Users
 		#region Constructor & Destructor
 		public ServiceComponent() { }
 
-		~ServiceComponent()
-		{
-			this.Dispose();
-		}
-
 		internal void Start(string[] args = null, Func<Task> continueWith = null)
 		{
 			Task.Run(async () =>
@@ -33,14 +28,14 @@ namespace net.vieapps.Services.Users
 							Console.WriteLine("The service [" + this.ServiceURI + "] is registered");
 						},
 						(ex) => {
-							Console.WriteLine("Error occurred while registering the service [" + this.ServiceURI + "]: " + ex.Message + "\r\n\r\n" + ex.StackTrace);
+							Console.WriteLine("Error occurred while registering the service [" + this.ServiceURI + "]: " + ex.Message + "\r\n" + ex.StackTrace);
 						},
 						this.OnInterCommunicateMessageReceived
 					);
 				}
 				catch (Exception ex)
 				{
-					Console.WriteLine("Error occurred while starting the service [" + this.ServiceURI + "]: " + ex.Message + "\r\n\r\n" + ex.StackTrace);
+					Console.WriteLine("Error occurred while starting the service [" + this.ServiceURI + "]: " + ex.Message + "\r\n" + ex.StackTrace);
 				}
 			})
 			.ContinueWith(async (task) =>

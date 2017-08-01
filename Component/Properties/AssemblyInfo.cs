@@ -34,4 +34,4 @@ using System.Runtime.InteropServices;
 [assembly: AssemblyFileVersion("10.1")]
 [assembly: AssemblyInformationalVersion("10.1.fvrs-2017.07.28")]
 
-//[assembly: InternalsVisibleTo("VIEApps.Services.Users")]
+[assembly: InternalsVisibleTo("VIEApps.Services.Users")]
