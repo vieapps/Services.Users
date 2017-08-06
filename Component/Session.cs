@@ -1,28 +1,17 @@
 ﻿#region Related components
 using System;
-using System.Collections.Generic;
-using System.Collections.Specialized;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using System.Configuration;
 using System.Diagnostics;
 
-using Newtonsoft.Json.Linq;
 using Newtonsoft.Json;
-
 using MongoDB.Bson.Serialization.Attributes;
 
-using net.vieapps.Components.Utility;
-using net.vieapps.Components.Security;
-using net.vieapps.Components.Caching;
 using net.vieapps.Components.Repository;
 #endregion
 
 namespace net.vieapps.Services.Users
 {
-	[Serializable, BsonIgnoreExtraElements, DebuggerDisplay("ID = {ID}, Platform = {AppPlatform}, IP = {IP}")]
-	[Entity(CollectionName = "Sessions", CacheStorageType = typeof(Global), CacheStorageName = "Cache")]
+	[Serializable, BsonIgnoreExtraElements, DebuggerDisplay("ID = {ID}, IP = {IP}, Platform = {AppPlatform}")]
+	[Entity(CollectionName = "Sessions", TableName = "T_Users_Sessions", CacheStorageType = typeof(Global), CacheStorageName = "Cache")]
 	public class Session : DataAccessor<Session>
 	{
 		public Session()
@@ -30,40 +19,56 @@ namespace net.vieapps.Services.Users
 			this.ID = "";
 			this.IssuedAt = DateTime.Now;
 			this.RenewedAt = DateTime.Now;
-			this.ExpiredAt = DateTime.Now.AddDays(30);
+			this.ExpiredAt = DateTime.Now.AddDays(60);
 			this.UserID = "";
+			this.AccessToken = "";
+			this.IP = "";
 			this.DeviceID = "";
 			this.AppPlatform = "";
-			this.IP = "";
-			this.AccessToken = "";
+			this.Online = false;
 		}
 
 		#region Properties
 		/// <summary>
 		/// Gets or sets time when the session is issued
 		/// </summary>
+		[Sortable(IndexName = "Times")]
 		public DateTime IssuedAt { get; set; }
 
 		/// <summary>
 		/// Gets or sets time when the session is renewed
 		/// </summary>
+		[Sortable(IndexName = "Times")]
 		public DateTime RenewedAt { get; set; }
 
 		/// <summary>
 		/// Gets or sets time when the session is expired
 		/// </summary>
+		[Sortable(IndexName = "Times")]
 		public DateTime ExpiredAt { get; set; }
 
 		/// <summary>
 		/// Gets or sets the identity of the user who performs the actions in this session
 		/// </summary>
-		[Property(MaxLength = 32)]
+		[Property(MaxLength = 32), Sortable(IndexName = "IDs")]
 		public string UserID { get; set; }
+
+		/// <summary>
+		/// Gets or sets the encrypted access token
+		/// </summary>
+		[JsonIgnore]
+		public string AccessToken { get; set; }
+
+		/// <summary>
+		/// Gets or sets the IP address of the device that use to performs the actions in this session
+		/// </summary>
+		[Property(MaxLength = 50)]
+		public string IP { get; set; }
 
 		/// <summary>
 		/// Gets or sets the identity of the device that use to performs the actions in this session
 		/// </summary>
-		[Property(MaxLength = 128)]
+		[Property(MaxLength = 128), Sortable(IndexName = "IDs")]
 		public string DeviceID { get; set; }
 
 		/// <summary>
@@ -73,15 +78,9 @@ namespace net.vieapps.Services.Users
 		public string AppPlatform { get; set; }
 
 		/// <summary>
-		/// Gets or sets the IP address of the device that use to performs the actions in this session
+		/// Gets or sets online status
 		/// </summary>
-		[Property(MaxLength = 50)]
-		public string IP { get; set; }
-
-		/// <summary>
-		/// Gets or sets the encrypted access token
-		/// </summary>
-		public string AccessToken { get; set; }
+		public bool Online { get; set; }
 		#endregion
 
 	}
