@@ -18,7 +18,7 @@ namespace net.vieapps.Services.Users
 		#region Constructor & Destructor
 		public ServiceComponent() { }
 
-		internal void Start(string[] args = null, Func<Task> continueWith = null)
+		internal void Start(string[] args = null, Func<Task> continuationAsync = null)
 		{
 			Task.Run(async () =>
 			{
@@ -41,8 +41,8 @@ namespace net.vieapps.Services.Users
 			})
 			.ContinueWith(async (task) =>
 			{
-				if (continueWith != null)
-					await continueWith().ConfigureAwait(false);
+				if (continuationAsync != null)
+					await continuationAsync().ConfigureAwait(false);
 			})
 			.ConfigureAwait(false);
 		}
@@ -354,6 +354,7 @@ namespace net.vieapps.Services.Users
 		#region Sign Out
 		async Task<JObject> SignOutAsync(RequestInfo requestInfo)
 		{
+			// get account and perform sign-out
 			var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID);
 			if (account != null)
 			{
@@ -368,7 +369,16 @@ namespace net.vieapps.Services.Users
 					);
 			}
 
-			return new JObject();
+			// update into cache to mark the session is issued by the system
+			var sessionID = UtilityService.GetUUID();
+			await Global.Cache.SetAbsoluteAsync(sessionID.GetCacheKey<Session>(), requestInfo.Session.DeviceID, 7);
+
+			// response
+			return new JObject()
+			{
+				{ "ID", sessionID },
+				{ "DeviceID", requestInfo.Session.DeviceID }
+			};
 		}
 		#endregion
 
