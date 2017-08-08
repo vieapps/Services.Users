@@ -45,7 +45,7 @@ namespace net.vieapps.Services.Users
 		/// <summary>
 		/// Gets or sets type of user account
 		/// </summary>
-		[JsonConverter(typeof(StringEnumConverter)), BsonRepresentation(BsonType.String), Property(NotNull = true)]
+		[JsonConverter(typeof(StringEnumConverter)), BsonRepresentation(BsonType.String), Property(NotNull = true), Sortable]
 		public AccountType Type { get; set; }
 
 		/// <summary>
@@ -87,7 +87,7 @@ namespace net.vieapps.Services.Users
 		/// <summary>
 		/// Gets or sets the system role of the user account
 		/// </summary>
-		[JsonConverter(typeof(StringEnumConverter)), BsonRepresentation(BsonType.String), Property(NotNull = true)]
+		[JsonConverter(typeof(StringEnumConverter)), BsonRepresentation(BsonType.String), Property(NotNull = true), Sortable]
 		public SystemRole AccountRole { get; set; }
 
 		/// <summary>

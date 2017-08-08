@@ -30,7 +30,7 @@ namespace net.vieapps.Services.Users
 	}
 
 	[Serializable, BsonIgnoreExtraElements, DebuggerDisplay("ID = {ID}, Name = {Name}, Email = {Email}")]
-	[Entity(CollectionName = "Profiles", TableName = "T_Users_Profiles", CacheStorageType = typeof(Global), CacheStorageName = "Cache")]
+	[Entity(CollectionName = "Profiles", TableName = "T_Users_Profiles", CacheStorageType = typeof(Global), CacheStorageName = "Cache", Searchable = true)]
 	public class Profile : DataAccessor<Profile>
 	{
 		public Profile()
@@ -54,40 +54,40 @@ namespace net.vieapps.Services.Users
 		}
 
 		#region Properties
-		[Property(MaxLength = 250, NotNull = true)]
+		[Property(MaxLength = 250, NotNull = true), Searchable, Sortable(IndexName = "Names")]
 		public string Name { get; set; }
 
-		[Property(MaxLength = 250)]
+		[Property(MaxLength = 250), Searchable, Sortable(IndexName = "Names")]
 		public string FirstName { get; set; }
 
-		[Property(MaxLength = 250)]
+		[Property(MaxLength = 250), Searchable, Sortable(IndexName = "Names")]
 		public string LastName { get; set; }
 
-		[Property(MaxLength = 10)]
+		[Property(MaxLength = 10), Sortable]
 		public string BirthDay { get; set; }
 
 		[JsonConverter(typeof(StringEnumConverter)), BsonRepresentation(BsonType.String)]
 		public Gender Gender { get; set; }
 
-		[Property(MaxLength = 250)]
+		[Property(MaxLength = 250), Searchable]
 		public string Address { get; set; }
 
-		[Property(MaxLength = 50)]
+		[Property(MaxLength = 50), Searchable, Sortable(IndexName = "Address")]
 		public string County { get; set; }
 
-		[Property(MaxLength = 50)]
+		[Property(MaxLength = 50), Searchable, Sortable(IndexName = "Address")]
 		public string Province { get; set; }
 
-		[Property(MaxLength = 2)]
+		[Property(MaxLength = 2), Sortable(IndexName = "Address")]
 		public string Country { get; set; }
 
 		[Property(MaxLength = 20)]
 		public string PostalCode { get; set; }
 
-		[Property(MaxLength = 20)]
+		[Property(MaxLength = 20), Searchable, Sortable(IndexName = "ContactInfo")]
 		public string Mobile { get; set; }
 
-		[Property(MaxLength = 250)]
+		[Property(MaxLength = 250), Searchable, Sortable(IndexName = "ContactInfo")]
 		public string Email { get; set; }
 
 		[Property(MaxLength = 1000)]
@@ -96,6 +96,7 @@ namespace net.vieapps.Services.Users
 		[Property(MaxLength = 1000)]
 		public string Avatar { get; set; }
 
+		[Sortable]
 		public DateTime LastUpdated { get; set; }
 		#endregion
 

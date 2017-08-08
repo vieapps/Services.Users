@@ -51,7 +51,7 @@ namespace net.vieapps.Services.Users
 		/// <summary>
 		/// Gets or sets the identity of the user who performs the actions in this session
 		/// </summary>
-		[Property(MaxLength = 32), Sortable(IndexName = "IDs")]
+		[Property(MaxLength = 32), Sortable]
 		public string UserID { get; set; }
 
 		/// <summary>
@@ -69,7 +69,7 @@ namespace net.vieapps.Services.Users
 		/// <summary>
 		/// Gets or sets the identity of the device that use to performs the actions in this session
 		/// </summary>
-		[Property(MaxLength = 128), Sortable(IndexName = "IDs")]
+		[Property(MaxLength = 128), Sortable]
 		public string DeviceID { get; set; }
 
 		/// <summary>
@@ -81,6 +81,7 @@ namespace net.vieapps.Services.Users
 		/// <summary>
 		/// Gets or sets online status
 		/// </summary>
+		[Sortable]
 		public bool Online { get; set; }
 		#endregion
 
