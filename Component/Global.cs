@@ -18,7 +18,7 @@ using net.vieapps.Components.Repository;
 
 namespace net.vieapps.Services.Users
 {
-	internal static class Global
+	public static class Global
 	{
 
 		#region Caching mechanism
@@ -49,7 +49,7 @@ namespace net.vieapps.Services.Users
 		/// <summary>
 		/// Gets the default cache storage
 		/// </summary>
-		internal static CacheManager Cache { get { return Global._Cache; } }
+		public static CacheManager Cache { get { return Global._Cache; } }
 		#endregion
 
 	}

@@ -15,11 +15,22 @@ namespace net.vieapps.Services.Users
 	public class ServiceComponent : BaseService
 	{
 
-		#region Constructor & Destructor
+		#region Start
 		public ServiceComponent() { }
 
 		internal void Start(string[] args = null, Func<Task> continuationAsync = null)
 		{
+			// initialize repositorites
+			try
+			{
+				RepositoryStarter.Initialize();
+			}
+			catch (Exception ex)
+			{
+				Console.WriteLine("Error occurred while initializing the repository: " + ex.Message + "\r\n" + ex.StackTrace);
+			}
+
+			// start the service
 			Task.Run(async () =>
 			{
 				try
@@ -42,7 +53,14 @@ namespace net.vieapps.Services.Users
 			.ContinueWith(async (task) =>
 			{
 				if (continuationAsync != null)
-					await continuationAsync().ConfigureAwait(false);
+					try
+					{
+						await continuationAsync().ConfigureAwait(false);
+					}
+					catch (Exception ex)
+					{
+						Console.WriteLine("Error occurred while running the continuation function: " + ex.Message + "\r\n" + ex.StackTrace);
+					}
 			})
 			.ConfigureAwait(false);
 		}
@@ -392,5 +410,9 @@ namespace net.vieapps.Services.Users
 		}
 		#endregion
 
+		~ServiceComponent()
+		{
+			this.Dispose();
+		}
 	}
 }

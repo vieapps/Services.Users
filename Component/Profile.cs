@@ -49,17 +49,18 @@ namespace net.vieapps.Services.Users
 			this.Email = "";
 			this.Mobile = "";
 			this.Avatar = "";
-			this.ReferID = "";
-			this.ReferSection = "";
 			this.Notes = "";
 			this.LastUpdated = DateTime.Now;
 		}
 
 		#region Properties
+		[Property(MaxLength = 250, NotNull = true)]
 		public string Name { get; set; }
 
+		[Property(MaxLength = 250)]
 		public string FirstName { get; set; }
 
+		[Property(MaxLength = 250)]
 		public string LastName { get; set; }
 
 		[Property(MaxLength = 10)]
@@ -68,35 +69,51 @@ namespace net.vieapps.Services.Users
 		[JsonConverter(typeof(StringEnumConverter)), BsonRepresentation(BsonType.String)]
 		public Gender Gender { get; set; }
 
+		[Property(MaxLength = 250)]
 		public string Address { get; set; }
 
+		[Property(MaxLength = 50)]
 		public string County { get; set; }
 
+		[Property(MaxLength = 50)]
 		public string Province { get; set; }
 
+		[Property(MaxLength = 2)]
 		public string Country { get; set; }
 
+		[Property(MaxLength = 20)]
 		public string PostalCode { get; set; }
 
+		[Property(MaxLength = 20)]
 		public string Mobile { get; set; }
 
+		[Property(MaxLength = 250)]
 		public string Email { get; set; }
 
+		[Property(MaxLength = 1000)]
 		public string Notes { get; set; }
 
+		[Property(MaxLength = 1000)]
 		public string Avatar { get; set; }
 
-		public string ReferID { get; set; }
-
-		public string ReferSection { get; set; }
-
 		public DateTime LastUpdated { get; set; }
+		#endregion
 
-		[Ignore, BsonIgnore]
-		public override string Title
-		{
-			get { return this.Name; }
-		}
+		#region IBusiness properties
+		[JsonIgnore, BsonIgnore, Ignore]
+		public override string Title { get { return this.Name; } }
+
+		[JsonIgnore, BsonIgnore, Ignore]
+		public override string SystemID { get; set; }
+
+		[JsonIgnore, BsonIgnore, Ignore]
+		public override string RepositoryID { get; set; }
+
+		[JsonIgnore, BsonIgnore, Ignore]
+		public override string EntityID { get; set; }
+
+		[JsonIgnore, BsonIgnore, Ignore]
+		public override Privileges OriginalPrivileges { get; set; }
 		#endregion
 
 	}

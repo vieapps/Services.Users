@@ -45,7 +45,7 @@ namespace net.vieapps.Services.Users
 		/// <summary>
 		/// Gets or sets type of user account
 		/// </summary>
-		[JsonConverter(typeof(StringEnumConverter)), BsonRepresentation(BsonType.String)]
+		[JsonConverter(typeof(StringEnumConverter)), BsonRepresentation(BsonType.String), Property(NotNull = true)]
 		public AccountType Type { get; set; }
 
 		/// <summary>
@@ -81,13 +81,13 @@ namespace net.vieapps.Services.Users
 		/// <summary>
 		/// Gets or sets the key for logging this user account in (hashed password when the user is built-in account or access token when the user is OAuth account)
 		/// </summary>
-		[JsonIgnore]
+		[JsonIgnore, Property(MaxLength = 250)]
 		public string AccountKey { get; set; }
 
 		/// <summary>
 		/// Gets or sets the system role of the user account
 		/// </summary>
-		[JsonConverter(typeof(StringEnumConverter)), BsonRepresentation(BsonType.String)]
+		[JsonConverter(typeof(StringEnumConverter)), BsonRepresentation(BsonType.String), Property(NotNull = true)]
 		public SystemRole AccountRole { get; set; }
 
 		/// <summary>
@@ -109,7 +109,24 @@ namespace net.vieapps.Services.Users
 		public List<Session> Sessions { get; set; }
 		#endregion
 
-		internal static string HashPassword(string accountID, string accountKey)
+		#region IBusiness properties
+		[JsonIgnore, BsonIgnore, Ignore]
+		public override string Title { get { return this.AccountName; } }
+
+		[JsonIgnore, BsonIgnore, Ignore]
+		public override string SystemID { get; set; }
+
+		[JsonIgnore, BsonIgnore, Ignore]
+		public override string RepositoryID { get; set; }
+
+		[JsonIgnore, BsonIgnore, Ignore]
+		public override string EntityID { get; set; }
+
+		[JsonIgnore, BsonIgnore, Ignore]
+		public override Privileges OriginalPrivileges { get; set; }
+		#endregion
+
+		public static string HashPassword(string accountID, string accountKey)
 		{
 			return (accountID.Trim().ToLower().Left(13) + ":" + accountKey).GetSHA512().ToBase64Url(false, true);
 		}

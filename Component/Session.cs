@@ -5,6 +5,7 @@ using System.Diagnostics;
 using Newtonsoft.Json;
 using MongoDB.Bson.Serialization.Attributes;
 
+using net.vieapps.Components.Security;
 using net.vieapps.Components.Repository;
 #endregion
 
@@ -56,7 +57,7 @@ namespace net.vieapps.Services.Users
 		/// <summary>
 		/// Gets or sets the encrypted access token
 		/// </summary>
-		[JsonIgnore]
+		[JsonIgnore, Property(IsCLOB = true)]
 		public string AccessToken { get; set; }
 
 		/// <summary>
@@ -74,13 +75,30 @@ namespace net.vieapps.Services.Users
 		/// <summary>
 		/// Gets or sets the platform info of the device that use to performs the actions in this session
 		/// </summary>
-		[Property(MaxLength = 100)]
+		[Property(MaxLength = 250)]
 		public string AppPlatform { get; set; }
 
 		/// <summary>
 		/// Gets or sets online status
 		/// </summary>
 		public bool Online { get; set; }
+		#endregion
+
+		#region IBusiness properties
+		[JsonIgnore, BsonIgnore, Ignore]
+		public override string Title { get; set; }
+
+		[JsonIgnore, BsonIgnore, Ignore]
+		public override string SystemID { get; set; }
+
+		[JsonIgnore, BsonIgnore, Ignore]
+		public override string RepositoryID { get; set; }
+
+		[JsonIgnore, BsonIgnore, Ignore]
+		public override string EntityID { get; set; }
+
+		[JsonIgnore, BsonIgnore, Ignore]
+		public override Privileges OriginalPrivileges { get; set; }
 		#endregion
 
 	}
