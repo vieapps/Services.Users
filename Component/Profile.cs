@@ -30,8 +30,8 @@ namespace net.vieapps.Services.Users
 	}
 
 	[Serializable, BsonIgnoreExtraElements, DebuggerDisplay("ID = {ID}, Name = {Name}, Email = {Email}")]
-	[Entity(CollectionName = "Profiles", TableName = "T_Users_Profiles", CacheStorageType = typeof(Global), CacheStorageName = "Cache", Searchable = true)]
-	public class Profile : DataAccessor<Profile>
+	[Entity(CollectionName = "Profiles", TableName = "T_Users_Profiles", CacheStorageType = typeof(Utility), CacheStorageName = "Cache", Searchable = true)]
+	public class Profile : Repository<Profile>
 	{
 		public Profile()
 		{

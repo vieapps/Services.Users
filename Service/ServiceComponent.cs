@@ -1,6 +1,7 @@
 ﻿#region Related components
 using System;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 
 using Newtonsoft.Json.Linq;
@@ -68,14 +69,14 @@ namespace net.vieapps.Services.Users
 
 		public override string ServiceName { get { return "users"; } }
 
-		public override async Task<JObject> ProcessRequestAsync(RequestInfo requestInfo)
+		public override async Task<JObject> ProcessRequestAsync(RequestInfo requestInfo, CancellationToken cancellationToken = default(CancellationToken))
 		{
 			try
 			{
 				switch (requestInfo.ObjectName.ToLower())
 				{
 
-					#region Session
+					#region Sessions
 					case "session":
 						switch (requestInfo.Verb)
 						{
@@ -100,8 +101,26 @@ namespace net.vieapps.Services.Users
 						}
 						break;
 					#endregion
-					
-					#region Profile
+
+					#region Profiles
+					case "search":
+						return await this.SearchProfilesAsync(requestInfo);
+
+					case "fetch":
+						break;
+
+					case "profile":
+						switch (requestInfo.Verb)
+						{
+							// get detail
+							case "GET":
+								return await this.GetProfileAsync(requestInfo);
+
+							// update profile
+							case "POST":
+								return await this.UpdateProfileAsync(requestInfo);
+						}
+						break;
 					#endregion
 
 					#region Mediator
@@ -121,7 +140,10 @@ namespace net.vieapps.Services.Users
 				}
 
 				// unknown
-				throw new InvalidRequestException("Invalid request [" + this.ServiceURI + "]: " + requestInfo.Verb + (!string.IsNullOrWhiteSpace(requestInfo.ObjectName) ? " (" + requestInfo.ObjectName + ")" : ""));
+				var msg = "The request is invalid [" + this.ServiceURI + "]: " + requestInfo.Verb + " /";
+				if (!string.IsNullOrWhiteSpace(requestInfo.ObjectName))
+					msg +=  requestInfo.ObjectName + (requestInfo.Query.ContainsKey("object-identity") ? "/" + requestInfo.Query["object-identity"] : "");
+				throw new InvalidRequestException(msg);
 			}
 			catch (Exception ex)
 			{
@@ -152,7 +174,7 @@ namespace net.vieapps.Services.Users
 			}
 
 			// update into cache to mark the session is issued by the system
-			await Global.Cache.SetAbsoluteAsync(requestInfo.Session.SessionID.GetCacheKey<Session>(), deviceID, 7);
+			await Utility.Cache.SetAbsoluteAsync(requestInfo.Session.SessionID.GetCacheKey<Session>(), deviceID, 7);
 
 			// response
 			return new JObject()
@@ -171,7 +193,7 @@ namespace net.vieapps.Services.Users
 					? requestInfo.Extra["SessionID"].Decrypt()
 					: null;
 
-				if (string.IsNullOrWhiteSpace(sessionID) || string.IsNullOrWhiteSpace(requestInfo.Session.SessionID) || !await Global.Cache.ExistsAsync<Session>(sessionID))
+				if (string.IsNullOrWhiteSpace(sessionID) || string.IsNullOrWhiteSpace(requestInfo.Session.SessionID) || !await Utility.Cache.ExistsAsync<Session>(sessionID))
 					throw new InvalidSessionException("Session is invalid (The session is not issued by the system)");
 
 				// register new session
@@ -185,7 +207,7 @@ namespace net.vieapps.Services.Users
 				};
 
 				// update cache
-				await Global.Cache.SetAsync(session, 120);
+				await Utility.Cache.SetAsync(session, 120);
 
 				// response
 				return new JObject()
@@ -241,7 +263,7 @@ namespace net.vieapps.Services.Users
 		async Task<JObject> CheckSessionExistedAsync(RequestInfo requestInfo)
 		{
 			var isExisted = requestInfo.Session.User == null
-				? await Global.Cache.ExistsAsync<Session>(requestInfo.Session.SessionID)
+				? await Utility.Cache.ExistsAsync<Session>(requestInfo.Session.SessionID)
 				: (await Session.GetAsync<Session>(requestInfo.Session.SessionID)) != null;
 
 			return new JObject()
@@ -253,7 +275,7 @@ namespace net.vieapps.Services.Users
 		async Task<JObject> ValidateSessionAsync(RequestInfo requestInfo)
 		{
 			var session = requestInfo.Session.User == null || string.IsNullOrWhiteSpace(requestInfo.Session.User.ID)
-				? await Global.Cache.GetAsync<Session>(requestInfo.Session.SessionID)
+				? await Utility.Cache.GetAsync<Session>(requestInfo.Session.SessionID)
 				: await Session.GetAsync<Session>(requestInfo.Session.SessionID);
 
 			if (session == null)
@@ -267,7 +289,7 @@ namespace net.vieapps.Services.Users
 
 			if (string.IsNullOrWhiteSpace(accessToken))
 				throw new InvalidSessionException();
-			else if (requestInfo.Session.User != null && !string.IsNullOrWhiteSpace(requestInfo.Session.User.ID) && !session.AccessToken.Equals(accessToken))
+			else if (requestInfo.Session.User != null && (!string.IsNullOrWhiteSpace(requestInfo.Session.User.ID) || !session.AccessToken.Equals(accessToken)))
 				throw new TokenRevokedException();
 
 			return new JObject()
@@ -316,18 +338,18 @@ namespace net.vieapps.Services.Users
 						break;
 				}
 
-				Global.Cache.Remove(key);
+				Utility.Cache.Remove(key);
 				return result;
 			}
 			catch (Exception ex)
 			{
-				var attempt = await Global.Cache.ExistsAsync(key)
-					? await Global.Cache.GetAsync<int>(key)
+				var attempt = await Utility.Cache.ExistsAsync(key)
+					? await Utility.Cache.GetAsync<int>(key)
 					: 1;
 
 				await Task.WhenAll(
 						Task.Delay((attempt - 1) * 5000),
-						Global.Cache.SetAbsoluteAsync(key, attempt, 15)
+						Utility.Cache.SetAbsoluteAsync(key, attempt, 15)
 					);
 
 				throw ex;
@@ -389,7 +411,7 @@ namespace net.vieapps.Services.Users
 
 			// update into cache to mark the session is issued by the system
 			var sessionID = UtilityService.GetUUID();
-			await Global.Cache.SetAbsoluteAsync(sessionID.GetCacheKey<Session>(), requestInfo.Session.DeviceID, 7);
+			await Utility.Cache.SetAbsoluteAsync(sessionID.GetCacheKey<Session>(), requestInfo.Session.DeviceID, 7);
 
 			// response
 			return new JObject()
@@ -400,7 +422,128 @@ namespace net.vieapps.Services.Users
 		}
 		#endregion
 
-		#region Profile
+		#region Search profiles
+		void NormalizeProfile(JObject json)
+		{
+			var value = json["Email"] != null && json["Email"] is JValue && (json["Email"] as JValue).Value != null
+				? (json["Email"] as JValue).Value.ToString()
+				: null;
+			if (!string.IsNullOrWhiteSpace(value))
+				(json["Email"] as JValue).Value = value.Left(value.Length - value.IndexOf("@"));
+
+			value = json["Mobile"] != null && json["Mobile"] is JValue && (json["Mobile"] as JValue).Value != null
+				? (json["Mobile"] as JValue).Value.ToString()
+				: null;
+			if (!string.IsNullOrWhiteSpace(value))
+				(json["Mobile"] as JValue).Value = "xxxxxx" + value.Trim().Replace(" ", "").Right(4);
+		}
+
+		async Task<JObject> SearchProfilesAsync(RequestInfo requestInfo)
+		{
+			// check
+			if (!this.IsAuthenticated(requestInfo))
+				throw new AccessDeniedException();
+			else if (!this.IsAuthorized(requestInfo, Components.Security.Action.Vote))
+				throw new AccessDeniedException();
+
+			// prepare
+			var request = requestInfo.GetRequestExpando();
+
+			var query = request.Get<string>("FilterBy.Query");
+			var province = request.Get<string>("FilterBy.Province");
+			var filter = string.IsNullOrWhiteSpace(province)
+				? null
+				: Filters<Profile>.Equals("Province", province);
+
+
+			var pageNumber = request.Has("Pagination.PageNumber")
+				? request.Get<int>("Pagination.PageNumber")
+				: 1;
+			if (pageNumber < 1)
+				pageNumber = 1;
+
+			var pageSize = request.Has("Pagination.PageSize")
+				? request.Get<int>("Pagination.PageSize")
+				: 20;
+			if (pageSize < 0)
+				pageSize = 20;
+
+			// get total of records
+			var totalRecords = request.Has("Pagination.TotalRecords")
+				? request.Get<long>("Pagination.TotalRecords")
+				: -1;
+			if (totalRecords < 0)
+				totalRecords = string.IsNullOrWhiteSpace(query)
+					? await Profile.CountAsync(filter)
+					: await Profile.CountByQueryAsync(query, filter);
+
+			var totalPages = (int)(totalRecords / pageSize);
+			if (totalRecords - (totalPages * pageSize) > 0)
+				totalPages += 1;
+			if (totalPages > 0 && pageNumber > totalPages)
+				pageNumber = totalPages;
+
+			// get objects
+			var objects = string.IsNullOrWhiteSpace(query)
+				? await Profile.FindAsync(filter, Sorts<Profile>.Ascending("Name"), pageSize, pageNumber)
+				: await Profile.SearchAsync(query, filter, pageSize, pageNumber);
+
+			// generate JSONs
+			var data = objects.ToJsonArray();
+			if (!requestInfo.Session.User.Role.Equals(SystemRole.SystemAdministrator))
+				foreach (JObject json in data)
+					this.NormalizeProfile(json);
+
+			// return information
+			return new JObject()
+			{
+				{ "FilterBy", new JObject()
+					{
+						{ "Query", !string.IsNullOrWhiteSpace(query) ? query : "" },
+						{ "Province", !string.IsNullOrWhiteSpace(province) ? province : "" }
+					}
+				},
+				{ "Pagination", new JObject()
+					{
+						{ "TotalRecords", totalRecords },
+						{ "TotalPages", totalPages},
+						{ "PageSize", pageSize },
+						{ "PageNumber", pageNumber },
+					}
+				},
+				{ "Objects", data }
+			};
+		}
+		#endregion
+
+		#region Get profile
+		async Task<JObject> GetProfileAsync(RequestInfo requestInfo)
+		{
+			// check
+			if (!this.IsAuthenticated(requestInfo))
+				throw new AccessDeniedException();
+			else if (!this.IsAuthorized(requestInfo, Components.Security.Action.Vote))
+				throw new AccessDeniedException();
+
+			// get information
+			var profile = await Profile.GetAsync<Profile>(requestInfo.Query.ContainsKey("object-identity") ? requestInfo.Query["object-identity"] : requestInfo.Session.User.ID);
+			if (profile == null)
+				throw new InformationNotFoundException();
+
+			// return information
+			var json = profile.ToJson();
+			if (!requestInfo.Session.User.ID.Equals(profile.ID))
+				this.NormalizeProfile(json);
+			return json;
+		}
+		#endregion
+
+		#region Update profile
+		async Task<JObject> UpdateProfileAsync(RequestInfo requestInfo)
+		{
+			await Task.Delay(0);
+			return new JObject();
+		}
 		#endregion
 
 		#region Update with inter-communicate messages
@@ -412,7 +555,7 @@ namespace net.vieapps.Services.Users
 
 		~ServiceComponent()
 		{
-			this.Dispose();
+			this.Dispose(false);
 		}
 	}
 }

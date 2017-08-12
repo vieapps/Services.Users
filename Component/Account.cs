@@ -23,8 +23,8 @@ using net.vieapps.Components.Repository;
 namespace net.vieapps.Services.Users
 {
 	[Serializable, BsonIgnoreExtraElements, DebuggerDisplay("ID = {ID}, Name = {Name}, Email = {Email}")]
-	[Entity(CollectionName = "Accounts", TableName = "T_Users_Accounts", CacheStorageType = typeof(Global), CacheStorageName = "Cache")]
-	public class Account : DataAccessor<Account>
+	[Entity(CollectionName = "Accounts", TableName = "T_Users_Accounts", CacheStorageType = typeof(Utility), CacheStorageName = "Cache")]
+	public class Account : Repository<Account>
 	{
 		public Account()
 		{

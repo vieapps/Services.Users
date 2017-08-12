@@ -4,8 +4,8 @@ using System.Runtime.InteropServices;
 // General Information about an assembly is controlled through the following set of attributes.
 // Change these attribute values to modify the information associated with an assembly.
 [assembly: AssemblyTitle("VIEApps NGX Users")]
-[assembly: AssemblyDescription("VIEApps NGX Microservice - Users")]
-[assembly: AssemblyDefaultAlias("VIEApps.Services.Users")]
+[assembly: AssemblyDescription("VIEApps NGX Microservice - HTTP Users")]
+[assembly: AssemblyDefaultAlias("VIEApps.Services.Users.Http")]
 [assembly: AssemblyConfiguration("Production/Stable")]
 [assembly: AssemblyCompany("VIEApps.net")]
 [assembly: AssemblyProduct("VIEApps NGX")]
