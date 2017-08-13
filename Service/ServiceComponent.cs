@@ -176,6 +176,12 @@ namespace net.vieapps.Services.Users
 			// update into cache to mark the session is issued by the system
 			await Utility.Cache.SetAbsoluteAsync(requestInfo.Session.SessionID.GetCacheKey<Session>(), deviceID, 7);
 
+#if DEBUG
+			Console.WriteLine("A session has been initialized");
+			Console.WriteLine("- Session ID: " + requestInfo.Session.SessionID + " - Device ID: " + deviceID);
+			Console.WriteLine("- App Name: " + requestInfo.GetAppName() + " - App Platform: " + requestInfo.GetAppPlatform() + " - IP: " + requestInfo.Session.IP + "\r\n");
+#endif
+
 			// response
 			return new JObject()
 			{
@@ -208,6 +214,11 @@ namespace net.vieapps.Services.Users
 
 				// update cache
 				await Utility.Cache.SetAsync(session, 120);
+
+#if DEBUG
+				Console.WriteLine("A session of visitor has been registered");
+				Console.WriteLine(session.ToJson().ToString(Newtonsoft.Json.Formatting.Indented) + "\r\n");
+#endif
 
 				// response
 				return new JObject()
@@ -252,6 +263,11 @@ namespace net.vieapps.Services.Users
 			}
 			await Account.UpdateAsync(userAccount);
 
+#if DEBUG
+			Console.WriteLine("A session of user has been registered");
+			Console.WriteLine(userSession.ToJson().ToString(Newtonsoft.Json.Formatting.Indented) + "\r\n");
+#endif
+
 			// response
 			return new JObject()
 			{
@@ -262,7 +278,7 @@ namespace net.vieapps.Services.Users
 
 		async Task<JObject> CheckSessionExistedAsync(RequestInfo requestInfo)
 		{
-			var isExisted = requestInfo.Session.User == null
+			var isExisted = requestInfo.Session.User == null || string.IsNullOrWhiteSpace(requestInfo.Session.User.ID)
 				? await Utility.Cache.ExistsAsync<Session>(requestInfo.Session.SessionID)
 				: (await Session.GetAsync<Session>(requestInfo.Session.SessionID)) != null;
 
