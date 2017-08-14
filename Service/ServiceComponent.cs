@@ -3,6 +3,7 @@ using System;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Diagnostics;
 
 using Newtonsoft.Json.Linq;
 
@@ -19,6 +20,18 @@ namespace net.vieapps.Services.Users
 		#region Start
 		public ServiceComponent() { }
 
+		void WriteInfo(string info, Exception ex = null)
+		{
+			var msg = string.IsNullOrWhiteSpace(info)
+				? ex != null ? ex.Message : ""
+				: info;
+
+			Console.WriteLine(msg);
+			if (ex != null)
+				Console.WriteLine("-----------------------\r\n" + "==> [" + ex.GetType().GetTypeName(true) + "]: " + ex.Message + "\r\n" + ex.StackTrace + "\r\n-----------------------");
+			Console.WriteLine("");
+		}
+
 		internal void Start(string[] args = null, Func<Task> continuationAsync = null)
 		{
 			// initialize repositorites
@@ -28,7 +41,7 @@ namespace net.vieapps.Services.Users
 			}
 			catch (Exception ex)
 			{
-				Console.WriteLine("Error occurred while initializing the repository: " + ex.Message + "\r\n" + ex.StackTrace);
+				this.WriteInfo("Error occurred while initializing the repository", ex);
 			}
 
 			// start the service
@@ -38,17 +51,18 @@ namespace net.vieapps.Services.Users
 				{
 					await this.StartAsync(
 						() => {
-							Console.WriteLine("The service [" + this.ServiceURI + "] is registered");
+							this.WriteInfo("The service is registered");
+							this.WriteLog(UtilityService.BlankUID, this.ServiceName, null, "The service [" + this.ServiceURI + "] is registered - PID: " + Process.GetCurrentProcess().Id);
 						},
 						(ex) => {
-							Console.WriteLine("Error occurred while registering the service [" + this.ServiceURI + "]: " + ex.Message + "\r\n" + ex.StackTrace);
+							this.WriteInfo("Error occurred while registering the service", ex);
 						},
 						this.OnInterCommunicateMessageReceived
 					);
 				}
 				catch (Exception ex)
 				{
-					Console.WriteLine("Error occurred while starting the service [" + this.ServiceURI + "]: " + ex.Message + "\r\n" + ex.StackTrace);
+					this.WriteInfo("Error occurred while starting the service", ex);
 				}
 			})
 			.ContinueWith(async (task) =>
@@ -60,7 +74,7 @@ namespace net.vieapps.Services.Users
 					}
 					catch (Exception ex)
 					{
-						Console.WriteLine("Error occurred while running the continuation function: " + ex.Message + "\r\n" + ex.StackTrace);
+						this.WriteInfo("Error occurred while running the continuation function", ex);
 					}
 			})
 			.ConfigureAwait(false);
@@ -82,7 +96,7 @@ namespace net.vieapps.Services.Users
 						{
 							// initialize or register
 							case "GET":
-								if (requestInfo.Session.User == null)
+								if (requestInfo.Session.User.ID.Equals("") && !requestInfo.Query.ContainsKey("anonymous"))
 									return await this.InitializeSessionAsync(requestInfo);
 								else
 									return await this.RegisterSessionAsync(requestInfo);
@@ -147,7 +161,11 @@ namespace net.vieapps.Services.Users
 			}
 			catch (Exception ex)
 			{
-				Console.WriteLine(ex.Message + " - Correlation ID: " + requestInfo.CorrelationID);
+#if DEBUG
+				this.WriteInfo("Error occurred while processing\r\n==> Request:\r\n" + requestInfo.ToJson().ToString(Newtonsoft.Json.Formatting.Indented), ex);
+#else
+				this.WriteInfo("Error occurred while processing - Correlation ID: " + requestInfo.CorrelationID);
+#endif
 				throw this.GetRuntimeException(requestInfo, ex);
 			} 
 		}
@@ -156,9 +174,6 @@ namespace net.vieapps.Services.Users
 		async Task<JObject> InitializeSessionAsync(RequestInfo requestInfo)
 		{
 			// prepare
-			if (string.IsNullOrWhiteSpace(requestInfo.Session.SessionID))
-				requestInfo.Session.SessionID = UtilityService.GetUUID();
-
 			var deviceID = requestInfo.GetDeviceID();
 			if (string.IsNullOrWhiteSpace(deviceID))
 			{
@@ -177,9 +192,7 @@ namespace net.vieapps.Services.Users
 			await Utility.Cache.SetAbsoluteAsync(requestInfo.Session.SessionID.GetCacheKey<Session>(), deviceID, 7);
 
 #if DEBUG
-			Console.WriteLine("A session has been initialized");
-			Console.WriteLine("- Session ID: " + requestInfo.Session.SessionID + " - Device ID: " + deviceID);
-			Console.WriteLine("- App Name: " + requestInfo.GetAppName() + " - App Platform: " + requestInfo.GetAppPlatform() + " - IP: " + requestInfo.Session.IP + "\r\n");
+			this.WriteInfo("A session has been initialized (" + deviceID + "): " + "\r\n" + requestInfo.ToJson().ToString(Newtonsoft.Json.Formatting.Indented));
 #endif
 
 			// response
@@ -216,8 +229,7 @@ namespace net.vieapps.Services.Users
 				await Utility.Cache.SetAsync(session, 120);
 
 #if DEBUG
-				Console.WriteLine("A session of visitor has been registered");
-				Console.WriteLine(session.ToJson().ToString(Newtonsoft.Json.Formatting.Indented) + "\r\n");
+				this.WriteInfo("A session of visitor has been registered" + "\r\n" + session.ToJson().ToString(Newtonsoft.Json.Formatting.Indented));
 #endif
 
 				// response
@@ -264,8 +276,7 @@ namespace net.vieapps.Services.Users
 			await Account.UpdateAsync(userAccount);
 
 #if DEBUG
-			Console.WriteLine("A session of user has been registered");
-			Console.WriteLine(userSession.ToJson().ToString(Newtonsoft.Json.Formatting.Indented) + "\r\n");
+			this.WriteInfo("A session of user has been registered" + "\r\n" + userSession.ToJson().ToString(Newtonsoft.Json.Formatting.Indented));
 #endif
 
 			// response
@@ -278,7 +289,7 @@ namespace net.vieapps.Services.Users
 
 		async Task<JObject> CheckSessionExistedAsync(RequestInfo requestInfo)
 		{
-			var isExisted = requestInfo.Session.User == null || string.IsNullOrWhiteSpace(requestInfo.Session.User.ID)
+			var isExisted = string.IsNullOrWhiteSpace(requestInfo.Session.User.ID)
 				? await Utility.Cache.ExistsAsync<Session>(requestInfo.Session.SessionID)
 				: (await Session.GetAsync<Session>(requestInfo.Session.SessionID)) != null;
 
@@ -290,7 +301,7 @@ namespace net.vieapps.Services.Users
 
 		async Task<JObject> ValidateSessionAsync(RequestInfo requestInfo)
 		{
-			var session = requestInfo.Session.User == null || string.IsNullOrWhiteSpace(requestInfo.Session.User.ID)
+			var session = string.IsNullOrWhiteSpace(requestInfo.Session.User.ID)
 				? await Utility.Cache.GetAsync<Session>(requestInfo.Session.SessionID)
 				: await Session.GetAsync<Session>(requestInfo.Session.SessionID);
 
