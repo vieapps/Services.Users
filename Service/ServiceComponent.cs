@@ -174,8 +174,7 @@ namespace net.vieapps.Services.Users
 		async Task<JObject> InitializeSessionAsync(RequestInfo requestInfo)
 		{
 			// prepare
-			var deviceID = requestInfo.GetDeviceID();
-			if (string.IsNullOrWhiteSpace(deviceID))
+			if (string.IsNullOrWhiteSpace(requestInfo.GetDeviceID()))
 			{
 				var appName = requestInfo.GetAppName();
 				if (string.IsNullOrWhiteSpace(appName))
@@ -185,21 +184,21 @@ namespace net.vieapps.Services.Users
 				if (string.IsNullOrWhiteSpace(appPlatform))
 					appPlatform = "N/A (" + UtilityService.NewUID + ")";
 
-				deviceID = "pwa@" + (appName + "/" + appPlatform + "@" + requestInfo.Session.AppAgent).GetHMACSHA384(requestInfo.Session.SessionID, true);
+				requestInfo.Session.DeviceID = "pwa@" + (appName + "/" + appPlatform + "@" + requestInfo.Session.AppAgent).GetHMACSHA384(requestInfo.Session.SessionID, true);
 			}
 
 			// update into cache to mark the session is issued by the system
-			await Utility.Cache.SetAbsoluteAsync(requestInfo.Session.SessionID.GetCacheKey<Session>(), deviceID, 7);
+			await Utility.Cache.SetAbsoluteAsync(requestInfo.Session.SessionID.GetCacheKey<Session>(), requestInfo.Session.DeviceID, 7);
 
 #if DEBUG
-			this.WriteInfo("A session has been initialized (" + deviceID + "): " + "\r\n" + requestInfo.ToJson().ToString(Newtonsoft.Json.Formatting.Indented));
+			this.WriteInfo("A session has been initialized" + "\r\n" + requestInfo.ToJson().ToString(Newtonsoft.Json.Formatting.Indented));
 #endif
 
 			// response
 			return new JObject()
 			{
 				{ "ID", requestInfo.Session.SessionID },
-				{ "DeviceID", deviceID }
+				{ "DeviceID", requestInfo.Session.DeviceID }
 			};
 		}
 
@@ -573,12 +572,10 @@ namespace net.vieapps.Services.Users
 		}
 		#endregion
 
-		#region Update with inter-communicate messages
-		void OnInterCommunicateMessageReceived(BaseMessage message)
+		void OnInterCommunicateMessageReceived(CommunicateMessage message)
 		{
 
 		}
-		#endregion
 
 		~ServiceComponent()
 		{

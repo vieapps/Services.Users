@@ -569,16 +569,17 @@ namespace net.vieapps.Services.Users
 		{
 			// update default headers to allow access from everywhere
 			app.Context.Response.HeaderEncoding = Encoding.UTF8;
-			app.Context.Response.AddHeader("access-control-allow-origin", "*");
+			app.Context.Response.Headers.Add("access-control-allow-origin", "*");
+			app.Context.Response.Headers.Add("x-correlation-id", Global.GetCorrelationID(app.Context.Items));
 
 			// update special headers on OPTIONS request
 			if (app.Context.Request.HttpMethod.Equals("OPTIONS"))
 			{
-				app.Context.Response.AddHeader("access-control-allow-methods", "HEAD,GET,POST,OPTIONS");
+				app.Context.Response.Headers.Add("access-control-allow-methods", "HEAD,GET,POST,OPTIONS");
 
 				var allowHeaders = app.Context.Request.Headers.Get("access-control-request-headers");
 				if (!string.IsNullOrWhiteSpace(allowHeaders))
-					app.Context.Response.AddHeader("access-control-allow-headers", allowHeaders);
+					app.Context.Response.Headers.Add("access-control-allow-headers", allowHeaders);
 
 				return;
 			}
@@ -624,15 +625,11 @@ namespace net.vieapps.Services.Users
 				return;
 			}
 
-#if DEBUG || REQUESTLOGS || REWRITELOGS
-			var requestUrl = app.Context.Request.Url.Scheme + "://" + app.Context.Request.Url.Host + app.Context.Request.RawUrl;
-#endif
-
 #if DEBUG || REQUESTLOGS
 			var appInfo = app.Context.GetAppInfo();
 
 			Global.WriteLogs(new List<string>() {
-					"Begin process [" + app.Context.Request.HttpMethod + "]: " + requestUrl,
+					"Begin process [" + app.Context.Request.HttpMethod + "]: " + app.Context.Request.Url.Scheme + "://" + app.Context.Request.Url.Host + app.Context.Request.RawUrl,
 					"- Origin: " + appInfo.Item1 + " / " + appInfo.Item2 + " - " + appInfo.Item3,
 					"- IP: " + app.Context.Request.UserHostAddress,
 					"- Agent: " + app.Context.Request.UserAgent,
@@ -658,13 +655,6 @@ namespace net.vieapps.Services.Users
 					query += (query.Equals("") ? "" : "&") + key + "=" + app.Request.QueryString[key].UrlEncode();
 
 			app.Context.RewritePath(url, null, query);
-
-#if DEBUG || REWRITELOGS
-			Global.WriteLogs(new List<string>() {
-					"Rewrite: " + requestUrl,
-					"=> " + url + (!string.IsNullOrWhiteSpace(query) ? "?" + query : "")
-				});
-#endif
 
 			// decrypt session cookie
 			HttpCookie sessionCookie = null;
@@ -694,7 +684,7 @@ namespace net.vieapps.Services.Users
 		{
 			// encrypt session cookie
 			HttpCookie sessionCookie = null;
-			if (app != null && app.Response != null && app.Response.Cookies != null)
+			if (!app.Context.Request.HttpMethod.Equals("OPTIONS") && app.Response.Cookies != null)
 				for (int index = 0; index < app.Response.Cookies.Count; index++)
 					if (app.Response.Cookies[index].Name.IsEquals(".VIEApps-Session-ID"))
 					{
@@ -702,26 +692,27 @@ namespace net.vieapps.Services.Users
 						break;
 					}
 			if (sessionCookie != null)
-			{
-				sessionCookie.Value = "VIEApps|" + Global.AESEncrypt(sessionCookie.Value) + "|" + sessionCookie.Value.GetHMACSHA256(Global.AESKey, false);
-				sessionCookie.HttpOnly = true;
-			}
+				try
+				{
+					sessionCookie.Value = "VIEApps|" + Global.AESEncrypt(sessionCookie.Value) + "|" + sessionCookie.Value.GetHMACSHA256(Global.AESKey, false);
+					sessionCookie.HttpOnly = true;
+				}
+				catch { }
 
 #if DEBUG || REQUESTLOGS
 			// add execution times
-			if (app != null && app.Context != null && app.Context.Request != null
-				&& !app.Context.Request.HttpMethod.Equals("OPTIONS") && app.Context.Items != null && app.Context.Items.Contains("StopWatch"))
+			if (!app.Context.Request.HttpMethod.Equals("OPTIONS") && app.Context.Items.Contains("StopWatch"))
 			{
 				(app.Context.Items["StopWatch"] as Stopwatch).Stop();
 				var executionTimes = (app.Context.Items["StopWatch"] as Stopwatch).GetElapsedTimes();
 				Global.WriteLogs("End process - Execution times: " + executionTimes);
-				app.Response.Headers.Add("x-execution-times", executionTimes);
+				try
+				{
+					app.Response.Headers.Add("x-execution-times", executionTimes);
+				}
+				catch { }
 			}
 #endif
-
-			// add correlation identity
-			if (app != null && app.Response != null && !app.Context.Request.HttpMethod.Equals("OPTIONS"))
-				app.Response.Headers.Add("x-correlation-id", Global.GetCorrelationID(app.Context.Items));
 		}
 		#endregion
 
