@@ -28,7 +28,7 @@ using net.vieapps.Components.Security;
 
 namespace net.vieapps.Services.Users
 {
-	internal static class Initializer
+	internal static class Finalizer
 	{
 		internal static async Task ProcessRequestAsync(HttpContext context)
 		{
@@ -38,8 +38,8 @@ namespace net.vieapps.Services.Users
 			else
 				try
 				{
-					// sign in
-					await Global.SignInAsync(context);
+					// sign out
+					Global.SignOut(context);
 
 					// response
 					context.Response.Cache.SetNoStore();

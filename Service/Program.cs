@@ -11,14 +11,15 @@ namespace net.vieapps.Services.Users
 		{
 			// start the component
 			Program.Component = new ServiceComponent();
-			Program.Component.Start(args);
+			Program.Component.Start(args, () => Console.WriteLine("===============> Press the RETURN key to terminate......."));
 
 			// handle the closing events
 			Program.ConsoleEventHandler = new ConsoleEventDelegate(Program.ConsoleEventCallback);
 			Program.SetConsoleCtrlHandler(Program.ConsoleEventHandler, true);
 
-			// wait
-			while (true) { }
+			// wait here
+			Console.ReadLine();
+			Program.Exit();
 		}
 
 		internal static void Exit()
@@ -32,10 +33,10 @@ namespace net.vieapps.Services.Users
 		{
 			switch (eventCode)
 			{
-				case 0:		// Ctrl + C
-				case 1:		// Ctrl + Break
-				case 2:		// Close
-				case 6:        // Shutdown
+				case 0:	// Ctrl + C
+				case 1:	// Ctrl + Break
+				case 2:	// Close
+				case 6:	// Shutdown
 					Program.Exit();
 					break;
 			}

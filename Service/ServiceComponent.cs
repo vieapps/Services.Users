@@ -26,17 +26,18 @@ namespace net.vieapps.Services.Users
 				? ex != null ? ex.Message : ""
 				: info;
 
+			Console.WriteLine("~~~~~~~~~~~~~~~~~~~~>");
 			Console.WriteLine(msg);
 			if (ex != null)
 				Console.WriteLine("-----------------------\r\n" + "==> [" + ex.GetType().GetTypeName(true) + "]: " + ex.Message + "\r\n" + ex.StackTrace + "\r\n-----------------------");
-			Console.WriteLine("");
 		}
 
-		internal void Start(string[] args = null, Func<Task> continuationAsync = null)
+		internal void Start(string[] args = null, System.Action nextAction = null, Func<Task> nextActionAsync = null)
 		{
 			// initialize repositorites
 			try
 			{
+				this.WriteInfo("Initializing the repository");
 				RepositoryStarter.Initialize();
 			}
 			catch (Exception ex)
@@ -51,12 +52,11 @@ namespace net.vieapps.Services.Users
 				{
 					await this.StartAsync(
 						() => {
-							this.WriteInfo("The service is registered");
-							this.WriteLog(UtilityService.BlankUID, this.ServiceName, null, "The service [" + this.ServiceURI + "] is registered - PID: " + Process.GetCurrentProcess().Id);
+							var pid = Process.GetCurrentProcess().Id.ToString();
+							this.WriteInfo("The service is registered - PID: " + pid);
+							this.WriteLog(UtilityService.BlankUID, this.ServiceName, null, "The service [" + this.ServiceURI + "] is registered - PID: " + pid);
 						},
-						(ex) => {
-							this.WriteInfo("Error occurred while registering the service", ex);
-						},
+						ex => this.WriteInfo("Error occurred while registering the service", ex),
 						this.OnInterCommunicateMessageReceived
 					);
 				}
@@ -67,14 +67,22 @@ namespace net.vieapps.Services.Users
 			})
 			.ContinueWith(async (task) =>
 			{
-				if (continuationAsync != null)
+				try
+				{
+					nextAction?.Invoke();
+				}
+				catch (Exception ex)
+				{
+					this.WriteInfo("Error occurred while running the next action (sync)", ex);
+				}
+				if (nextActionAsync != null)
 					try
 					{
-						await continuationAsync().ConfigureAwait(false);
+						await nextActionAsync().ConfigureAwait(false);
 					}
 					catch (Exception ex)
 					{
-						this.WriteInfo("Error occurred while running the continuation function", ex);
+						this.WriteInfo("Error occurred while running the next action (async)", ex);
 					}
 			})
 			.ConfigureAwait(false);

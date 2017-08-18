@@ -13,6 +13,8 @@ using System.IO.Compression;
 using System.Text;
 using System.Linq;
 using System.Web;
+using System.Web.Security;
+using System.Web.Configuration;
 
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -606,7 +608,6 @@ namespace net.vieapps.Services.Users
 
 #if DEBUG || REQUESTLOGS
 			var appInfo = app.Context.GetAppInfo();
-
 			Global.WriteLogs(new List<string>() {
 					"Begin process [" + app.Context.Request.HttpMethod + "]: " + app.Context.Request.Url.Scheme + "://" + app.Context.Request.Url.Host + app.Context.Request.RawUrl,
 					"- Origin: " + appInfo.Item1 + " / " + appInfo.Item2 + " - " + appInfo.Item3,
@@ -684,7 +685,7 @@ namespace net.vieapps.Services.Users
 			{
 				if (Global._SessionCookieName == null)
 				{
-					var sessionState = ConfigurationManager.GetSection("system.web/sessionState") as System.Web.Configuration.SessionStateSection;
+					var sessionState = ConfigurationManager.GetSection("system.web/sessionState") as SessionStateSection;
 					Global._SessionCookieName = sessionState != null && !string.IsNullOrWhiteSpace(sessionState.CookieName)
 						? sessionState.CookieName
 						: "ASP.NET_SessionId";
@@ -699,13 +700,18 @@ namespace net.vieapps.Services.Users
 		{
 			if (app.Context.User == null || !(app.Context.User is UserPrincipal))
 			{
-				var authCookie = app.Context.Request.Cookies?[System.Web.Security.FormsAuthentication.FormsCookieName];
+				var authCookie = app.Context.Request.Cookies?[FormsAuthentication.FormsCookieName];
 				if (authCookie != null)
 				{
-					var info = User.ParseAuthenticateTicket(authCookie.Value, Global.RSA, Global.AESKey);
-					app.Context.User = new UserPrincipal(info.Item1);
-					app.Context.Items["Session-ID"] = info.Item2;
-					app.Context.Items["Device-ID"] = info.Item3;
+					var ticket = User.ParseAuthenticateToken(authCookie.Value, Global.RSA, Global.AESKey);
+					var userID = ticket.Item1;
+					var accessToken = ticket.Item2;
+					var sessionID = ticket.Item3;
+					var deviceID = ticket.Item4;
+
+					app.Context.User = new UserPrincipal(User.ParseAccessToken(accessToken, Global.RSA, Global.AESKey));
+					app.Context.Items["Session-ID"] = sessionID;
+					app.Context.Items["Device-ID"] = deviceID;
 				}
 				else
 				{
@@ -891,7 +897,7 @@ namespace net.vieapps.Services.Users
 		}
 		#endregion
 
-		#region Session
+		#region Session & Authentication
 		internal static Services.Session GetSession(NameValueCollection header, NameValueCollection query, string agentString, string ipAddress, Uri urlReferrer = null)
 		{
 			var appInfo = Global.GetAppInfo(header, query, agentString, ipAddress, urlReferrer);
@@ -916,6 +922,71 @@ namespace net.vieapps.Services.Users
 			if (string.IsNullOrWhiteSpace(session.DeviceID))
 				session.DeviceID = Global.GetDeviceID(context);
 			return session;
+		}
+
+		internal static async Task SignInAsync(HttpContext context = null)
+		{
+			// parse
+			context = context ?? HttpContext.Current;
+			var token = User.ParsePassportToken(context.Request.QueryString["x-passport-token"], Global.AESKey, Global.GenerateJWTKey());
+			var userID = token.Item1;
+			var accessToken = token.Item2;
+			var sessionID = token.Item3;
+			var deviceID = token.Item4;
+
+			var ticket = User.ParseAuthenticateToken(accessToken, Global.RSA, Global.AESKey);
+			accessToken = ticket.Item2;
+
+			var user = User.ParseAccessToken(accessToken, Global.RSA, Global.AESKey);
+			if (!user.ID.Equals(ticket.Item1) || !user.ID.Equals(userID))
+				throw new InvalidTokenException("Token is invalid (User identity is invalid)");
+
+			// validate
+			var session = Global.GetSession(context);
+			session.User = user;
+			session.SessionID = sessionID;
+			session.DeviceID = deviceID;
+			if (!await session.ExistsAsync())
+				throw new SessionNotFoundException();
+
+			// assign user credential
+			context.User = new UserPrincipal(user);
+
+			var persistent = "persistent".Encrypt().Url64Encode().Equals(context.Request.QueryString["persistent"]);
+			var cookie = new HttpCookie(FormsAuthentication.FormsCookieName)
+			{
+				Value = User.GetAuthenticateToken(userID, accessToken, sessionID, deviceID, FormsAuthentication.Timeout.Minutes, persistent),
+				HttpOnly = true
+			};
+			if (persistent)
+				cookie.Expires = DateTime.Now.AddDays(14);
+			context.Response.SetCookie(cookie);
+
+			// assign session/device identity
+			Global.SetSessionID(context, sessionID);
+			Global.SetDeviceID(context, deviceID);
+		}
+
+		internal static void SignOut(HttpContext context = null)
+		{
+			// perform sign out
+			FormsAuthentication.Initialize();
+			FormsAuthentication.SignOut();
+
+			// parse
+			context = context ?? HttpContext.Current;
+			var token = User.ParsePassportToken(context.Request.QueryString["x-passport-token"], Global.AESKey, Global.GenerateJWTKey());
+			var userID = token.Item1;
+			var accessToken = token.Item2;
+			var sessionID = token.Item3;
+			var deviceID = token.Item4;
+
+			// assign user credential
+			context.User = new UserPrincipal();
+
+			// assign session/device identity
+			Global.SetSessionID(context, sessionID);
+			Global.SetDeviceID(context, deviceID);
 		}
 
 		internal static async Task<bool> ExistsAsync(this Services.Session session)
@@ -1033,9 +1104,13 @@ namespace net.vieapps.Services.Users
 				}
 			}
 
-			// session initializer
+			// session initializer (sign in)
 			else if (requestTo.Equals("initializer"))
 				await Initializer.ProcessRequestAsync(context);
+
+			// session finalizer (sign out)
+			else if (requestTo.Equals("finalizer"))
+				await Finalizer.ProcessRequestAsync(context);
 
 			// session validator
 			else if (requestTo.Equals("validator"))
