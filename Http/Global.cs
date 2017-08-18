@@ -31,6 +31,7 @@ namespace net.vieapps.Services.Users
 	internal static class Global
 	{
 		internal static CancellationTokenSource CancellationTokenSource = new CancellationTokenSource();
+		internal static Dictionary<string, IService> Services = new Dictionary<string, IService>();
 
 		#region Get the app info
 		internal static Tuple<string, string, string> GetAppInfo(NameValueCollection header, NameValueCollection query, string agentString, string ipAddress, Uri urlReferrer = null)
@@ -140,9 +141,9 @@ namespace net.vieapps.Services.Users
 					{
 						Global._RSA = CryptoService.CreateRSAInstance(Global.RSAKey.Decrypt());
 					}
-					catch (Exception ex)
+					catch (Exception)
 					{
-						throw ex;
+						throw;
 					}
 				return Global._RSA;
 			}
@@ -178,28 +179,6 @@ namespace net.vieapps.Services.Users
 				}
 				return Global._RSAModulus;
 			}
-		}
-		#endregion
-
-		#region Encrypt/Decrypt
-		internal static string AESEncrypt(string data, string key = null, bool toHexa = false)
-		{
-			return data.Encrypt(string.IsNullOrWhiteSpace(key) ? Global.AESKey : key, toHexa);
-		}
-
-		internal static string AESDecrypt(string data, string key = null, bool isHexa = false)
-		{
-			return data.Decrypt(string.IsNullOrWhiteSpace(key) ? Global.AESKey : key, isHexa);
-		}
-
-		internal static string RSAEncrypt(string data)
-		{
-			return CryptoService.RSAEncrypt(Global.RSA, data);
-		}
-
-		internal static string RSADecrypt(string data)
-		{
-			return CryptoService.RSADecrypt(Global.RSA, data);
 		}
 		#endregion
 
@@ -657,47 +636,29 @@ namespace net.vieapps.Services.Users
 			app.Context.RewritePath(url, null, query);
 
 			// decrypt session cookie
-			HttpCookie sessionCookie = null;
-			if (app.Request.Cookies != null)
-				for (int index = 0; index < app.Request.Cookies.Count; index++)
-					if (app.Request.Cookies[index].Name.IsEquals(".VIEApps-Session-ID"))
-					{
-						sessionCookie = app.Request.Cookies[index];
-						break;
-					}
+			var sessionCookie = app.Request.Cookies?[Global.SessionCookieName];
 			if (sessionCookie != null)
 				try
 				{
-					var info = sessionCookie.Value.ToArray('|', true);
-					if (info[0].Equals("VIEApps") && info.Length.Equals(3))
-					{
-						var value = Global.AESDecrypt(info[1]);
-						var signature = value.GetHMACSHA256(Global.AESKey, false);
-						if (signature.Equals(info[2]))
-							sessionCookie.Value = value;
-					}
+					sessionCookie.Value = sessionCookie.Value.StartsWith("VIEApps|")
+						? sessionCookie.Value.ToArray('|', true).Last().Decrypt(Global.AESKey)
+						: "";
 				}
-				catch { }
+				catch
+				{
+					sessionCookie.Value = "";
+				}
 		}
 
 		internal static void OnAppEndRequest(HttpApplication app)
 		{
 			// encrypt session cookie
-			HttpCookie sessionCookie = null;
-			if (!app.Context.Request.HttpMethod.Equals("OPTIONS") && app.Response.Cookies != null)
-				for (int index = 0; index < app.Response.Cookies.Count; index++)
-					if (app.Response.Cookies[index].Name.IsEquals(".VIEApps-Session-ID"))
-					{
-						sessionCookie = app.Response.Cookies[index];
-						break;
-					}
-			if (sessionCookie != null)
-				try
-				{
-					sessionCookie.Value = "VIEApps|" + Global.AESEncrypt(sessionCookie.Value) + "|" + sessionCookie.Value.GetHMACSHA256(Global.AESKey, false);
-					sessionCookie.HttpOnly = true;
-				}
-				catch { }
+			var sessionCookie = app.Response.Cookies?[Global.SessionCookieName];
+			if (sessionCookie != null && !string.IsNullOrWhiteSpace(sessionCookie.Value))
+			{
+				sessionCookie.Value = "VIEApps|" + sessionCookie.Value.Encrypt(Global.AESKey);
+				sessionCookie.HttpOnly = true;
+			}
 
 #if DEBUG || REQUESTLOGS
 			// add execution times
@@ -714,35 +675,133 @@ namespace net.vieapps.Services.Users
 			}
 #endif
 		}
+
+		static string _SessionCookieName = null;
+
+		internal static string SessionCookieName
+		{
+			get
+			{
+				if (Global._SessionCookieName == null)
+				{
+					var sessionState = ConfigurationManager.GetSection("system.web/sessionState") as System.Web.Configuration.SessionStateSection;
+					Global._SessionCookieName = sessionState != null && !string.IsNullOrWhiteSpace(sessionState.CookieName)
+						? sessionState.CookieName
+						: "ASP.NET_SessionId";
+				}
+				return Global._SessionCookieName;
+			}
+		}
+		#endregion
+
+		#region Authenticate request
+		public static void OnAppAuthenticateRequest(HttpApplication app)
+		{
+			if (app.Context.User == null || !(app.Context.User is UserPrincipal))
+			{
+				var authCookie = app.Context.Request.Cookies?[System.Web.Security.FormsAuthentication.FormsCookieName];
+				if (authCookie != null)
+				{
+					var info = User.ParseAuthenticateTicket(authCookie.Value, Global.RSA, Global.AESKey);
+					app.Context.User = new UserPrincipal(info.Item1);
+					app.Context.Items["Session-ID"] = info.Item2;
+					app.Context.Items["Device-ID"] = info.Item3;
+				}
+				else
+				{
+					app.Context.User = new UserPrincipal();
+					Global.GetSessionID(app.Context);
+					Global.GetDeviceID(app.Context);
+				}
+			}
+		}
+
+		internal static void SetSessionID(HttpContext context, string sessionID)
+		{
+			context = context ?? HttpContext.Current;
+			context.Items["Session-ID"] = sessionID;
+			var cookie = new HttpCookie(".VIEApps-Authenticated-Session-ID")
+			{
+				Value = "VIEApps|" + sessionID.Encrypt(Global.AESKey),
+				HttpOnly = true,
+				Expires = DateTime.Now.AddDays(180)
+			};
+			context.Response.SetCookie(cookie);
+		}
+
+		internal static string GetSessionID(HttpContext context)
+		{
+			context = context ?? HttpContext.Current;
+			if (!context.Items.Contains("Session-ID"))
+			{
+				var cookie = context.Request.Cookies?[".VIEApps-Authenticated-Session-ID"];
+				if (cookie != null && cookie.Value.StartsWith("VIEApps|"))
+					try
+					{
+						context.Items["Session-ID"] = cookie.Value.ToArray('|').Last().Decrypt(Global.AESKey);
+					}
+					catch { }
+			}
+			return context.Items["Session-ID"] as string;
+		}
+
+		internal static void SetDeviceID(HttpContext context, string sessionID)
+		{
+			context = context ?? HttpContext.Current;
+			context.Items["Device-ID"] = sessionID;
+			var cookie = new HttpCookie(".VIEApps-Authenticated-Device-ID")
+			{
+				Value = "VIEApps|" + sessionID.Encrypt(Global.AESKey),
+				HttpOnly = true,
+				Expires = DateTime.Now.AddDays(180)
+			};
+			context.Response.SetCookie(cookie);
+		}
+
+		internal static string GetDeviceID(HttpContext context)
+		{
+			context = context ?? HttpContext.Current;
+			if (!context.Items.Contains("Device-ID"))
+			{
+				var cookie = context.Request.Cookies?[".VIEApps-Authenticated-Device-ID"];
+				if (cookie != null && cookie.Value.StartsWith("VIEApps|"))
+					try
+					{
+						context.Items["Device-ID"] = cookie.Value.ToArray('|').Last().Decrypt(Global.AESKey);
+					}
+					catch { }
+			}
+			return context.Items["Device-ID"] as string;
+		}
 		#endregion
 
 		#region Pre excute handlers/send headers
 		internal static void OnAppPreHandlerExecute(HttpApplication app)
 		{
-			if (app == null || app.Context == null || app.Context.Request == null || app.Context.Request.HttpMethod.Equals("OPTIONS") || app.Context.Request.HttpMethod.Equals("HEAD"))
+			// check
+			if (app.Context.Request.HttpMethod.Equals("OPTIONS") || app.Context.Request.HttpMethod.Equals("HEAD"))
 				return;
 
 			// check
-			var acceptEncoding = app.Request.Headers["accept-encoding"];
+			var acceptEncoding = app.Context.Request.Headers["accept-encoding"];
 			if (string.IsNullOrWhiteSpace(acceptEncoding))
 				return;
 
 			// apply compression
-			var previousStream = app.Response.Filter;
-			acceptEncoding = acceptEncoding.ToLower();
+			var previousStream = app.Context.Response.Filter;
 
 			// deflate
 			if (acceptEncoding.IsContains("deflate") || acceptEncoding.Equals("*"))
 			{
-				app.Response.Filter = new DeflateStream(previousStream, CompressionMode.Compress);
-				app.Response.AppendHeader("content-encoding", "deflate");
+				app.Context.Response.Filter = new DeflateStream(previousStream, CompressionMode.Compress);
+				app.Context.Response.Headers.Add("content-encoding", "deflate");
 			}
 
 			// gzip
 			else if (acceptEncoding.IsContains("gzip"))
 			{
-				app.Response.Filter = new GZipStream(previousStream, CompressionMode.Compress);
-				app.Response.AppendHeader("content-encoding", "gzip");
+				app.Context.Response.Filter = new GZipStream(previousStream, CompressionMode.Compress);
+				app.Context.Response.Headers.Add("content-encoding", "gzip");
 			}
 		}
 
@@ -814,7 +873,12 @@ namespace net.vieapps.Services.Users
 					inner = exception.InnerException;
 				}
 			}
-			Global.ShowError(context, 0, exception != null ? exception.Message : "Unknown", type, stack, inner);
+			var code = exception is FileNotFoundException
+				? 404
+				: exception is AccessDeniedException
+					? 403
+					: 0;
+			Global.ShowError(context, code, exception != null ? exception.Message : "Unknown", type, stack, inner);
 		}
 
 		internal static void OnAppError(HttpApplication app)
@@ -827,7 +891,7 @@ namespace net.vieapps.Services.Users
 		}
 		#endregion
 
-		#region Session & User with JSON Web Token
+		#region Session
 		internal static Services.Session GetSession(NameValueCollection header, NameValueCollection query, string agentString, string ipAddress, Uri urlReferrer = null)
 		{
 			var appInfo = Global.GetAppInfo(header, query, agentString, ipAddress, urlReferrer);
@@ -842,205 +906,74 @@ namespace net.vieapps.Services.Users
 			};
 		}
 
-		internal static string GetAccessToken(string userID, SystemRole userRole, List<string> userRoles, List<Privilege> privileges)
+		internal static Services.Session GetSession(HttpContext context = null)
 		{
-			var token = new JObject()
+			context = context ?? HttpContext.Current;
+			var session = Global.GetSession(context.Request.Headers, context.Request.QueryString, context.Request.UserAgent, context.Request.UserHostAddress, context.Request.UrlReferrer);
+			session.User = context.User as User;
+			if (string.IsNullOrWhiteSpace(session.SessionID))
+				session.SessionID = Global.GetSessionID(context);
+			if (string.IsNullOrWhiteSpace(session.DeviceID))
+				session.DeviceID = Global.GetDeviceID(context);
+			return session;
+		}
+
+		internal static async Task<bool> ExistsAsync(this Services.Session session)
+		{
+			var result = await Global.CallServiceAsync(session, "users", "mediator", "GET", null, null, new Dictionary<string, string>() { { "Exist", "" } });
+			return result != null && result["Existed"] is JValue && (result["Existed"] as JValue).Value != null && (result["Existed"] as JValue).Value.CastAs<bool>() == true;
+		}
+		#endregion
+
+		#region Get & call services
+		internal static async Task<JObject> CallServiceAsync(Services.Session session, string serviceName, string objectName, string verb = "GET", Dictionary<string, string> header = null, Dictionary<string, string> query = null, Dictionary<string, string> extra = null, string body = null, string correlationID = null)
+		{
+			var requestInfo = new RequestInfo(session)
 			{
-				{ "ID", userID },
-				{ "Role", userRole.ToString() }
+				ServiceName = serviceName,
+				ObjectName = objectName,
+				Verb = verb,
+				Header = header,
+				Query = query,
+				Body = body,
+				Extra = extra,
+				CorrelationID = correlationID ?? Global.GetCorrelationID()
 			};
 
-			if (userRoles != null && userRoles.Count > 0)
-				token.Add(new JProperty("Roles", userRoles));
+			var name = requestInfo.ServiceName.Trim().ToLower();
 
-			if (privileges != null && privileges.Count > 0)
-				token.Add(new JProperty("Privileges", privileges));
+#if DEBUG
+			Global.WriteLogs(requestInfo.CorrelationID, "Call the service [net.vieapps.services." + name + "]" + "\r\n" + requestInfo.ToJson().ToString(Newtonsoft.Json.Formatting.Indented));
+#endif
 
-			var key = UtilityService.GetUUID();
-			token = new JObject()
+			if (!Global.Services.TryGetValue(name, out IService service))
 			{
-				{ "Key", Global.RSAEncrypt(key) },
-				{ "Data", Global.AESEncrypt(token.ToString(Newtonsoft.Json.Formatting.None), key) }
-			};
+				await Global.OpenOutgoingChannelAsync();
+				lock (Global.Services)
+				{
+					if (!Global.Services.TryGetValue(name, out service))
+					{
+						service = Global.OutgoingChannel.RealmProxy.Services.GetCalleeProxy<IService>(new CachedCalleeProxyInterceptor(new ProxyInterceptor(name)));
+						Global.Services.Add(name, service);
+					}
+				}
+			}
 
-			return Global.AESEncrypt(token.ToString(Newtonsoft.Json.Formatting.None));
-		}
-
-		internal static string GetAccessToken(this User user)
-		{
-			return Global.GetAccessToken(user.ID, user.Role, user.Roles, user.Privileges);
-		}
-
-		internal static User GetUser(this string accessToken)
-		{
-			// decrypt
-			string decrypted = "";
+			JObject json = null;
 			try
 			{
-				decrypted = Global.AESDecrypt(accessToken);
+				json = await service.ProcessRequestAsync(requestInfo, Global.CancellationTokenSource.Token);
 			}
-			catch (Exception ex)
-			{
-				throw new InvalidTokenException("Cannot decrypt the access token", ex);
-			}
-
-			// parse JSON
-			JObject token = null;
-			try
-			{
-				token = JObject.Parse(decrypted);
-			}
-			catch (Exception ex)
-			{
-				throw new InvalidTokenException("Cannot parse the JSON", ex);
-			}
-
-			// check
-			if (token["Key"] == null || token["Data"] == null)
-				throw new InvalidTokenException();
-
-			// decrypt key
-			try
-			{
-				decrypted = Global.RSADecrypt((token["Key"] as JValue).Value.ToString());
-			}
-			catch (Exception ex)
-			{
-				throw new InvalidTokenException("Cannot decrypt the access token", ex);
-			}
-
-			// decrypt JSON
-			try
-			{
-				decrypted = Global.AESDecrypt((token["Data"] as JValue).Value.ToString(), decrypted);
-			}
-			catch (Exception ex)
-			{
-				throw new InvalidTokenException("Cannot decrypt the access token", ex);
-			}
-
-			// serialize from JSON
-			try
-			{
-				return decrypted.FromJson<User>();
-			}
-			catch (Exception ex)
-			{
-				throw new InvalidTokenException("Cannot deserialize parse the JSON", ex);
-			}
-		}
-
-		static string GetSignature(this string sessionID, string accessToken, string algorithm = "HS512")
-		{
-			var data = accessToken + "@" + sessionID;
-			algorithm = algorithm ?? "HS512";
-			switch (algorithm.ToLower())
-			{
-				case "hs1":
-					return data.GetHMACSHA1(Global.AESKey, false);
-
-				case "hs256":
-					return data.GetHMACSHA256(Global.AESKey, false);
-
-				case "hs384":
-					return data.GetHMACSHA384(Global.AESKey, false);
-
-				default:
-					return data.GetHMACSHA512(Global.AESKey, false);
-			}
-		}
-
-		internal static string GetJSONWebToken(this Services.Session session, string accessToken = null)
-		{
-			accessToken = accessToken ?? session.User.GetAccessToken();
-			var payload = new JObject()
-			{
-				{ "iat", DateTime.Now.ToUnixTimestamp() },
-				{ "jti", Global.AESEncrypt(session.SessionID, Global.AESKey.Reverse()) },
-				{ "uid", session.User.ID },
-				{ "jtk", accessToken },
-				{ "jts", session.SessionID.GetSignature(accessToken) }
-			};
-			return JSONWebToken.Encode(payload, Global.GenerateJWTKey());
-		}
-
-		internal static async Task<string> ParseJSONWebTokenAsync(this Services.Session session, string jwt, Func<Services.Session, Task> checkAsync = null)
-		{
-			// parse JSON Web Token
-			JObject payload = null;
-			try
-			{
-				payload = JSONWebToken.DecodeAsJObject(jwt, Global.GenerateJWTKey());
-			}
-			catch (InvalidTokenSignatureException)
+			catch (Exception)
 			{
 				throw;
 			}
-			catch (Exception ex)
-			{
-				throw new InvalidTokenException(ex);
-			}
 
-			// check issued time
-			var issuedAt = payload["iat"] != null
-				? (long)(payload["iat"] as JValue).Value
-				: DateTime.Now.AddDays(-30).ToUnixTimestamp();
-			if (DateTime.Now.ToUnixTimestamp() - issuedAt > 30)
-				throw new TokenExpiredException();
+#if DEBUG
+			Global.WriteLogs(requestInfo.CorrelationID, "Result of the service [net.vieapps.services." + name + "]" + "\r\n" + json.ToString(Newtonsoft.Json.Formatting.Indented));
+#endif
 
-			// get session identity
-			var sessionID = payload["jti"] != null
-				? (payload["jti"] as JValue).Value as string
-				: null;
-			if (string.IsNullOrWhiteSpace(sessionID))
-				throw new InvalidTokenException("Token is invalid (Identity is invalid)");
-
-			try
-			{
-				sessionID = Global.AESDecrypt(sessionID, Global.AESKey.Reverse());
-			}
-			catch (Exception ex)
-			{
-				throw new InvalidTokenException("Token is invalid (Identity is invalid)", ex);
-			}
-
-			// get access token
-			var accessToken = payload["jtk"] != null
-				? (payload["jtk"] as JValue).Value as string
-				: null;
-			if (string.IsNullOrWhiteSpace(accessToken))
-				throw new InvalidTokenException("Token is invalid (Access token is invalid)");
-
-			var signature = payload["jts"] != null
-				? (payload["jts"] as JValue).Value as string
-				: null;
-			if (string.IsNullOrWhiteSpace(signature) || !signature.Equals(sessionID.GetSignature(accessToken)))
-				throw new InvalidTokenSignatureException("Token is invalid (Signature is invalid)");
-
-			var userID = (payload["uid"] as JValue).Value as string;
-			if (userID == null)
-				throw new InvalidTokenException("Token is invalid (User identity is invalid)");
-
-			// get user information
-			try
-			{
-				session.User = accessToken.GetUser();
-			}
-			catch (Exception ex)
-			{
-				throw new InvalidTokenException("Token is invalid (Access token is invalid)", ex);
-			}
-
-			if (!session.User.ID.Equals(userID))
-				throw new InvalidTokenException("Token is invalid (User identity is invalid)");
-
-			// check to see the session is registered or not
-			session.SessionID = sessionID;
-			if (checkAsync != null)
-				await checkAsync(session);
-
-			// return access token
-			return accessToken;
+			return json;
 		}
 		#endregion
 
@@ -1061,7 +994,7 @@ namespace net.vieapps.Services.Users
 
 			// prepare
 			var requestTo = context.Request.RawUrl.Substring(context.Request.ApplicationPath.Length);
-			if (requestTo.StartsWith("/"))
+			while (requestTo.StartsWith("/"))
 				requestTo = requestTo.Right(requestTo.Length - 2);
 			if (requestTo.IndexOf("?") > 0)
 				requestTo = requestTo.Left(requestTo.IndexOf("?"));
@@ -1100,6 +1033,10 @@ namespace net.vieapps.Services.Users
 				}
 			}
 
+			// session initializer
+			else if (requestTo.Equals("initializer"))
+				await Initializer.ProcessRequestAsync(context);
+
 			// session validator
 			else if (requestTo.Equals("validator"))
 				Global.ShowError(context, 500, "Not Implemented", "NotImplementedException", null, null);
@@ -1131,7 +1068,7 @@ namespace net.vieapps.Services.Users
 
 		protected void Application_AuthenticateRequest(object sender, EventArgs args)
 		{
-			//Global.OnAppAuthenticateRequest(sender as HttpApplication);
+			Global.OnAppAuthenticateRequest(sender as HttpApplication);
 		}
 
 		protected void Application_PreRequestHandlerExecute(object sender, EventArgs args)
