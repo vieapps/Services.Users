@@ -10,6 +10,7 @@ using System.Threading.Tasks;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
+using System.Net;
 using System.Text;
 using System.Linq;
 using System.Web;
@@ -565,6 +566,20 @@ namespace net.vieapps.Services.Users
 				return;
 			}
 
+			// decrypt session state cookie
+			var cookie = app.Request.Cookies?[Global.StateCookieName];
+			if (cookie != null)
+				try
+				{
+					cookie.Value = cookie.Value.StartsWith("VIEApps|")
+						? cookie.Value.ToArray('|', true).Last().Decrypt(Global.AESKey)
+						: "";
+				}
+				catch
+				{
+					cookie.Value = "";
+				}
+
 			// prepare
 			var requestTo = app.Request.AppRelativeCurrentExecutionFilePath;
 			if (requestTo.StartsWith("~/"))
@@ -580,7 +595,7 @@ namespace net.vieapps.Services.Users
 			// hidden segments
 			else if (Global.HiddenSegments.Count > 0 && Global.HiddenSegments.Contains(requestTo))
 			{
-				Global.ShowError(app.Context, 403, "Forbidden", "AccessDeniedException", null, null);
+				Global.ShowError(app.Context, 403, "Forbidden", "AccessDeniedException", null);
 				app.Context.Response.End();
 				return;
 			}
@@ -601,7 +616,7 @@ namespace net.vieapps.Services.Users
 					: errorElements[0].Equals("404")
 						? "FileNotFoundException"
 						: "Unknown";
-				Global.ShowError(app.Context, errorElements[0].CastAs<int>(), errorMessage, errorType, null, null);
+				Global.ShowError(app.Context, errorElements[0].CastAs<int>(), errorMessage, errorType, null);
 				app.Context.Response.End();
 				return;
 			}
@@ -620,46 +635,25 @@ namespace net.vieapps.Services.Users
 #endif
 
 			// rewrite url
-			var url = app.Request.ApplicationPath;
 			var query = "";
-			if (Global.StaticSegments.Contains(requestTo) || requestTo.Equals("validator") || requestTo.Equals("oauth"))
-				url += "Global.ashx";
-			else
-			{
-				url += "Default.aspx";
-				query = "portlet=" + requestTo.GetANSIUri();
-			}
-
 			foreach (string key in app.Request.QueryString)
-				if (!string.IsNullOrWhiteSpace(key) && !key.IsEquals("portlet"))
+				if (!string.IsNullOrWhiteSpace(key))
 					query += (query.Equals("") ? "" : "&") + key + "=" + app.Request.QueryString[key].UrlEncode();
 
-			app.Context.RewritePath(url, null, query);
-
-			// decrypt session cookie
-			var sessionCookie = app.Request.Cookies?[Global.SessionCookieName];
-			if (sessionCookie != null)
-				try
-				{
-					sessionCookie.Value = sessionCookie.Value.StartsWith("VIEApps|")
-						? sessionCookie.Value.ToArray('|', true).Last().Decrypt(Global.AESKey)
-						: "";
-				}
-				catch
-				{
-					sessionCookie.Value = "";
-				}
+			app.Context.RewritePath(app.Request.ApplicationPath + "Global.ashx", null, query);
 		}
 
 		internal static void OnAppEndRequest(HttpApplication app)
 		{
-			// encrypt session cookie
-			var sessionCookie = app.Response.Cookies?[Global.SessionCookieName];
-			if (sessionCookie != null && !string.IsNullOrWhiteSpace(sessionCookie.Value))
-			{
-				sessionCookie.Value = "VIEApps|" + sessionCookie.Value.Encrypt(Global.AESKey);
-				sessionCookie.HttpOnly = true;
-			}
+			// encrypt session state cookie
+			var cookie = app.Response.Cookies?[Global.StateCookieName];
+			if (cookie != null && !string.IsNullOrWhiteSpace(cookie.Value))
+				try
+				{
+					cookie.Value = "VIEApps|" + cookie.Value.Encrypt(Global.AESKey);
+					cookie.HttpOnly = true;
+				}
+				catch { }
 
 #if DEBUG || REQUESTLOGS
 			// add execution times
@@ -677,20 +671,20 @@ namespace net.vieapps.Services.Users
 #endif
 		}
 
-		static string _SessionCookieName = null;
+		static string _StateCookieName = null;
 
-		internal static string SessionCookieName
+		internal static string StateCookieName
 		{
 			get
 			{
-				if (Global._SessionCookieName == null)
+				if (Global._StateCookieName == null)
 				{
-					var sessionState = ConfigurationManager.GetSection("system.web/sessionState") as SessionStateSection;
-					Global._SessionCookieName = sessionState != null && !string.IsNullOrWhiteSpace(sessionState.CookieName)
-						? sessionState.CookieName
+					var section = ConfigurationManager.GetSection("system.web/sessionState") as SessionStateSection;
+					Global._StateCookieName = section != null && !string.IsNullOrWhiteSpace(section.CookieName)
+						? section.CookieName
 						: "ASP.NET_SessionId";
 				}
-				return Global._SessionCookieName;
+				return Global._StateCookieName;
 			}
 		}
 		#endregion
@@ -700,10 +694,10 @@ namespace net.vieapps.Services.Users
 		{
 			if (app.Context.User == null || !(app.Context.User is UserPrincipal))
 			{
-				var authCookie = app.Context.Request.Cookies?[FormsAuthentication.FormsCookieName];
-				if (authCookie != null)
+				var authTicket = Global.GetAuthenticateTicket(app.Context);
+				if (!string.IsNullOrWhiteSpace(authTicket))
 				{
-					var ticket = User.ParseAuthenticateToken(authCookie.Value, Global.RSA, Global.AESKey);
+					var ticket = User.ParseAuthenticateToken(authTicket, Global.RSA, Global.AESKey);
 					var userID = ticket.Item1;
 					var accessToken = ticket.Item2;
 					var sessionID = ticket.Item3;
@@ -843,48 +837,14 @@ namespace net.vieapps.Services.Users
 			}
 		}
 
-		internal static void ShowError(HttpContext context, int code, string message, string type, string stack, Exception inner)
+		internal static void ShowError(this HttpContext context, int code, string message, string type, string stack)
 		{
-			context.Response.TrySkipIisCustomErrors = true;
-			context.Response.StatusCode = code < 1 ? 500 : code;
-			context.Response.Cache.SetNoStore();
-			context.Response.ContentType = "text/html";
-
-			context.Response.ClearContent();
-			context.Response.Output.Write("<!DOCTYPE html>\r\n");
-			context.Response.Output.Write("<html xmlns=\"http://www.w3.org/1999/xhtml\">\r\n");
-			context.Response.Output.Write("<head><title>Error " + (code < 1 ? 500 : code).ToString() + "</title></head>\r\n<body>\r\n");
-			context.Response.Output.Write("<h1>HTTP " + (code < 1 ? 500 : code).ToString() + " - " + message.Replace("<", "&lt;").Replace(">", "&gt;") + "</h1>\r\n");
-			context.Response.Output.Write("<hr/>\r\n");
-			context.Response.Output.Write("<div>Type: " + type + " - Correlation ID: " + Global.GetCorrelationID(context.Items) + "</div>\r\n");
-			if (!string.IsNullOrWhiteSpace(stack) && Global.IsShowErrorStacks)
-				context.Response.Output.Write("<div>Stack:</div><blockquote>" + stack.Replace("<", "&lt;").Replace(">", "&gt;").Replace("\n", "<br/>").Replace("\r", "").Replace("\t", "") + "</blockquote>\r\n");
-			context.Response.Output.Write("</body>\r\n</html>");
-
-			if (message.Contains("potentially dangerous"))
-				context.Response.End();
+			context.ShowHttpError(code, message, type, Global.GetCorrelationID(context.Items), stack, Global.IsShowErrorStacks);
 		}
 
-		internal static void ShowError(HttpContext context, Exception exception)
+		internal static void ShowError(this HttpContext context, Exception exception)
 		{
-			var type = "Unknown";
-			string stack = null;
-			Exception inner = null;
-			if (exception != null)
-			{
-				type = exception.GetType().ToString().ToArray('.').Last();
-				if (Global.IsShowErrorStacks)
-				{
-					stack = exception.StackTrace;
-					inner = exception.InnerException;
-				}
-			}
-			var code = exception is FileNotFoundException
-				? 404
-				: exception is AccessDeniedException
-					? 403
-					: 0;
-			Global.ShowError(context, code, exception != null ? exception.Message : "Unknown", type, stack, inner);
+			context.ShowError(exception != null ? exception.GetHttpStatusCode() : 0, exception != null ? exception.Message : "Unknown", exception != null ? exception.GetType().ToString().ToArray('.').Last() : "Unknown", exception != null && Global.IsShowErrorStacks ? exception.StackTrace : null);
 		}
 
 		internal static void OnAppError(HttpApplication app)
@@ -893,7 +853,7 @@ namespace net.vieapps.Services.Users
 			app.Server.ClearError();
 
 			Global.WriteLogs("", exception);
-			Global.ShowError(app.Context, exception);
+			app.Context.ShowError(exception);
 		}
 		#endregion
 
@@ -922,6 +882,13 @@ namespace net.vieapps.Services.Users
 			if (string.IsNullOrWhiteSpace(session.DeviceID))
 				session.DeviceID = Global.GetDeviceID(context);
 			return session;
+		}
+
+		internal static string GetAuthenticateTicket (HttpContext context = null)
+		{
+			context = context ?? HttpContext.Current;
+			var authCookie = context.Request.Cookies?[FormsAuthentication.FormsCookieName];
+			return authCookie?.Value;
 		}
 
 		internal static async Task SignInAsync(HttpContext context = null)
@@ -997,24 +964,13 @@ namespace net.vieapps.Services.Users
 		#endregion
 
 		#region Get & call services
-		internal static async Task<JObject> CallServiceAsync(Services.Session session, string serviceName, string objectName, string verb = "GET", Dictionary<string, string> header = null, Dictionary<string, string> query = null, Dictionary<string, string> extra = null, string body = null, string correlationID = null)
+		internal static async Task<JObject> CallServiceAsync(RequestInfo requestInfo, string correlationID = null)
 		{
-			var requestInfo = new RequestInfo(session)
-			{
-				ServiceName = serviceName,
-				ObjectName = objectName,
-				Verb = verb,
-				Header = header,
-				Query = query,
-				Body = body,
-				Extra = extra,
-				CorrelationID = correlationID ?? Global.GetCorrelationID()
-			};
-
+			requestInfo.CorrelationID = correlationID ?? requestInfo.CorrelationID;
 			var name = requestInfo.ServiceName.Trim().ToLower();
 
 #if DEBUG
-			Global.WriteLogs(requestInfo.CorrelationID, "Call the service [net.vieapps.services." + name + "]" + "\r\n" + requestInfo.ToJson().ToString(Newtonsoft.Json.Formatting.Indented));
+			Global.WriteLogs(requestInfo.CorrelationID, "Call the service [net.vieapps.services." + name + "]" + "\r\n" + requestInfo.ToJson().ToString(Formatting.Indented));
 #endif
 
 			if (!Global.Services.TryGetValue(name, out IService service))
@@ -1041,10 +997,31 @@ namespace net.vieapps.Services.Users
 			}
 
 #if DEBUG
-			Global.WriteLogs(requestInfo.CorrelationID, "Result of the service [net.vieapps.services." + name + "]" + "\r\n" + json.ToString(Newtonsoft.Json.Formatting.Indented));
+			Global.WriteLogs(requestInfo.CorrelationID, "Result of the service [net.vieapps.services." + name + "]" + "\r\n" + json.ToString(Formatting.Indented));
 #endif
 
 			return json;
+		}
+
+		internal static Task<JObject> CallServiceAsync(Services.Session session, string serviceName, string objectName, string verb = "GET", Dictionary<string, string> header = null, Dictionary<string, string> query = null, Dictionary<string, string> extra = null, string body = null, string correlationID = null)
+		{
+			return Global.CallServiceAsync(new RequestInfo(session)
+			{
+				ServiceName = serviceName,
+				ObjectName = objectName,
+				Verb = verb,
+				Header = header,
+				Query = query,
+				Body = body,
+				Extra = extra,
+				CorrelationID = correlationID ?? Global.GetCorrelationID()
+			});
+		}
+
+		internal static Task<JObject> CallServiceAsync(HttpContext context, string serviceName, string objectName, string verb = "GET", Dictionary<string, string> header = null, Dictionary<string, string> query = null, Dictionary<string, string> extra = null, string body = null)
+		{
+			context = context ?? HttpContext.Current;
+			return Global.CallServiceAsync(Global.GetSession(context), serviceName, objectName, verb, header, query, extra, body, Global.GetCorrelationID(context.Items));
 		}
 		#endregion
 
@@ -1096,11 +1073,11 @@ namespace net.vieapps.Services.Users
 				}
 				catch (FileNotFoundException ex)
 				{
-					Global.ShowError(context, 404, "Not found [" + path + "]", "FileNotFoundException", ex.StackTrace, ex.InnerException);
+					context.ShowError((int)HttpStatusCode.NotFound, "Not found [" + path + "]", "FileNotFoundException", ex.StackTrace);
 				}
 				catch (Exception ex)
 				{
-					Global.ShowError(context, ex);
+					context.ShowError(ex);
 				}
 			}
 
@@ -1114,15 +1091,11 @@ namespace net.vieapps.Services.Users
 
 			// session validator
 			else if (requestTo.Equals("validator"))
-				Global.ShowError(context, 500, "Not Implemented", "NotImplementedException", null, null);
-
-			// OAuth
-			else if (requestTo.Equals("oauth"))
-				Global.ShowError(context, 500, "Not Implemented", "NotImplementedException", null, null);
+				await Validator.ProcessRequestAsync(context);
 
 			// unknown
 			else
-				Global.ShowError(context, 404, "Not Found", "FileNotFoundException", null, null);
+				context.ShowError((int)HttpStatusCode.NotFound, "Not Found", "FileNotFoundException", null);
 		}
 	}
 	#endregion

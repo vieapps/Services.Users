@@ -266,9 +266,7 @@ namespace net.vieapps.Services.Users
 
 			// update (renew) session
 			userSession.ExpiredAt = DateTime.Now.AddDays(60);
-			userSession.AccessToken = string.IsNullOrWhiteSpace(accessToken)
-				? userSession.AccessToken
-				: accessToken;
+			userSession.AccessToken = accessToken ?? userSession.AccessToken;
 			await Session.UpdateAsync(userSession);
 
 			// update statistics of the account

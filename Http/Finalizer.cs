@@ -32,8 +32,11 @@ namespace net.vieapps.Services.Users
 	{
 		internal static async Task ProcessRequestAsync(HttpContext context)
 		{
-			if (!context.Request.HttpMethod.Equals("GET") || context.Request.QueryString["x-passport-token"] == null)
-				Global.ShowError(context, new InvalidRequestException());
+			if (!context.Request.HttpMethod.Equals("GET"))
+				context.ShowError(new MethodNotAllowedException(context.Request.HttpMethod));
+
+			else if (context.Request.QueryString["x-passport-token"] == null)
+				context.ShowError(new InvalidRequestException());
 
 			else
 				try
@@ -56,7 +59,7 @@ namespace net.vieapps.Services.Users
 				}
 				catch (Exception ex)
 				{
-					Global.ShowError(context, ex);
+					context.ShowError(ex);
 				}
 		}
 	}
