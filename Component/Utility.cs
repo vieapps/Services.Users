@@ -21,13 +21,9 @@ namespace net.vieapps.Services.Users
 	public static class Utility
 	{
 
-		#region Caching mechanism
 		static int _CacheTime = 0;
 
-		/// <summary>
-		/// Gets the default time for caching data
-		/// </summary>
-		internal static int CacheTime
+		public static int CacheTime
 		{
 			get
 			{
@@ -44,13 +40,9 @@ namespace net.vieapps.Services.Users
 			}
 		}
 
-		static CacheManager _Cache = new CacheManager("VIEApps-Services-Users", "Sliding", Utility.CacheTime);
+		static CacheManager _Cache = new CacheManager("VIEApps-Services-Books", "Sliding", Utility.CacheTime);
 
-		/// <summary>
-		/// Gets the default cache storage
-		/// </summary>
 		public static CacheManager Cache { get { return Utility._Cache; } }
-		#endregion
 
 	}
 

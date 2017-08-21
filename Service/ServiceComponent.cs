@@ -126,7 +126,7 @@ namespace net.vieapps.Services.Users
 
 					#region Profiles
 					case "search":
-						return await this.SearchProfilesAsync(requestInfo);
+						return await this.SearchProfilesAsync(requestInfo, cancellationToken);
 
 					case "fetch":
 						break;
@@ -233,7 +233,7 @@ namespace net.vieapps.Services.Users
 				};
 
 				// update cache
-				await Utility.Cache.SetAsync(session, 120);
+				await Utility.Cache.SetAsync(session, 180);
 
 #if DEBUG
 				this.WriteInfo("A session of visitor has been registered" + "\r\n" + session.ToJson().ToString(Newtonsoft.Json.Formatting.Indented));
@@ -272,7 +272,7 @@ namespace net.vieapps.Services.Users
 			// update statistics of the account
 			userAccount.LastAccess = DateTime.Now;
 			if (userAccount.Sessions == null)
-				userAccount.Sessions = await Session.FindAsync<Session>(Filters<Session>.Equals("UserID", userAccount.ID), Sorts<Session>.Descending("ExpiredAt"), 0, 1);
+				userAccount.Sessions = await Session.FindAsync(Filters<Session>.Equals("UserID", userAccount.ID), Sorts<Session>.Descending("ExpiredAt"), 0, 1);
 			else
 			{
 				userAccount.Sessions.Insert(0, userSession);
@@ -294,10 +294,14 @@ namespace net.vieapps.Services.Users
 
 		async Task<JObject> CheckSessionExistedAsync(RequestInfo requestInfo)
 		{
-			var isExisted = string.IsNullOrWhiteSpace(requestInfo.Session.User.ID)
-				? await Utility.Cache.ExistsAsync<Session>(requestInfo.Session.SessionID)
-				: (await Session.GetAsync<Session>(requestInfo.Session.SessionID)) != null;
+			// check existed from cache
+			var isExisted = await Utility.Cache.ExistsAsync<Session>(requestInfo.Session.SessionID);
 
+			// load from data repository (user) if has no cache
+			if (!isExisted && !string.IsNullOrWhiteSpace(requestInfo.Session.User.ID))
+				isExisted = (await Session.GetAsync<Session>(requestInfo.Session.SessionID)) != null;
+
+			// return the result
 			return new JObject()
 			{
 				{ "Existed", isExisted }
@@ -306,10 +310,12 @@ namespace net.vieapps.Services.Users
 
 		async Task<JObject> ValidateSessionAsync(RequestInfo requestInfo)
 		{
+			// get session
 			var session = string.IsNullOrWhiteSpace(requestInfo.Session.User.ID)
-				? await Utility.Cache.GetAsync<Session>(requestInfo.Session.SessionID)
+				? await Utility.Cache.FetchAsync<Session>(requestInfo.Session.SessionID)
 				: await Session.GetAsync<Session>(requestInfo.Session.SessionID);
 
+			// validate
 			if (session == null)
 				throw new SessionNotFoundException();
 			else if (session.ExpiredAt < DateTime.Now)
@@ -324,6 +330,7 @@ namespace net.vieapps.Services.Users
 			else if (requestInfo.Session.User != null && (!string.IsNullOrWhiteSpace(requestInfo.Session.User.ID) || !session.AccessToken.Equals(accessToken)))
 				throw new TokenRevokedException();
 
+			// return the result
 			return new JObject()
 			{
 				{ "Status", "OK" }
@@ -431,7 +438,7 @@ namespace net.vieapps.Services.Users
 			if (account != null)
 			{
 				if (account.Sessions == null)
-					account.Sessions = await Session.FindAsync<Session>(Filters<Session>.Equals("UserID", requestInfo.Session.User.ID), Sorts<Session>.Descending("ExpiredAt"), 0, 1);
+					account.Sessions = await Session.FindAsync(Filters<Session>.Equals("UserID", requestInfo.Session.User.ID), Sorts<Session>.Descending("ExpiredAt"), 0, 1);
 				account.Sessions = account.Sessions.Where(s => !s.ID.Equals(requestInfo.Session.SessionID)).ToList();
 				account.LastAccess = DateTime.Now;
 
@@ -470,7 +477,7 @@ namespace net.vieapps.Services.Users
 				(json["Mobile"] as JValue).Value = "xxxxxx" + value.Trim().Replace(" ", "").Right(4);
 		}
 
-		async Task<JObject> SearchProfilesAsync(RequestInfo requestInfo)
+		async Task<JObject> SearchProfilesAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// check
 			if (!this.IsAuthenticated(requestInfo))
