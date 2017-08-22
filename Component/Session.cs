@@ -15,7 +15,7 @@ namespace net.vieapps.Services.Users
 	[Entity(CollectionName = "Sessions", TableName = "T_Users_Sessions", CacheStorageType = typeof(Utility), CacheStorageName = "Cache")]
 	public class Session : Repository<Session>
 	{
-		public Session()
+		public Session() : base()
 		{
 			this.ID = "";
 			this.IssuedAt = DateTime.Now;

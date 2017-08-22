@@ -33,7 +33,7 @@ namespace net.vieapps.Services.Users
 	[Entity(CollectionName = "Profiles", TableName = "T_Users_Profiles", CacheStorageType = typeof(Utility), CacheStorageName = "Cache", Searchable = true)]
 	public class Profile : Repository<Profile>
 	{
-		public Profile()
+		public Profile() : base()
 		{
 			this.ID = "";
 			this.Name = "";

@@ -26,7 +26,7 @@ namespace net.vieapps.Services.Users
 	[Entity(CollectionName = "Accounts", TableName = "T_Users_Accounts", CacheStorageType = typeof(Utility), CacheStorageName = "Cache")]
 	public class Account : Repository<Account>
 	{
-		public Account()
+		public Account() : base()
 		{
 			this.ID = "";
 			this.Type = AccountType.BuiltIn;
