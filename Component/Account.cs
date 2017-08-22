@@ -36,7 +36,6 @@ namespace net.vieapps.Services.Users
 			this.AccountName = "";
 			this.AccountID = "";
 			this.AccountKey = "";
-			this.AccountRole = SystemRole.All;
 			this.AccountRoles = new List<string>();
 			this.AccountPrivileges = new List<Privilege>();
 		}
@@ -83,12 +82,6 @@ namespace net.vieapps.Services.Users
 		/// </summary>
 		[JsonIgnore, Property(MaxLength = 250)]
 		public string AccountKey { get; set; }
-
-		/// <summary>
-		/// Gets or sets the system role of the user account
-		/// </summary>
-		[JsonConverter(typeof(StringEnumConverter)), BsonRepresentation(BsonType.String), Property(NotNull = true), Sortable]
-		public SystemRole AccountRole { get; set; }
 
 		/// <summary>
 		/// Gets or sets the working roles (means working roles of business services) of the user account

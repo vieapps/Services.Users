@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Diagnostics;
+using System.Collections.Generic;
 
 using Newtonsoft.Json.Linq;
 
@@ -345,13 +346,12 @@ namespace net.vieapps.Services.Users
 
 			var json = new JObject()
 			{
-				{ "ID", account.ID },
-				{ "Role", account.AccountRole.ToString() }
+				{ "ID", account.ID }
 			};
 
 			if (requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Full"))
 			{
-				json.Add(new JProperty("Roles", account.AccountRoles));
+				json.Add(new JProperty("Roles", account.AccountRoles.Union(new List<string>() { SystemRole.All.ToString(), SystemRole.Authenticated.ToString() }).ToList()));
 				json.Add(new JProperty("Privileges", account.AccountPrivileges));
 			}
 
@@ -529,7 +529,7 @@ namespace net.vieapps.Services.Users
 
 			// generate JSONs
 			var data = objects.ToJsonArray();
-			if (!requestInfo.Session.User.Role.Equals(SystemRole.SystemAdministrator))
+			if (!requestInfo.Session.User.IsSystemAdministrator)
 				foreach (JObject json in data)
 					this.NormalizeProfile(json);
 
