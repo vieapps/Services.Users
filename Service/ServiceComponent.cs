@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using System.Diagnostics;
 using System.Collections.Generic;
 
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
 using net.vieapps.Components.Utility;
@@ -96,6 +97,7 @@ namespace net.vieapps.Services.Users
 		{
 			try
 			{
+				var objectIdentity = requestInfo.GetObjectIdentity();
 				switch (requestInfo.ObjectName.ToLower())
 				{
 
@@ -105,7 +107,7 @@ namespace net.vieapps.Services.Users
 						{
 							// initialize or register
 							case "GET":
-								if (requestInfo.Session.User.ID.Equals("") && !requestInfo.Query.ContainsKey("anonymous"))
+								if ((requestInfo.Session.User.ID.Equals("") || requestInfo.Session.User.ID.Equals(User.SystemAccountID)) && !requestInfo.Query.ContainsKey("register"))
 									return await this.InitializeSessionAsync(requestInfo);
 								else
 									return await this.RegisterSessionAsync(requestInfo);
@@ -125,23 +127,48 @@ namespace net.vieapps.Services.Users
 						break;
 					#endregion
 
+					#region Accounts
+					case "account":
+						switch (requestInfo.Verb)
+						{
+							case "GET":
+								throw new MethodNotAllowedException(requestInfo.Verb);
+
+							case "POST":
+								if (requestInfo.Query.ContainsKey("x-convert"))
+									return await this.CreateAccountAsync(requestInfo, cancellationToken);
+								throw new MethodNotAllowedException(requestInfo.Verb);
+
+							default:
+								throw new MethodNotAllowedException(requestInfo.Verb);
+						}
+					#endregion
+
 					#region Profiles
-					case "search":
-						return await this.SearchProfilesAsync(requestInfo, cancellationToken);
-
-					case "fetch":
-						break;
-
 					case "profile":
 						switch (requestInfo.Verb)
 						{
-							// get detail
 							case "GET":
-								return await this.GetProfileAsync(requestInfo);
+								// search
+								if ("search".IsEquals(objectIdentity))
+									return await this.SearchProfilesAsync(requestInfo, cancellationToken);
 
-							// update profile
+								// fetch
+								else if ("fetch".IsEquals(objectIdentity))
+									return await this.FetchProfilesAsync(requestInfo, cancellationToken);
+								
+								// get details of a profile
+								else
+									return await this.GetProfileAsync(requestInfo, cancellationToken);
+
 							case "POST":
-								return await this.UpdateProfileAsync(requestInfo);
+								// create profile
+								if (requestInfo.Query.ContainsKey("x-convert"))
+									return await this.CreateProfileAsync(requestInfo, cancellationToken);
+
+								// update profile
+								else
+									return await this.UpdateProfileAsync(requestInfo, cancellationToken);
 						}
 						break;
 					#endregion
@@ -150,10 +177,15 @@ namespace net.vieapps.Services.Users
 					case "mediator":
 						if (requestInfo.Verb.IsEquals("GET") && requestInfo.Extra != null)
 						{
+							// check exist
 							if (requestInfo.Extra.ContainsKey("Exist"))
 								return await this.CheckSessionExistedAsync(requestInfo);
+
+							// verify/validate
 							else if (requestInfo.Extra.ContainsKey("Verify"))
 								return await this.ValidateSessionAsync(requestInfo);
+
+							// get account information
 							else if (requestInfo.Extra.ContainsKey("Account"))
 								return await this.GetAccountInfoAsync(requestInfo);
 						}
@@ -165,13 +197,13 @@ namespace net.vieapps.Services.Users
 				// unknown
 				var msg = "The request is invalid [" + this.ServiceURI + "]: " + requestInfo.Verb + " /";
 				if (!string.IsNullOrWhiteSpace(requestInfo.ObjectName))
-					msg +=  requestInfo.ObjectName + (requestInfo.Query.ContainsKey("object-identity") ? "/" + requestInfo.Query["object-identity"] : "");
+					msg +=  requestInfo.ObjectName + (!string.IsNullOrWhiteSpace(objectIdentity) ? "/" + objectIdentity : "");
 				throw new InvalidRequestException(msg);
 			}
 			catch (Exception ex)
 			{
 #if DEBUG
-				this.WriteInfo("Error occurred while processing\r\n==> Request:\r\n" + requestInfo.ToJson().ToString(Newtonsoft.Json.Formatting.Indented), ex);
+				this.WriteInfo("Error occurred while processing\r\n==> Request:\r\n" + requestInfo.ToJson().ToString(Formatting.Indented), ex);
 #else
 				this.WriteInfo("Error occurred while processing - Correlation ID: " + requestInfo.CorrelationID);
 #endif
@@ -200,7 +232,7 @@ namespace net.vieapps.Services.Users
 			await Utility.Cache.SetAbsoluteAsync(requestInfo.Session.SessionID.GetCacheKey<Session>(), requestInfo.Session.DeviceID, 7);
 
 #if DEBUG
-			this.WriteInfo("A session has been initialized" + "\r\n" + requestInfo.ToJson().ToString(Newtonsoft.Json.Formatting.Indented));
+			this.WriteInfo("A session has been initialized" + "\r\n" + requestInfo.ToJson().ToString(Formatting.Indented));
 #endif
 
 			// response
@@ -213,8 +245,8 @@ namespace net.vieapps.Services.Users
 
 		async Task<JObject> RegisterSessionAsync(RequestInfo requestInfo)
 		{
-			// anonymous/visitor
-			if (string.IsNullOrWhiteSpace(requestInfo.Session.User.ID))
+			// anonymous/visitor or system account
+			if (requestInfo.Session.User.ID.Equals("") || requestInfo.Session.User.ID.IsEquals(User.SystemAccountID))
 			{
 				var sessionID = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("SessionID")
 					? requestInfo.Extra["SessionID"].Decrypt()
@@ -237,7 +269,7 @@ namespace net.vieapps.Services.Users
 				await Utility.Cache.SetAsync(session, 180);
 
 #if DEBUG
-				this.WriteInfo("A session of visitor has been registered" + "\r\n" + session.ToJson().ToString(Newtonsoft.Json.Formatting.Indented));
+				this.WriteInfo("A session of " + (requestInfo.Session.User.ID.Equals("") ? "visitor" : "system account") + " has been registered" + "\r\n" + session.ToJson().ToString(Formatting.Indented));
 #endif
 
 				// response
@@ -282,7 +314,7 @@ namespace net.vieapps.Services.Users
 			await Account.UpdateAsync(userAccount);
 
 #if DEBUG
-			this.WriteInfo("A session of user has been registered" + "\r\n" + userSession.ToJson().ToString(Newtonsoft.Json.Formatting.Indented));
+			this.WriteInfo("A session of user has been registered" + "\r\n" + userSession.ToJson().ToString(Formatting.Indented));
 #endif
 
 			// response
@@ -299,7 +331,7 @@ namespace net.vieapps.Services.Users
 			var isExisted = await Utility.Cache.ExistsAsync<Session>(requestInfo.Session.SessionID);
 
 			// load from data repository (user) if has no cache
-			if (!isExisted && !string.IsNullOrWhiteSpace(requestInfo.Session.User.ID))
+			if (!isExisted && !requestInfo.Session.User.ID.Equals("") && !requestInfo.Session.User.ID.Equals(User.SystemAccountID))
 				isExisted = (await Session.GetAsync<Session>(requestInfo.Session.SessionID)) != null;
 
 			// return the result
@@ -312,7 +344,7 @@ namespace net.vieapps.Services.Users
 		async Task<JObject> ValidateSessionAsync(RequestInfo requestInfo)
 		{
 			// get session
-			var session = string.IsNullOrWhiteSpace(requestInfo.Session.User.ID)
+			var session = requestInfo.Session.User.ID.Equals("") || requestInfo.Session.User.ID.Equals(User.SystemAccountID)
 				? await Utility.Cache.FetchAsync<Session>(requestInfo.Session.SessionID)
 				: await Session.GetAsync<Session>(requestInfo.Session.SessionID);
 
@@ -328,7 +360,7 @@ namespace net.vieapps.Services.Users
 
 			if (string.IsNullOrWhiteSpace(accessToken))
 				throw new InvalidSessionException();
-			else if (requestInfo.Session.User != null && (!string.IsNullOrWhiteSpace(requestInfo.Session.User.ID) || !session.AccessToken.Equals(accessToken)))
+			else if (!session.AccessToken.Equals(accessToken))
 				throw new TokenRevokedException();
 
 			// return the result
@@ -346,13 +378,14 @@ namespace net.vieapps.Services.Users
 
 			var json = new JObject()
 			{
-				{ "ID", account.ID }
+				{ "ID", account.ID },
+				{ "Name", account.Profile.Name }
 			};
 
 			if (requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Full"))
 			{
-				json.Add(new JProperty("Roles", account.AccountRoles.Union(new List<string>() { SystemRole.All.ToString(), SystemRole.Authenticated.ToString() }).ToList()));
-				json.Add(new JProperty("Privileges", account.AccountPrivileges));
+				json.Add(new JProperty("Roles", (account.AccountRoles ?? new List<string>()).Concat((SystemRole.All.ToString() + "," + SystemRole.Authenticated.ToString()).ToList()).Distinct().ToList()));
+				json.Add(new JProperty("Privileges", account.AccountPrivileges ?? new List<Privilege>()));
 			}
 
 			return json;
@@ -461,6 +494,19 @@ namespace net.vieapps.Services.Users
 		}
 		#endregion
 
+		#region Create account
+		async Task<JObject> CreateAccountAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		{
+			if (!this.IsAuthenticated(requestInfo) && !requestInfo.Session.User.IsSystemAdministrator)
+				throw new AccessDeniedException();
+
+			var account = new Account();
+			account.CopyFrom(requestInfo.GetBodyJson());
+			await Account.CreateAsync(account, cancellationToken);
+			return account.ToJson();
+		}
+		#endregion
+
 		#region Search profiles
 		void NormalizeProfile(JObject json)
 		{
@@ -555,8 +601,16 @@ namespace net.vieapps.Services.Users
 		}
 		#endregion
 
+		#region Fetch profiles
+		async Task<JObject> FetchProfilesAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		{
+			await Task.Delay(0);
+			return new JObject();
+		}
+		#endregion
+
 		#region Get profile
-		async Task<JObject> GetProfileAsync(RequestInfo requestInfo)
+		async Task<JObject> GetProfileAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// check
 			if (!this.IsAuthenticated(requestInfo))
@@ -565,7 +619,7 @@ namespace net.vieapps.Services.Users
 				throw new AccessDeniedException();
 
 			// get information
-			var profile = await Profile.GetAsync<Profile>(requestInfo.Query.ContainsKey("object-identity") ? requestInfo.Query["object-identity"] : requestInfo.Session.User.ID);
+			var profile = await Profile.GetAsync<Profile>(requestInfo.GetObjectIdentity() ?? requestInfo.Session.User.ID);
 			if (profile == null)
 				throw new InformationNotFoundException();
 
@@ -577,8 +631,21 @@ namespace net.vieapps.Services.Users
 		}
 		#endregion
 
+		#region Create profile
+		async Task<JObject> CreateProfileAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		{
+			if (!this.IsAuthenticated(requestInfo) && !requestInfo.Session.User.IsSystemAdministrator)
+				throw new AccessDeniedException();
+
+			var profile = new Profile();
+			profile.CopyFrom(requestInfo.GetBodyJson());
+			await Profile.CreateAsync(profile, cancellationToken);
+			return profile.ToJson();
+		}
+		#endregion
+
 		#region Update profile
-		async Task<JObject> UpdateProfileAsync(RequestInfo requestInfo)
+		async Task<JObject> UpdateProfileAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			await Task.Delay(0);
 			return new JObject();

@@ -119,9 +119,31 @@ namespace net.vieapps.Services.Users
 		public override Privileges OriginalPrivileges { get; set; }
 		#endregion
 
-		public static string HashPassword(string accountID, string accountKey)
+		[NonSerialized]
+		Profile _profile = null;
+
+		[JsonIgnore, BsonIgnore, Ignore]
+		public Profile Profile
 		{
-			return (accountID.Trim().ToLower().Left(13) + ":" + accountKey).GetSHA512().ToBase64Url(false, true);
+			get
+			{
+				if (this._profile == null)
+					this._profile = Profile.Get<Profile>(this.ID);
+				return this._profile;
+			}
+		}
+
+		/// <summary>
+		/// Hashs the password for storing
+		/// </summary>
+		/// <param name="id">The string that presents the identity of an account</param>
+		/// <param name="password">The string that presents the password of an account</param>
+		/// <returns></returns>
+		public static string HashPassword(string id, string password)
+		{
+			if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(password) || !id.IsValidUUID())
+				throw new InformationInvalidException();
+			return (id.Trim().ToLower().Left(13) + ":" + password).GetHMACSHA512(id.Trim().ToLower(), false).ToBase64Url(true);
 		}
 
 	}
