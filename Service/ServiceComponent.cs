@@ -189,7 +189,7 @@ namespace net.vieapps.Services.Users
 							else if (requestInfo.Extra.ContainsKey("Account"))
 								return await this.GetAccountInfoAsync(requestInfo);
 						}
-						break;
+						throw new MethodNotAllowedException(requestInfo.Verb);
 					#endregion
 
 				}
@@ -497,11 +497,14 @@ namespace net.vieapps.Services.Users
 		#region Create account
 		async Task<JObject> CreateAccountAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
-			if (!this.IsAuthenticated(requestInfo) && !requestInfo.Session.User.IsSystemAdministrator)
+			if (!this.IsAuthenticated(requestInfo) || !requestInfo.Session.User.IsSystemAdministrator)
 				throw new AccessDeniedException();
 
+			var json = requestInfo.GetBodyJson();
 			var account = new Account();
-			account.CopyFrom(requestInfo.GetBodyJson());
+			account.CopyFrom(json);
+			if (json["AccountKey"] != null)
+				account.AccountKey = (json["AccountKey"] as JValue).Value as string;
 			await Account.CreateAsync(account, cancellationToken);
 			return account.ToJson();
 		}
@@ -634,7 +637,7 @@ namespace net.vieapps.Services.Users
 		#region Create profile
 		async Task<JObject> CreateProfileAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
-			if (!this.IsAuthenticated(requestInfo) && !requestInfo.Session.User.IsSystemAdministrator)
+			if (!this.IsAuthenticated(requestInfo) || !requestInfo.Session.User.IsSystemAdministrator)
 				throw new AccessDeniedException();
 
 			var profile = new Profile();

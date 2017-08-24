@@ -102,7 +102,7 @@ namespace net.vieapps.Services.Users
 
 		#region IBusiness properties
 		[JsonIgnore, BsonIgnore, Ignore]
-		public override string Title { get { return this.Name; } }
+		public override string Title { get; set; }
 
 		[JsonIgnore, BsonIgnore, Ignore]
 		public override string SystemID { get; set; }

@@ -22,7 +22,7 @@ using net.vieapps.Components.Repository;
 
 namespace net.vieapps.Services.Users
 {
-	[Serializable, BsonIgnoreExtraElements, DebuggerDisplay("ID = {ID}, Name = {Name}, Email = {Email}")]
+	[Serializable, BsonIgnoreExtraElements, DebuggerDisplay("ID = {ID}, Name = {AccountName}, Type = {Type}")]
 	[Entity(CollectionName = "Accounts", TableName = "T_Users_Accounts", CacheStorageType = typeof(Utility), CacheStorageName = "Cache")]
 	public class Account : Repository<Account>
 	{
@@ -104,7 +104,7 @@ namespace net.vieapps.Services.Users
 
 		#region IBusiness properties
 		[JsonIgnore, BsonIgnore, Ignore]
-		public override string Title { get { return this.AccountName; } }
+		public override string Title { get; set; }
 
 		[JsonIgnore, BsonIgnore, Ignore]
 		public override string SystemID { get; set; }
