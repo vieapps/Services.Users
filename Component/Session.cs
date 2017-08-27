@@ -11,7 +11,7 @@ using net.vieapps.Components.Repository;
 
 namespace net.vieapps.Services.Users
 {
-	[Serializable, BsonIgnoreExtraElements, DebuggerDisplay("ID = {ID}, IP = {IP}, Platform = {AppPlatform}")]
+	[Serializable, BsonIgnoreExtraElements, DebuggerDisplay("ID = {ID}, IP = {IP}, AppInfo = {AppInfo}")]
 	[Entity(CollectionName = "Sessions", TableName = "T_Users_Sessions", CacheStorageType = typeof(Utility), CacheStorageName = "Cache")]
 	public class Session : Repository<Session>
 	{
@@ -25,7 +25,7 @@ namespace net.vieapps.Services.Users
 			this.AccessToken = "";
 			this.IP = "";
 			this.DeviceID = "";
-			this.AppPlatform = "";
+			this.AppInfo = "";
 			this.Online = false;
 		}
 
@@ -76,7 +76,7 @@ namespace net.vieapps.Services.Users
 		/// Gets or sets the platform info of the device that use to performs the actions in this session
 		/// </summary>
 		[Property(MaxLength = 250)]
-		public string AppPlatform { get; set; }
+		public string AppInfo { get; set; }
 
 		/// <summary>
 		/// Gets or sets online status

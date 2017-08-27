@@ -12,6 +12,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Net;
 using System.Text;
+using System.Xml;
 using System.Linq;
 using System.Web;
 using System.Web.Security;
@@ -33,8 +34,23 @@ namespace net.vieapps.Services.Users
 {
 	internal static class Global
 	{
+
+		#region Attributes
 		internal static CancellationTokenSource CancellationTokenSource = new CancellationTokenSource();
+		internal static HashSet<string> HiddenSegments = null, BypassSegments = null, StaticSegments = null;
+
+		internal static IWampChannel IncommingChannel = null, OutgoingChannel = null;
+		internal static long IncommingChannelSessionID = 0, OutgoingChannelSessionID = 0;
+		internal static bool ChannelsAreClosedBySystem = false;
+
 		internal static Dictionary<string, IService> Services = new Dictionary<string, IService>();
+		internal static IManagementService ManagementService = null;
+		internal static IDisposable InterCommunicationMessageUpdater = null;
+		internal static IRTUService _RTUService = null;
+
+		static string _AESKey = null, _JWTKey = null, _PublicJWTKey = null, _RSAKey = null, _RSAExponent = null, _RSAModulus = null;
+		static RSACryptoServiceProvider _RSA = null;
+		#endregion
 
 		#region Get the app info
 		internal static Tuple<string, string, string> GetAppInfo(NameValueCollection header, NameValueCollection query, string agentString, string ipAddress, Uri urlReferrer = null)
@@ -73,8 +89,6 @@ namespace net.vieapps.Services.Users
 		#endregion
 
 		#region Encryption keys
-		static string _AESKey = null;
-
 		/// <summary>
 		/// Geths the key for working with AES
 		/// </summary>
@@ -98,8 +112,6 @@ namespace net.vieapps.Services.Users
 			return (Global.AESKey + (string.IsNullOrWhiteSpace(additional) ? "" : ":" + additional)).GenerateEncryptionKey(true, true, 128);
 		}
 
-		static string _JWTKey = null;
-
 		/// <summary>
 		/// Geths the key for working with JSON Web Token
 		/// </summary>
@@ -115,10 +127,10 @@ namespace net.vieapps.Services.Users
 
 		internal static string GenerateJWTKey()
 		{
-			return Global.JWTKey.GetHMACSHA512(Global.AESKey).ToBase64Url(false, true);
+			if (Global._PublicJWTKey == null)
+				Global._PublicJWTKey = Global.JWTKey.GetHMACSHA512(Global.AESKey).ToBase64Url(false, true);
+			return Global._PublicJWTKey;
 		}
-
-		static string _RSAKey = null;
 
 		/// <summary>
 		/// Geths the key for working with RSA
@@ -132,8 +144,6 @@ namespace net.vieapps.Services.Users
 				return Global._RSAKey;
 			}
 		}
-
-		static RSACryptoServiceProvider _RSA = null;
 
 		internal static RSACryptoServiceProvider RSA
 		{
@@ -152,15 +162,13 @@ namespace net.vieapps.Services.Users
 			}
 		}
 
-		static string _RSAExponent = null;
-
 		internal static string RSAExponent
 		{
 			get
 			{
 				if (Global._RSAExponent == null)
 				{
-					var xmlDoc = new System.Xml.XmlDocument();
+					var xmlDoc = new XmlDocument();
 					xmlDoc.LoadXml(Global.RSA.ToXmlString(false));
 					Global._RSAExponent = xmlDoc.DocumentElement.ChildNodes[1].InnerText.ToHexa(true);
 				}
@@ -168,15 +176,13 @@ namespace net.vieapps.Services.Users
 			}
 		}
 
-		static string _RSAModulus = null;
-
 		internal static string RSAModulus
 		{
 			get
 			{
 				if (Global._RSAModulus == null)
 				{
-					var xmlDoc = new System.Xml.XmlDocument();
+					var xmlDoc = new XmlDocument();
 					xmlDoc.LoadXml(Global.RSA.ToXmlString(false));
 					Global._RSAModulus = xmlDoc.DocumentElement.ChildNodes[0].InnerText.ToHexa(true);
 				}
@@ -186,10 +192,6 @@ namespace net.vieapps.Services.Users
 		#endregion
 
 		#region WAMP channels
-		internal static IWampChannel IncommingChannel = null, OutgoingChannel = null;
-		internal static long IncommingChannelSessionID = 0, OutgoingChannelSessionID = 0;
-		internal static bool ChannelAreClosedBySystem = false;
-
 		static Tuple<string, string, bool> GetLocationInfo()
 		{
 			var address = UtilityService.GetAppSetting("RouterAddress", "ws://127.0.0.1:26429/");
@@ -215,6 +217,12 @@ namespace net.vieapps.Services.Users
 			Global.IncommingChannel.RealmProxy.Monitor.ConnectionEstablished += (sender, arguments) =>
 			{
 				Global.IncommingChannelSessionID = arguments.SessionId;
+				var subject = Global.IncommingChannel?.RealmProxy.Services.GetSubject<CommunicateMessage>("net.vieapps.rtu.communicate.messages");
+				if (subject != null)
+					Global.InterCommunicationMessageUpdater = subject.Subscribe(
+						msg => Global.ProcessInterCommunicateMessage(msg),
+						ex => Global.WriteLogs(UtilityService.BlankUID, "Error occurred while fetching inter-communicate message", ex)
+					);
 			};
 
 			if (onConnectionEstablished != null)
@@ -238,14 +246,12 @@ namespace net.vieapps.Services.Users
 			}
 		}
 
-		internal static void ReOpenIncomingChannel(int delay = 0, System.Action onSuccess = null, Action<Exception> onError = null)
+		internal static void ReOpenIncomingChannel(int delay = 123, System.Action onSuccess = null, Action<Exception> onError = null)
 		{
 			if (Global.IncommingChannel != null)
 				(new WampChannelReconnector(Global.IncommingChannel, async () =>
 				{
-					if (delay > 0)
-						await Task.Delay(delay);
-
+					await Task.Delay(delay > 0 ? delay : 0);
 					try
 					{
 						await Global.IncommingChannel.Open();
@@ -275,6 +281,14 @@ namespace net.vieapps.Services.Users
 			Global.OutgoingChannel.RealmProxy.Monitor.ConnectionEstablished += (sender, arguments) =>
 			{
 				Global.OutgoingChannelSessionID = arguments.SessionId;
+				Task.Run(async () =>
+				{
+					try
+					{
+						await Global.InitializeRTUServiceAsync();
+					}
+					catch { }
+				}).ConfigureAwait(false);
 			};
 
 			if (onConnectionEstablished != null)
@@ -298,14 +312,12 @@ namespace net.vieapps.Services.Users
 			}
 		}
 
-		internal static void ReOpenOutgoingChannel(int delay = 0, System.Action onSuccess = null, Action<Exception> onError = null)
+		internal static void ReOpenOutgoingChannel(int delay = 123, System.Action onSuccess = null, Action<Exception> onError = null)
 		{
 			if (Global.OutgoingChannel != null)
 				(new WampChannelReconnector(Global.OutgoingChannel, async () =>
 				{
-					if (delay > 0)
-						await Task.Delay(delay);
-
+					await Task.Delay(delay > 0 ? delay : 0);
 					try
 					{
 						await Global.OutgoingChannel.Open();
@@ -329,7 +341,7 @@ namespace net.vieapps.Services.Users
 						Global.WriteLogs("The incoming connection is broken because the router is not found or the router is refused - Session ID: " + arguments.SessionId + "\r\n" + "- Reason: " + (string.IsNullOrWhiteSpace(arguments.Reason) ? "Unknown" : arguments.Reason) + " - " + arguments.CloseType.ToString());
 					else
 					{
-						if (Global.ChannelAreClosedBySystem)
+						if (Global.ChannelsAreClosedBySystem)
 							Global.WriteLogs("The incoming connection is closed - Session ID: " + arguments.SessionId + "\r\n" + "- Reason: " + (string.IsNullOrWhiteSpace(arguments.Reason) ? "Unknown" : arguments.Reason) + " - " + arguments.CloseType.ToString());
 						else
 							Global.ReOpenIncomingChannel(
@@ -357,7 +369,7 @@ namespace net.vieapps.Services.Users
 						Global.WriteLogs("The outgoing connection is broken because the router is not found or the router is refused - Session ID: " + arguments.SessionId + "\r\n" + "- Reason: " + (string.IsNullOrWhiteSpace(arguments.Reason) ? "Unknown" : arguments.Reason) + " - " + arguments.CloseType.ToString());
 					else
 					{
-						if (Global.ChannelAreClosedBySystem)
+						if (Global.ChannelsAreClosedBySystem)
 							Global.WriteLogs("The outgoing connection is closed - Session ID: " + arguments.SessionId + "\r\n" + "- Reason: " + (string.IsNullOrWhiteSpace(arguments.Reason) ? "Unknown" : arguments.Reason) + " - " + arguments.CloseType.ToString());
 						else
 							Global.ReOpenOutgoingChannel(
@@ -402,8 +414,6 @@ namespace net.vieapps.Services.Users
 			return Global.GetCorrelationID(HttpContext.Current?.Items);
 		}
 
-		static IManagementService ManagementService = null;
-
 		internal static async Task InitializeManagementServiceAsync()
 		{
 			if (Global.ManagementService == null)
@@ -440,24 +450,24 @@ namespace net.vieapps.Services.Users
 			catch { }
 		}
 
-		internal static async Task WriteLogsAsync(string correlationID, string log, Exception exception = null)
+		internal static Task WriteLogsAsync(string correlationID, string log, Exception exception = null)
 		{
 			var logs = !string.IsNullOrEmpty(log)
 				? new List<string>() { log }
 				: exception != null
 					? new List<string>() { exception.Message + " [" + exception.GetType().ToString() + "]" }
 					: new List<string>();
-			await Global.WriteLogsAsync(correlationID, logs, exception);
+			return Global.WriteLogsAsync(correlationID, logs, exception);
 		}
 
-		internal static async Task WriteLogsAsync(List<string> logs, Exception exception = null)
+		internal static Task WriteLogsAsync(List<string> logs, Exception exception = null)
 		{
-			await Global.WriteLogsAsync(Global.GetCorrelationID(), logs, exception);
+			return Global.WriteLogsAsync(Global.GetCorrelationID(), logs, exception);
 		}
 
-		internal static async Task WriteLogsAsync(string log, Exception exception = null)
+		internal static Task WriteLogsAsync(string log, Exception exception = null)
 		{
-			await Global.WriteLogsAsync(Global.GetCorrelationID(), log, exception);
+			return Global.WriteLogsAsync(Global.GetCorrelationID(), log, exception);
 		}
 
 		internal static void WriteLogs(string correlationID, List<string> logs, Exception exception = null)
@@ -490,8 +500,6 @@ namespace net.vieapps.Services.Users
 		#endregion
 
 		#region Start/End the app
-		internal static HashSet<string> HiddenSegments = null, BypassSegments = null, StaticSegments = null;
-
 		internal static void OnAppStart(HttpContext context)
 		{
 			var stopwatch = new Stopwatch();
@@ -500,7 +508,7 @@ namespace net.vieapps.Services.Users
 			// Json.NET
 			JsonConvert.DefaultSettings = () => new JsonSerializerSettings()
 			{
-				Formatting = Formatting.Indented,
+				Formatting = Newtonsoft.Json.Formatting.Indented,
 				ReferenceLoopHandling = ReferenceLoopHandling.Ignore,
 				DateTimeZoneHandling = DateTimeZoneHandling.Local
 			};
@@ -540,7 +548,9 @@ namespace net.vieapps.Services.Users
 		internal static void OnAppEnd()
 		{
 			Global.CancellationTokenSource.Cancel();
-			Global.ChannelAreClosedBySystem = true;
+			Global.InterCommunicationMessageUpdater?.Dispose();
+
+			Global.ChannelsAreClosedBySystem = true;
 			Global.CloseIncomingChannel();
 			Global.CloseOutgoingChannel();
 		}
@@ -857,6 +867,69 @@ namespace net.vieapps.Services.Users
 		}
 		#endregion
 
+		#region Get & call services
+		internal static async Task<JObject> CallServiceAsync(RequestInfo requestInfo, string correlationID = null)
+		{
+			requestInfo.CorrelationID = correlationID ?? requestInfo.CorrelationID;
+			var name = requestInfo.ServiceName.Trim().ToLower();
+
+#if DEBUG
+			Global.WriteLogs(requestInfo.CorrelationID, "Call the service [net.vieapps.services." + name + "]" + "\r\n" + requestInfo.ToJson().ToString(Newtonsoft.Json.Formatting.Indented));
+#endif
+
+			if (!Global.Services.TryGetValue(name, out IService service))
+			{
+				await Global.OpenOutgoingChannelAsync();
+				lock (Global.Services)
+				{
+					if (!Global.Services.TryGetValue(name, out service))
+					{
+						service = Global.OutgoingChannel.RealmProxy.Services.GetCalleeProxy<IService>(new CachedCalleeProxyInterceptor(new ProxyInterceptor(name)));
+						Global.Services.Add(name, service);
+					}
+				}
+			}
+
+			JObject json = null;
+			try
+			{
+				json = await service.ProcessRequestAsync(requestInfo, Global.CancellationTokenSource.Token);
+			}
+			catch (Exception)
+			{
+				throw;
+			}
+
+#if DEBUG
+			Global.WriteLogs(requestInfo.CorrelationID, "Result of the service [net.vieapps.services." + name + "]" + "\r\n" + json.ToString(Newtonsoft.Json.Formatting.Indented));
+#endif
+
+			return json;
+		}
+
+		internal static Task<JObject> CallServiceAsync(Services.Session session, string serviceName, string objectName, string verb = "GET", Dictionary<string, string> header = null, Dictionary<string, string> query = null, Dictionary<string, string> extra = null, string body = null, string correlationID = null)
+		{
+			return Global.CallServiceAsync(new RequestInfo()
+			{
+				Session = session ?? Global.GetSession(),
+				ServiceName = serviceName ?? "unknown",
+				ObjectName = objectName ?? "unknown",
+				Verb = string.IsNullOrWhiteSpace(verb) ? "GET" : verb,
+				Query = query ?? new Dictionary<string, string>(),
+				Header = header ?? new Dictionary<string, string>(),
+				Body = body,
+				Extra = extra ?? new Dictionary<string, string>(),
+				CorrelationID = correlationID ?? Global.GetCorrelationID()
+			});
+		}
+
+		internal static Task<JObject> CallServiceAsync(HttpContext context, string serviceName, string objectName, string verb = "GET", Dictionary<string, string> header = null, Dictionary<string, string> query = null, Dictionary<string, string> extra = null, string body = null)
+		{
+			context = context ?? HttpContext.Current;
+			return Global.CallServiceAsync(Global.GetSession(context), serviceName, objectName, verb, header, query, extra, body, Global.GetCorrelationID(context.Items));
+		}
+		#endregion
+
 		#region Session & Authentication
 		internal static Services.Session GetSession(NameValueCollection header, NameValueCollection query, string agentString, string ipAddress, Uri urlReferrer = null)
 		{
@@ -963,66 +1036,29 @@ namespace net.vieapps.Services.Users
 		}
 		#endregion
 
-		#region Get & call services
-		internal static async Task<JObject> CallServiceAsync(RequestInfo requestInfo, string correlationID = null)
+		#region Send & process inter-communicate message
+		static async Task InitializeRTUServiceAsync()
 		{
-			requestInfo.CorrelationID = correlationID ?? requestInfo.CorrelationID;
-			var name = requestInfo.ServiceName.Trim().ToLower();
-
-#if DEBUG
-			Global.WriteLogs(requestInfo.CorrelationID, "Call the service [net.vieapps.services." + name + "]" + "\r\n" + requestInfo.ToJson().ToString(Formatting.Indented));
-#endif
-
-			if (!Global.Services.TryGetValue(name, out IService service))
+			if (Global._RTUService == null)
 			{
 				await Global.OpenOutgoingChannelAsync();
-				lock (Global.Services)
-				{
-					if (!Global.Services.TryGetValue(name, out service))
-					{
-						service = Global.OutgoingChannel.RealmProxy.Services.GetCalleeProxy<IService>(new CachedCalleeProxyInterceptor(new ProxyInterceptor(name)));
-						Global.Services.Add(name, service);
-					}
-				}
+				Global._RTUService = Global.OutgoingChannel.RealmProxy.Services.GetCalleeProxy<IRTUService>();
 			}
+		}
 
-			JObject json = null;
+		internal static async Task SendInterCommunicateMessageAsync(CommunicateMessage message)
+		{
 			try
 			{
-				json = await service.ProcessRequestAsync(requestInfo, Global.CancellationTokenSource.Token);
+				await Global.InitializeRTUServiceAsync();
+				await Global._RTUService.SendInterCommunicateMessageAsync(message, Global.CancellationTokenSource.Token);
 			}
-			catch (Exception)
-			{
-				throw;
-			}
-
-#if DEBUG
-			Global.WriteLogs(requestInfo.CorrelationID, "Result of the service [net.vieapps.services." + name + "]" + "\r\n" + json.ToString(Formatting.Indented));
-#endif
-
-			return json;
+			catch { }
 		}
 
-		internal static Task<JObject> CallServiceAsync(Services.Session session, string serviceName, string objectName, string verb = "GET", Dictionary<string, string> header = null, Dictionary<string, string> query = null, Dictionary<string, string> extra = null, string body = null, string correlationID = null)
+		static void ProcessInterCommunicateMessage(CommunicateMessage message)
 		{
-			return Global.CallServiceAsync(new RequestInfo()
-			{
-				Session = session ?? Global.GetSession(),
-				ServiceName = serviceName ?? "unknown",
-				ObjectName = objectName ?? "unknown",
-				Verb = string.IsNullOrWhiteSpace(verb) ? "GET" : verb,
-				Query = query ?? new Dictionary<string, string>(),
-				Header = header ?? new Dictionary<string, string>(),
-				Body = body,
-				Extra = extra ?? new Dictionary<string, string>(),
-				CorrelationID = correlationID ?? Global.GetCorrelationID()
-			});
-		}
 
-		internal static Task<JObject> CallServiceAsync(HttpContext context, string serviceName, string objectName, string verb = "GET", Dictionary<string, string> header = null, Dictionary<string, string> query = null, Dictionary<string, string> extra = null, string body = null)
-		{
-			context = context ?? HttpContext.Current;
-			return Global.CallServiceAsync(Global.GetSession(context), serviceName, objectName, verb, header, query, extra, body, Global.GetCorrelationID(context.Items));
 		}
 		#endregion
 

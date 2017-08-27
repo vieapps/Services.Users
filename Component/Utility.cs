@@ -40,9 +40,23 @@ namespace net.vieapps.Services.Users
 			}
 		}
 
-		static CacheManager _Cache = new CacheManager("VIEApps-Services-Books", "Sliding", Utility.CacheTime);
+		static CacheManager _Cache = new CacheManager("VIEApps-Services-Users", "Sliding", Utility.CacheTime);
 
 		public static CacheManager Cache { get { return Utility._Cache; } }
+
+		static string _HttpFilesUri = null;
+
+		internal static string HttpFilesUri
+		{
+			get
+			{
+				if (string.IsNullOrWhiteSpace(Utility._HttpFilesUri))
+					Utility._HttpFilesUri = UtilityService.GetAppSetting("HttpFilesUri", "https://afs.vieapps.net");
+				while (Utility._HttpFilesUri.EndsWith("/"))
+					Utility._HttpFilesUri = Utility._HttpFilesUri.Left(Utility._HttpFilesUri.Length - 1);
+				return Utility._HttpFilesUri;
+			}
+		}
 
 	}
 

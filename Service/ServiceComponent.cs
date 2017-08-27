@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Diagnostics;
 using System.Collections.Generic;
+using System.Dynamic;
 
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -12,12 +13,27 @@ using Newtonsoft.Json.Linq;
 using net.vieapps.Components.Utility;
 using net.vieapps.Components.Security;
 using net.vieapps.Components.Repository;
+using net.vieapps.Components.Caching;
 #endregion
 
 namespace net.vieapps.Services.Users
 {
 	public class ServiceComponent : BaseService
 	{
+
+		#region Attributes
+		static string _ActivationKey = null;
+
+		internal static string ActivationKey
+		{
+			get
+			{
+				if (ServiceComponent._ActivationKey == null)
+					ServiceComponent._ActivationKey = UtilityService.GetAppSetting("ActivationKey", "VIEApps-56BA2999-Services-A2E4-Users-4B54-Activation-83EB-Key-693C250DC95D");
+				return ServiceComponent._ActivationKey;
+			}
+		}
+		#endregion
 
 		#region Start
 		public ServiceComponent() { }
@@ -110,15 +126,15 @@ namespace net.vieapps.Services.Users
 								if ((requestInfo.Session.User.ID.Equals("") || requestInfo.Session.User.ID.Equals(User.SystemAccountID)) && !requestInfo.Query.ContainsKey("register"))
 									return await this.InitializeSessionAsync(requestInfo);
 								else
-									return await this.RegisterSessionAsync(requestInfo);
+									return await this.RegisterSessionAsync(requestInfo, cancellationToken);
 
 							// sign-in
 							case "POST":
-								return await this.SignInAsync(requestInfo);
+								return await this.SignInAsync(requestInfo, cancellationToken);
 
 							// update session with access token
 							case "PUT":
-								return await this.RegisterSessionAsync(requestInfo.Session, (requestInfo.GetBodyJson()["AccessToken"] as JValue).Value.ToString().Decrypt());
+								return await this.RegisterSessionAsync(requestInfo.Session, (requestInfo.GetBodyJson()["AccessToken"] as JValue).Value.ToString().Decrypt(), cancellationToken);
 
 							// sign-out
 							case "DELETE":
@@ -138,6 +154,9 @@ namespace net.vieapps.Services.Users
 								if (requestInfo.Query.ContainsKey("x-convert"))
 									return await this.CreateAccountAsync(requestInfo, cancellationToken);
 								throw new MethodNotAllowedException(requestInfo.Verb);
+
+							case "PUT":
+								return await this.ResetPasswordAsync(requestInfo, cancellationToken);
 
 							default:
 								throw new MethodNotAllowedException(requestInfo.Verb);
@@ -173,22 +192,34 @@ namespace net.vieapps.Services.Users
 						break;
 					#endregion
 
-					#region Mediator
+					#region Activate
+					case "activate":
+						if (requestInfo.Verb.IsEquals("GET"))
+							return await this.ActivateAsync(requestInfo, cancellationToken);
+						throw new MethodNotAllowedException(requestInfo.Verb);
+					#endregion
+
+					#region Mediator & Captcha
 					case "mediator":
 						if (requestInfo.Verb.IsEquals("GET") && requestInfo.Extra != null)
 						{
 							// check exist
 							if (requestInfo.Extra.ContainsKey("Exist"))
-								return await this.CheckSessionExistedAsync(requestInfo);
+								return await this.CheckSessionExistedAsync(requestInfo, cancellationToken);
 
 							// verify/validate
 							else if (requestInfo.Extra.ContainsKey("Verify"))
-								return await this.ValidateSessionAsync(requestInfo);
+								return await this.ValidateSessionAsync(requestInfo, cancellationToken);
 
 							// get account information
 							else if (requestInfo.Extra.ContainsKey("Account"))
-								return await this.GetAccountInfoAsync(requestInfo);
+								return await this.GetAccountInfoAsync(requestInfo, cancellationToken);
 						}
+						throw new MethodNotAllowedException(requestInfo.Verb);
+
+					case "captcha":
+						if (requestInfo.Verb.IsEquals("GET"))
+							return this.RegisterSessionCaptcha(requestInfo);
 						throw new MethodNotAllowedException(requestInfo.Verb);
 					#endregion
 
@@ -211,7 +242,7 @@ namespace net.vieapps.Services.Users
 			} 
 		}
 
-		#region Session
+		#region Initialize session
 		async Task<JObject> InitializeSessionAsync(RequestInfo requestInfo)
 		{
 			// prepare
@@ -225,7 +256,7 @@ namespace net.vieapps.Services.Users
 				if (string.IsNullOrWhiteSpace(appPlatform))
 					appPlatform = "N/A (" + UtilityService.NewUID + ")";
 
-				requestInfo.Session.DeviceID = "pwa@" + (appName + "/" + appPlatform + "@" + requestInfo.Session.AppAgent).GetHMACSHA384(requestInfo.Session.SessionID, true);
+				requestInfo.Session.DeviceID = "pwa@" + (appName + "/" + appPlatform + "@" + (requestInfo.Session.AppAgent ?? "N/A")).GetHMACSHA384(requestInfo.Session.SessionID, true);
 			}
 
 			// update into cache to mark the session is issued by the system
@@ -242,8 +273,10 @@ namespace net.vieapps.Services.Users
 				{ "DeviceID", requestInfo.Session.DeviceID }
 			};
 		}
+		#endregion
 
-		async Task<JObject> RegisterSessionAsync(RequestInfo requestInfo)
+		#region Register session
+		async Task<JObject> RegisterSessionAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// anonymous/visitor or system account
 			if (requestInfo.Session.User.ID.Equals("") || requestInfo.Session.User.ID.IsEquals(User.SystemAccountID))
@@ -261,7 +294,7 @@ namespace net.vieapps.Services.Users
 					ID = requestInfo.Session.SessionID,
 					IP = requestInfo.Session.IP,
 					DeviceID = requestInfo.Session.DeviceID,
-					AppPlatform = requestInfo.Session.AppName + " / " + requestInfo.Session.AppPlatform,
+					AppInfo = requestInfo.Session.AppName + " @ " + requestInfo.Session.AppPlatform,
 					AccessToken = requestInfo.Extra.ContainsKey("AccessToken") ? requestInfo.Extra["AccessToken"].Decrypt() : null
 				};
 
@@ -282,25 +315,26 @@ namespace net.vieapps.Services.Users
 
 			// user
 			else
-				return await this.RegisterSessionAsync(requestInfo.Session);
+				return await this.RegisterSessionAsync(requestInfo.Session, null, cancellationToken);
 		}
 
-		async Task<JObject> RegisterSessionAsync(Services.Session requestSession, string accessToken = null)
+		async Task<JObject> RegisterSessionAsync(Services.Session requestSession, string accessToken = null, CancellationToken cancellationToken = default(CancellationToken))
 		{
 			// check account
-			var userAccount = await Account.GetAsync<Account>(requestSession.User.ID);
+			var userAccount = await Account.GetAsync<Account>(requestSession.User.ID, cancellationToken);
 			if (userAccount == null)
 				throw new InvalidSessionException("Account is not found");
 
 			// check session
-			var userSession = await Session.GetAsync<Session>(requestSession.SessionID);
+			var userSession = await Session.GetAsync<Session>(requestSession.SessionID, cancellationToken);
 			if (userSession == null || !userSession.UserID.Equals(userAccount.ID))
 				throw new InvalidSessionException("Session is not found");
 
 			// update (renew) session
 			userSession.ExpiredAt = DateTime.Now.AddDays(60);
 			userSession.AccessToken = accessToken ?? userSession.AccessToken;
-			await Session.UpdateAsync(userSession);
+			userSession.AppInfo = requestSession.AppName + " @ " + requestSession.AppPlatform;
+			await Session.UpdateAsync(userSession, cancellationToken);
 
 			// update statistics of the account
 			userAccount.LastAccess = DateTime.Now;
@@ -308,10 +342,14 @@ namespace net.vieapps.Services.Users
 				userAccount.Sessions = await Session.FindAsync(Filters<Session>.Equals("UserID", userAccount.ID), Sorts<Session>.Descending("ExpiredAt"), 0, 1);
 			else
 			{
-				userAccount.Sessions.Insert(0, userSession);
-				userAccount.Sessions = userAccount.Sessions.ToDictionary(s => s.ID).Select(i => i.Value).ToList();
+				var sessions = userAccount.Sessions.ToDictionary(s => s.ID);
+				if (sessions.ContainsKey(userSession.ID))
+					sessions[userSession.ID] = userSession;
+				else
+					sessions.Add(userSession.ID, userSession);
+				userAccount.Sessions = sessions.Select(i => i.Value).ToList();
 			}
-			await Account.UpdateAsync(userAccount);
+			await Account.UpdateAsync(userAccount, cancellationToken);
 
 #if DEBUG
 			this.WriteInfo("A session of user has been registered" + "\r\n" + userSession.ToJson().ToString(Formatting.Indented));
@@ -324,76 +362,10 @@ namespace net.vieapps.Services.Users
 				{ "DeviceID", requestSession.DeviceID }
 			};
 		}
-
-		async Task<JObject> CheckSessionExistedAsync(RequestInfo requestInfo)
-		{
-			// check existed from cache
-			var isExisted = await Utility.Cache.ExistsAsync<Session>(requestInfo.Session.SessionID);
-
-			// load from data repository (user) if has no cache
-			if (!isExisted && !requestInfo.Session.User.ID.Equals("") && !requestInfo.Session.User.ID.Equals(User.SystemAccountID))
-				isExisted = (await Session.GetAsync<Session>(requestInfo.Session.SessionID)) != null;
-
-			// return the result
-			return new JObject()
-			{
-				{ "Existed", isExisted }
-			};
-		}
-
-		async Task<JObject> ValidateSessionAsync(RequestInfo requestInfo)
-		{
-			// get session
-			var session = requestInfo.Session.User.ID.Equals("") || requestInfo.Session.User.ID.Equals(User.SystemAccountID)
-				? await Utility.Cache.FetchAsync<Session>(requestInfo.Session.SessionID)
-				: await Session.GetAsync<Session>(requestInfo.Session.SessionID);
-
-			// validate
-			if (session == null)
-				throw new SessionNotFoundException();
-			else if (session.ExpiredAt < DateTime.Now)
-				throw new SessionExpiredException();
-
-			var accessToken = requestInfo.Extra.ContainsKey("AccessToken")
-				? requestInfo.Extra["AccessToken"].Decrypt()
-				: null;
-
-			if (string.IsNullOrWhiteSpace(accessToken))
-				throw new InvalidSessionException();
-			else if (!session.AccessToken.Equals(accessToken))
-				throw new TokenRevokedException();
-
-			// return the result
-			return new JObject()
-			{
-				{ "Status", "OK" }
-			};
-		}
-
-		async Task<JObject> GetAccountInfoAsync(RequestInfo requestInfo)
-		{
-			var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID);
-			if (account == null)
-				throw new InvalidSessionException("Account is not found");
-
-			var json = new JObject()
-			{
-				{ "ID", account.ID },
-				{ "Name", account.Profile.Name }
-			};
-
-			if (requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Full"))
-			{
-				json.Add(new JProperty("Roles", (account.AccountRoles ?? new List<string>()).Concat((SystemRole.All.ToString() + "," + SystemRole.Authenticated.ToString()).ToList()).Distinct().ToList()));
-				json.Add(new JProperty("Privileges", account.AccountPrivileges ?? new List<Privilege>()));
-			}
-
-			return json;
-		}
 		#endregion
 
 		#region Sign In
-		async Task<JObject> SignInAsync(RequestInfo requestInfo)
+		async Task<JObject> SignInAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			var key = "Attempt#" + requestInfo.Session.IP;
 			try
@@ -406,7 +378,7 @@ namespace net.vieapps.Services.Users
 				switch (accountType)
 				{
 					default:
-						result = await this.SignBuiltInAccountInAsync(requestInfo);
+						result = await this.SignBuiltInAccountInAsync(requestInfo, cancellationToken);
 						break;
 				}
 
@@ -428,7 +400,7 @@ namespace net.vieapps.Services.Users
 			}
 		}
 
-		async Task<JObject> SignBuiltInAccountInAsync(RequestInfo requestInfo)
+		async Task<JObject> SignBuiltInAccountInAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// prepare
 			var email = requestInfo.Extra.ContainsKey("Email")
@@ -439,21 +411,21 @@ namespace net.vieapps.Services.Users
 				: null;
 
 			// find account & check
-			var account = await Account.GetAsync<Account>(Filters<Account>.Equals("AccountName", email.Trim().ToLower()));
+			var account = await Account.GetAsync<Account>(Filters<Account>.And(Filters<Account>.Equals("AccountName", email), Filters<Account>.Equals("Type", AccountType.BuiltIn.ToString())));
 			if (account == null || !account.AccountKey.Equals(Account.HashPassword(account.ID, password)))
 				throw new WrongAccountException();
 
 			// register session
-			Session.Create(new Session()
+			await Session.CreateAsync(new Session()
 			{
 				ID = requestInfo.Session.SessionID,
 				UserID = account.ID,
 				AccessToken = "",
 				IP = requestInfo.Session.IP,
 				DeviceID = requestInfo.Session.DeviceID,
-				AppPlatform = requestInfo.Session.AppName + "/" + requestInfo.Session.AppPlatform,
+				AppInfo = requestInfo.Session.AppName + " @ " + requestInfo.Session.AppPlatform,
 				Online = true
-			});
+			}, cancellationToken);
 
 			// response
 			return new JObject()
@@ -510,6 +482,175 @@ namespace net.vieapps.Services.Users
 		}
 		#endregion
 
+		#region Reset password
+		async Task<Tuple<string, string, string, string, Tuple<string, int, bool, string, string>>> GetPasswordInstructionsAsync(RequestInfo requestInfo, CancellationToken cancellationToken, string mode = "reset")
+		{
+			string subject = "", body = "", signature = "", sender = "";
+			string smtpServer = "", smtpUser = "", smtpUserPassword = "";
+			var smtpServerPort = 25;
+			var smtpServerEnableSsl = false;
+
+			if (requestInfo.Query.ContainsKey("related-service"))
+				try
+				{
+					var data = await this.CallServiceAsync(requestInfo, requestInfo.Query["related-service"], cancellationToken);
+
+					subject = data["Subject"] != null && data["Subject"] is JValue && (data["Subject"] as JValue).Value != null
+						? (data["Subject"] as JValue).Value as string
+						: "";
+
+					body = data["Body"] != null && data["Body"] is JValue && (data["Body"] as JValue).Value != null
+						? (data["Body"] as JValue).Value as string
+						: "";
+
+					signature = data["Body"] != null && data["Signature"] is JValue && (data["Signature"] as JValue).Value != null
+						? (data["Signature"] as JValue).Value as string
+						: "";
+
+					sender = data["Sender"] != null && data["Sender"] is JValue && (data["Sender"] as JValue).Value != null
+						? (data["Sender"] as JValue).Value as string
+						: "";
+
+					smtpServer = data["SmtpServer"] != null && data["SmtpServer"] is JValue && (data["SmtpServer"] as JValue).Value != null
+						? (data["SmtpServer"] as JValue).Value as string
+						: "";
+
+					smtpServerPort = data["SmtpServerPort"] != null && data["SmtpServerPort"] is JValue && (data["SmtpServerPort"] as JValue).Value != null
+						? (data["SmtpServerPort"] as JValue).Value.CastAs<int>()
+						: 25;
+
+					smtpServerEnableSsl = data["SmtpServerEnableSsl"] != null && data["SmtpServerEnableSsl"] is JValue && (data["SmtpServerEnableSsl"] as JValue).Value != null
+						? (data["SmtpServerEnableSsl"] as JValue).Value.CastAs<bool>()
+						: false;
+
+					smtpUser = data["SmtpUser"] != null && data["SmtpUser"] is JValue && (data["SmtpUser"] as JValue).Value != null
+						? (data["SmtpUser"] as JValue).Value as string
+						: "";
+
+					smtpUserPassword = data["SmtpUserPassword"] != null && data["SmtpUserPassword"] is JValue && (data["SmtpUserPassword"] as JValue).Value != null
+						? (data["SmtpUserPassword"] as JValue).Value as string
+						: "";
+				}
+				catch { }
+
+			if (string.IsNullOrWhiteSpace(subject))
+				subject = "[{Host}] Kích hoạt mật khẩu đăng nhập mới";
+
+			if (string.IsNullOrWhiteSpace(body))
+				body = @"
+				Xin chào <b>{Name}</b>
+				<br/><br/>
+				Tài khoản đăng nhập của bạn đã được yêu cầu " + ("reset".IsEquals(mode) ? "đặt lại" : "thay đổi") + @" thông tin đăng nhập như sau:
+				<blockquote>
+					Email đăng nhập: <b>{Email}</b>
+					<br/>
+					Mật khẩu đăng nhập (mới): <b>{Password}</b>
+				</blockquote>
+				<br/>
+				Để hoàn tất quá trình thay đổi mật khẩu mới, bạn vui lòng kích hoạt bằng cách mở liên kết dưới:
+				<br/><br/>
+				<span style='display:inline-block;padding:15px;border-radius:5px;background-color:#eee;font-weight:bold'>
+				<a href='{Uri}' style='color:red'>Kích hoạt mật khẩu đăng nhập mới</a>
+				</span>
+				<br/><br/>
+				<br/>
+				<i>Thông tin thêm:</i>
+				<ul>
+					<li>
+						Hoạt động này được thực hiện lúc <b>{Time}</b> với thiết bị <b>{AppPlatform}</b> có địa chỉ IP là <b>{IP}</b>
+					</li>
+					<li>
+						Mã kích hoạt chỉ có giá trị trong vòng 01 ngày kể từ thời điểm nhận được email này.
+					</li>
+					<li>
+						Nếu không phải bạn thực hiện hoạt động này, bạn nên kiểm tra lại thông tin đăng nhập cũng như email liên quan
+						vì có thể một điểm nào đó trong hệ thống thông tin bị rò rỉ (và có thể gây hại cho bạn).
+						<br/>
+						Khi bạn chưa kích hoạt thì mật khẩu đăng nhập mới là chưa có tác dụng.
+					</li>
+				</ul>
+				<br/><br/>
+				{Signature}
+				";
+
+			return new Tuple<string, string, string, string, Tuple<string, int, bool, string, string>>(subject, body, signature, sender, new Tuple<string, int, bool, string, string>(smtpServer, smtpServerPort, smtpServerEnableSsl, smtpUser, smtpUserPassword));
+		}
+
+		async Task<JObject> ResetPasswordAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		{
+			// get account
+			var email = requestInfo.Extra["Email"].Decrypt();
+			var account = Account.Get<Account>(Filters<Account>.And(Filters<Account>.Equals("AccountName", email), Filters<Account>.Equals("Type", AccountType.BuiltIn.ToString())));
+			if (account == null)
+				return new JObject();
+
+			// prepare
+			var password = email.IndexOf("-") > 0
+				? email.Substring(email.IndexOf("-"), 1)
+				: email.IndexOf(".") > 0
+					? email.Substring(email.IndexOf("."), 1)
+					: email.IndexOf("_") > 0
+						? email.Substring(email.IndexOf("_"), 1)
+						: "#";
+
+			password = Captcha.GenerateRandomCode(true, true).ToUpper() + password
+				+ Captcha.GenerateRandomCode(true, false).ToLower()
+				+ UtilityService.GetUUID().GetHMACSHA1(email, false).Left(3).GetCapitalizedFirstLetter()
+				+ UtilityService.GetUUID().Right(3).ToLower();
+
+			var code = (new JObject()
+			{
+				{ "ID", account.ID },
+				{ "Name", account.Profile.Name },
+				{ "Email", email },
+				{ "Password", password },
+				{ "Time", DateTime.Now },
+				{ "SessionID", requestInfo.Session.SessionID },
+				{ "DeviceID", requestInfo.Session.DeviceID },
+				{ "AppName", requestInfo.Session.AppName },
+				{ "AppPlatform", requestInfo.Session.AppPlatform },
+				{ "IP", requestInfo.Session.IP }
+			}).ToString(Formatting.None).Encrypt(ServiceComponent.ActivationKey).ToBase64Url(true);
+
+			var uri = requestInfo.Query.ContainsKey("uri")
+				? requestInfo.Query["uri"].Url64Decode()
+				: "http://localhost/#?prego=activate&mode={mode}&code={code}";
+			uri = uri.Replace(StringComparison.OrdinalIgnoreCase, "{mode}", "password");
+			uri = uri.Replace(StringComparison.OrdinalIgnoreCase, "{code}", code);
+
+			// prepare activation email
+			var instructions = await this.GetPasswordInstructionsAsync(requestInfo, cancellationToken, "reset");
+			var data = new Dictionary<string, string>()
+			{
+				{ "Host", requestInfo.Query.ContainsKey("host") ? requestInfo.Query["host"] : "unknown" },
+				{ "Email", email },
+				{ "Password", password },
+				{ "Name", account.Profile.Name },
+				{ "Time", DateTime.Now.ToString("hh:mm tt @ dd/MM/yyyy") },
+				{ "AppPlatform", requestInfo.Session.AppName + " @ " + requestInfo.Session.AppPlatform },
+				{ "IP", requestInfo.Session.IP },
+				{ "Uri", uri },
+				{ "Code", code },
+				{ "Signature", instructions.Item3 }
+			};
+
+			// send an email
+			var subject = instructions.Item1;
+			var body = instructions.Item2;
+			data.ForEach(info =>
+			{
+				subject = subject.Replace(StringComparison.OrdinalIgnoreCase, "{" + info.Key + "}", info.Value);
+				body = body.Replace(StringComparison.OrdinalIgnoreCase, "{" + info.Key + "}", info.Value);
+			});
+
+			var smtp = instructions.Item5;
+			await this.SendEmailAsync(instructions.Item4, account.Profile.Name + " <" + email + ">", subject, body, smtp.Item1, smtp.Item2, smtp.Item3, smtp.Item4, smtp.Item5, cancellationToken);
+
+			// return info
+			return new JObject();
+		}
+		#endregion
+
 		#region Search profiles
 		void NormalizeProfile(JObject json)
 		{
@@ -531,7 +672,7 @@ namespace net.vieapps.Services.Users
 			// check
 			if (!this.IsAuthenticated(requestInfo))
 				throw new AccessDeniedException();
-			else if (!this.IsAuthorized(requestInfo, Components.Security.Action.Vote))
+			else if (!this.IsAuthorized(requestInfo, Components.Security.Action.View))
 				throw new AccessDeniedException();
 
 			// prepare
@@ -615,14 +756,16 @@ namespace net.vieapps.Services.Users
 		#region Get profile
 		async Task<JObject> GetProfileAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
-			// check
-			if (!this.IsAuthenticated(requestInfo))
-				throw new AccessDeniedException();
-			else if (!this.IsAuthorized(requestInfo, Components.Security.Action.Vote))
+			// prepare
+			var userID = requestInfo.GetObjectIdentity() ?? requestInfo.Session.User.ID;
+			var gotRights = this.IsAuthenticated(requestInfo) && requestInfo.Session.User.ID.IsEquals(userID);
+			if (!gotRights)
+				gotRights = this.IsAuthorized(requestInfo, Components.Security.Action.View);
+			if (!gotRights)
 				throw new AccessDeniedException();
 
 			// get information
-			var profile = await Profile.GetAsync<Profile>(requestInfo.GetObjectIdentity() ?? requestInfo.Session.User.ID);
+			var profile = await Profile.GetAsync<Profile>(userID);
 			if (profile == null)
 				throw new InformationNotFoundException();
 
@@ -655,10 +798,247 @@ namespace net.vieapps.Services.Users
 		}
 		#endregion
 
+		#region Activate
+		async Task<JObject> ActivateAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		{
+			var mode = requestInfo.Query.ContainsKey("mode")
+				? requestInfo.Query["mode"]
+				: null;
+			if (string.IsNullOrWhiteSpace(mode))
+				throw new InvalidActivateInformationException();
+
+			var code = requestInfo.Query.ContainsKey("code")
+				? requestInfo.Query["code"]
+				: null;
+			if (string.IsNullOrWhiteSpace(code))
+				throw new InvalidActivateInformationException();
+
+			try
+			{
+				code = code.ToBase64(false, true).Decrypt(ServiceComponent.ActivationKey);
+			}
+			catch (Exception ex)
+			{
+				throw new InvalidActivateInformationException(ex);
+			}
+
+			ExpandoObject activationInfo = null;
+			try
+			{
+				activationInfo = code.ToExpandoObject();
+			}
+			catch (Exception ex)
+			{
+				throw new InvalidActivateInformationException(ex);
+			}
+
+			// check time
+			if (!activationInfo.Has("Time"))
+				throw new InvalidActivateInformationException();
+
+			var time = activationInfo.Get<DateTime>("Time");
+			if (mode.IsEquals("account") && (DateTime.Now - time).TotalDays > 30)
+				throw new ActivateInformationExpiredException();
+			else if ((DateTime.Now - time).TotalHours > 24)
+				throw new ActivateInformationExpiredException();
+
+			// activate
+			if (mode.IsEquals("password"))
+				return await this.ActivatePasswordAsync(requestInfo, activationInfo, cancellationToken);
+
+			return new JObject();
+		}
+
+		async Task<JObject> ActivatePasswordAsync(RequestInfo requestInfo, ExpandoObject  activationInfo, CancellationToken cancellationToken)
+		{
+			// prepare
+			var id = activationInfo.Get<string>("ID");
+			var password = activationInfo.Get<string>("Password");
+			var sessionID = requestInfo.Session.SessionID;
+			if (string.IsNullOrWhiteSpace(sessionID))
+				sessionID = activationInfo.Get<string>("SessionID");
+			var deviceID = requestInfo.GetDeviceID();
+			if (string.IsNullOrWhiteSpace(deviceID))
+				deviceID = activationInfo.Get<string>("DeviceID");
+			var appName = requestInfo.GetAppName();
+			if (string.IsNullOrWhiteSpace(appName))
+				appName = activationInfo.Get<string>("AppName");
+			var appPlatform = requestInfo.GetAppPlatform();
+			if (string.IsNullOrWhiteSpace(appPlatform))
+				appPlatform = activationInfo.Get<string>("AppPlatform");
+
+			// load account
+			var account = await Account.GetAsync<Account>(id);
+			if (account == null)
+				throw new InvalidActivateInformationException();
+
+			// update new password
+			account.AccountKey = Account.HashPassword(account.ID, password);
+			account.LastAccess = DateTime.Now;
+			account.Sessions = null;
+			await Account.UpdateAsync(account);
+
+			// register session
+			var session = await Session.GetAsync<Session>(sessionID);
+			if (session == null)
+			{
+				session = new Session()
+				{
+					ID = sessionID,
+					UserID = account.ID,
+					IP = requestInfo.Session.IP,
+					DeviceID = deviceID,
+					AppInfo = appName + " @ " + appPlatform,
+					Online = true
+				};
+				await Session.CreateAsync(session, cancellationToken);
+			}
+			else
+			{
+				session.IP = requestInfo.Session.IP;
+				session.DeviceID = deviceID;
+				session.AppInfo = appName + " / " + appPlatform;
+				session.Online = true;
+				await Session.UpdateAsync(session, cancellationToken);
+			}
+
+			// response
+			return new JObject()
+			{
+				{ "UserID", account.ID },
+				{ "SessionID", sessionID },
+				{ "DeviceID", deviceID }
+			};
+		}
+		#endregion
+
+		#region Mediators: check exist, verify, account info
+		async Task<JObject> CheckSessionExistedAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		{
+			// 1st step: check cached session
+			var isExisted = await Utility.Cache.ExistsAsync<Session>(requestInfo.Session.SessionID);
+
+			// 2nd step: load from data repository (user) if has no cache
+			if (!isExisted && !requestInfo.Session.User.ID.Equals("") && !requestInfo.Session.User.ID.Equals(User.SystemAccountID))
+			{
+				var session = await Session.GetAsync<Session>(requestInfo.Session.SessionID, cancellationToken);
+				isExisted = session != null;
+			}
+
+			// return
+			return new JObject()
+			{
+				{ "Existed", isExisted }
+			};
+		}
+
+		async Task<JObject> ValidateSessionAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		{
+			// 1st step: get cached session
+			var session = await Utility.Cache.FetchAsync<Session>(requestInfo.Session.SessionID);
+			if (session == null && !requestInfo.Session.User.ID.Equals("") && !requestInfo.Session.User.ID.Equals(User.SystemAccountID))
+				session = await Session.GetAsync<Session>(requestInfo.Session.SessionID, cancellationToken);
+
+			// validate
+			if (session == null)
+				throw new SessionNotFoundException();
+			else if (session.ExpiredAt < DateTime.Now)
+				throw new SessionExpiredException();
+
+			var accessToken = requestInfo.Extra.ContainsKey("AccessToken")
+				? requestInfo.Extra["AccessToken"].Decrypt()
+				: null;
+
+			if (string.IsNullOrWhiteSpace(accessToken))
+				throw new InvalidSessionException();
+			else if (!session.AccessToken.Equals(accessToken))
+				throw new TokenRevokedException();
+
+			// return the result
+			return new JObject()
+			{
+				{ "Status", "OK" }
+			};
+		}
+
+		async Task<JObject> GetAccountInfoAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		{
+			var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID, cancellationToken);
+			if (account == null)
+				throw new InvalidSessionException("Account is not found");
+
+			var json = new JObject()
+			{
+				{ "ID", account.ID }
+			};
+
+			if (requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Full"))
+			{
+				json.Add(new JProperty("Roles", (account.AccountRoles ?? new List<string>()).Concat("All,Authenticated".ToList()).Distinct().ToList()));
+				json.Add(new JProperty("Privileges", account.AccountPrivileges ?? new List<Privilege>()));
+			}
+
+			return json;
+		}
+		#endregion
+
+		#region Captchas
+		JObject RegisterSessionCaptcha(RequestInfo requestInfo)
+		{
+			if (!requestInfo.Query.ContainsKey("register"))
+				throw new InvalidRequestException();
+
+			var code = Captcha.GenerateCode();
+			var uri = UtilityService.GetAppSetting("HttpFilesUri", "https://afs.vieapps.net")
+				+ "/captchas/" + code.Url64Encode() + "/"
+				+ requestInfo.Query["register"].Substring(UtilityService.GetRandomNumber(1, 32), 13).Reverse() + ".jpg";
+
+			return new JObject()
+			{
+				{ "Code", code },
+				{ "Uri", uri }
+			};
+		}
+		#endregion
+
+		#region Process inter-communicate messages
 		void OnInterCommunicateMessageReceived(CommunicateMessage message)
 		{
+			// check
+			if (message.Data == null)
+				return;
 
+			// prepare
+			var data = message.Data.ToExpandoObject();
+
+			var verb = data.Get<string>("Verb");
+			if (string.IsNullOrWhiteSpace(verb))
+				return;
+
+			// online status
+			if (verb.IsEquals("Status"))
+				try
+				{
+					var session = Session.Get<Session>(data.Get<string>("SessionID"));
+					if (session != null && !session.UserID.Equals(""))
+					{
+						session.Online = data.Get<bool>("IsOnline");
+						Session.Update(session);
+					}
+#if DEBUG
+					this.WriteInfo("Update online status successful" + "\r\n" + "=====>" + "\r\n" + message.ToJson().ToString(Formatting.Indented));
+#endif
+				}
+#if DEBUG
+				catch (Exception ex)
+				{
+					this.WriteInfo("Error occurred while updating online status", ex);
+				}
+#else
+				catch { }
+#endif
 		}
+		#endregion
 
 		~ServiceComponent()
 		{

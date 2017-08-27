@@ -1,14 +1,9 @@
 ﻿#region Related components
 using System;
-using System.Collections.Generic;
-using System.Collections.Specialized;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using System.Configuration;
 using System.Diagnostics;
 
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using Newtonsoft.Json.Converters;
 
 using MongoDB.Bson;
@@ -16,7 +11,6 @@ using MongoDB.Bson.Serialization.Attributes;
 
 using net.vieapps.Components.Utility;
 using net.vieapps.Components.Security;
-using net.vieapps.Components.Caching;
 using net.vieapps.Components.Repository;
 #endregion
 
@@ -115,6 +109,20 @@ namespace net.vieapps.Services.Users
 
 		[JsonIgnore, BsonIgnore, Ignore]
 		public override Privileges OriginalPrivileges { get; set; }
+		#endregion
+
+		#region To JSON
+		public override JObject ToJson(bool addTypeOfExtendedProperties)
+		{
+			var gravatar = Utility.HttpFilesUri + "/avatars/default.png";
+			gravatar = string.IsNullOrWhiteSpace(this.Email)
+				? gravatar
+				: "https://secure.gravatar.com/avatar/" + this.Email.ToLower().Trim().GetMD5() + "?s=300&d=" + gravatar.UrlEncode();
+
+			var json = base.ToJson(addTypeOfExtendedProperties);
+			json.Add(new JProperty("Gravatar", gravatar));
+			return json;
+		}
 		#endregion
 
 	}
