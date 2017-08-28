@@ -1,14 +1,13 @@
 ﻿#region Related components
 using System;
-using System.Collections.Generic;
-using System.Collections.Specialized;
 using System.Linq;
-using System.Text;
+using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
-using System.Configuration;
 using System.Diagnostics;
 
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using Newtonsoft.Json.Converters;
 
 using MongoDB.Bson;
@@ -16,7 +15,6 @@ using MongoDB.Bson.Serialization.Attributes;
 
 using net.vieapps.Components.Utility;
 using net.vieapps.Components.Security;
-using net.vieapps.Components.Caching;
 using net.vieapps.Components.Repository;
 #endregion
 
@@ -26,7 +24,7 @@ namespace net.vieapps.Services.Users
 	[Entity(CollectionName = "Accounts", TableName = "T_Users_Accounts", CacheStorageType = typeof(Utility), CacheStorageName = "Cache")]
 	public class Account : Repository<Account>
 	{
-		public Account() : base()
+		public Account()
 		{
 			this.ID = "";
 			this.Type = AccountType.BuiltIn;
@@ -131,6 +129,23 @@ namespace net.vieapps.Services.Users
 					this._profile = Profile.Get<Profile>(this.ID);
 				return this._profile;
 			}
+		}
+
+		public async Task GetSessionsAsync(CancellationToken cancellationToken = default(CancellationToken))
+		{
+			var filter = Filters<Session>.Equals("UserID", this.ID);
+			var sort = Sorts<Session>.Descending("ExpiredAt");
+			this.Sessions = await Session.FindAsync(filter, sort, 0, 1, null, cancellationToken);
+		}
+
+		public JObject GetJson()
+		{
+			return new JObject()
+			{
+				{ "ID", this.ID },
+				{ "Roles", (this.AccountRoles ?? new List<string>()).Concat("All,Authenticated".ToList()).Distinct().ToJArray() },
+				{ "Privileges", (this.AccountPrivileges ?? new List<Privilege>()).ToJArray() }
+			};
 		}
 
 		/// <summary>

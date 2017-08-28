@@ -74,8 +74,9 @@ namespace net.vieapps.Services.Users
 							this.WriteInfo("The service is registered - PID: " + pid);
 							this.WriteLog(UtilityService.BlankUID, this.ServiceName, null, "The service [" + this.ServiceURI + "] is registered - PID: " + pid);
 						},
-						ex => this.WriteInfo("Error occurred while registering the service", ex),
-						this.OnInterCommunicateMessageReceived
+						(ex) => {
+							this.WriteInfo("Error occurred while registering the service", ex);
+						}
 					);
 				}
 				catch (Exception ex)
@@ -113,122 +114,28 @@ namespace net.vieapps.Services.Users
 		{
 			try
 			{
-				var objectIdentity = requestInfo.GetObjectIdentity();
 				switch (requestInfo.ObjectName.ToLower())
 				{
-
-					#region Sessions
 					case "session":
-						switch (requestInfo.Verb)
-						{
-							// initialize or register
-							case "GET":
-								if ((requestInfo.Session.User.ID.Equals("") || requestInfo.Session.User.ID.Equals(User.SystemAccountID)) && !requestInfo.Query.ContainsKey("register"))
-									return await this.InitializeSessionAsync(requestInfo);
-								else
-									return await this.RegisterSessionAsync(requestInfo, cancellationToken);
+						return await this.ProcessSessionAsync(requestInfo, cancellationToken);
 
-							// sign-in
-							case "POST":
-								return await this.SignInAsync(requestInfo, cancellationToken);
-
-							// update session with access token
-							case "PUT":
-								return await this.RegisterSessionAsync(requestInfo.Session, (requestInfo.GetBodyJson()["AccessToken"] as JValue).Value.ToString().Decrypt(), cancellationToken);
-
-							// sign-out
-							case "DELETE":
-								return await this.SignOutAsync(requestInfo);
-						}
-						break;
-					#endregion
-
-					#region Accounts
 					case "account":
-						switch (requestInfo.Verb)
-						{
-							case "GET":
-								throw new MethodNotAllowedException(requestInfo.Verb);
+						return await this.ProcessAccountAsync(requestInfo, cancellationToken);
 
-							case "POST":
-								if (requestInfo.Query.ContainsKey("x-convert"))
-									return await this.CreateAccountAsync(requestInfo, cancellationToken);
-								throw new MethodNotAllowedException(requestInfo.Verb);
-
-							case "PUT":
-								return await this.ResetPasswordAsync(requestInfo, cancellationToken);
-
-							default:
-								throw new MethodNotAllowedException(requestInfo.Verb);
-						}
-					#endregion
-
-					#region Profiles
 					case "profile":
-						switch (requestInfo.Verb)
-						{
-							case "GET":
-								// search
-								if ("search".IsEquals(objectIdentity))
-									return await this.SearchProfilesAsync(requestInfo, cancellationToken);
+						return await this.ProcessProfileAsync(requestInfo, cancellationToken);
 
-								// fetch
-								else if ("fetch".IsEquals(objectIdentity))
-									return await this.FetchProfilesAsync(requestInfo, cancellationToken);
-								
-								// get details of a profile
-								else
-									return await this.GetProfileAsync(requestInfo, cancellationToken);
-
-							case "POST":
-								// create profile
-								if (requestInfo.Query.ContainsKey("x-convert"))
-									return await this.CreateProfileAsync(requestInfo, cancellationToken);
-
-								// update profile
-								else
-									return await this.UpdateProfileAsync(requestInfo, cancellationToken);
-						}
-						break;
-					#endregion
-
-					#region Activate
 					case "activate":
-						if (requestInfo.Verb.IsEquals("GET"))
-							return await this.ActivateAsync(requestInfo, cancellationToken);
-						throw new MethodNotAllowedException(requestInfo.Verb);
-					#endregion
-
-					#region Mediator & Captcha
-					case "mediator":
-						if (requestInfo.Verb.IsEquals("GET") && requestInfo.Extra != null)
-						{
-							// check exist
-							if (requestInfo.Extra.ContainsKey("Exist"))
-								return await this.CheckSessionExistedAsync(requestInfo, cancellationToken);
-
-							// verify/validate
-							else if (requestInfo.Extra.ContainsKey("Verify"))
-								return await this.ValidateSessionAsync(requestInfo, cancellationToken);
-
-							// get account information
-							else if (requestInfo.Extra.ContainsKey("Account"))
-								return await this.GetAccountInfoAsync(requestInfo, cancellationToken);
-						}
-						throw new MethodNotAllowedException(requestInfo.Verb);
+						return await this.ProcessActivationAsync(requestInfo, cancellationToken);
 
 					case "captcha":
-						if (requestInfo.Verb.IsEquals("GET"))
-							return this.RegisterSessionCaptcha(requestInfo);
-						throw new MethodNotAllowedException(requestInfo.Verb);
-					#endregion
-
+						return this.RegisterSessionCaptcha(requestInfo);
 				}
 
 				// unknown
 				var msg = "The request is invalid [" + this.ServiceURI + "]: " + requestInfo.Verb + " /";
 				if (!string.IsNullOrWhiteSpace(requestInfo.ObjectName))
-					msg +=  requestInfo.ObjectName + (!string.IsNullOrWhiteSpace(objectIdentity) ? "/" + objectIdentity : "");
+					msg +=  requestInfo.ObjectName + (!string.IsNullOrWhiteSpace(requestInfo.GetObjectIdentity()) ? "/" + requestInfo.GetObjectIdentity() : "");
 				throw new InvalidRequestException(msg);
 			}
 			catch (Exception ex)
@@ -242,231 +149,157 @@ namespace net.vieapps.Services.Users
 			} 
 		}
 
-		#region Initialize session
-		async Task<JObject> InitializeSessionAsync(RequestInfo requestInfo)
+		Task<JObject> ProcessSessionAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
-			// prepare
-			if (string.IsNullOrWhiteSpace(requestInfo.GetDeviceID()))
+			switch (requestInfo.Verb)
 			{
-				var appName = requestInfo.GetAppName();
-				if (string.IsNullOrWhiteSpace(appName))
-					appName = "N/A (" + UtilityService.NewUID + ")";
+				// get information of a session
+				case "GET":
+					return this.GetSessionAsync(requestInfo, cancellationToken);
 
-				var appPlatform = requestInfo.GetAppPlatform();
-				if (string.IsNullOrWhiteSpace(appPlatform))
-					appPlatform = "N/A (" + UtilityService.NewUID + ")";
+				// register a session
+				case "POST":
+					return this.RegisterSessionAsync(requestInfo, cancellationToken);
 
-				requestInfo.Session.DeviceID = "pwa@" + (appName + "/" + appPlatform + "@" + (requestInfo.Session.AppAgent ?? "N/A")).GetHMACSHA384(requestInfo.Session.SessionID, true);
+				// sign a session in
+				case "PUT":
+					return this.SignSessionInAsync(requestInfo, cancellationToken);
+
+				// sign a session out
+				case "DELETE":
+					return this.SignSessionOutAsync(requestInfo, cancellationToken);
 			}
+			
+			return Task.FromException<JObject>(new MethodNotAllowedException(requestInfo.Verb));
+		}
 
-			// update into cache to mark the session is issued by the system
-			await Utility.Cache.SetAbsoluteAsync(requestInfo.Session.SessionID.GetCacheKey<Session>(), requestInfo.Session.DeviceID, 7);
-
-#if DEBUG
-			this.WriteInfo("A session has been initialized" + "\r\n" + requestInfo.ToJson().ToString(Formatting.Indented));
-#endif
-
-			// response
-			return new JObject()
-			{
-				{ "ID", requestInfo.Session.SessionID },
-				{ "DeviceID", requestInfo.Session.DeviceID }
-			};
+		#region Get a session
+		async Task<JObject> GetSessionAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		{
+			var session = string.IsNullOrWhiteSpace(requestInfo.Session.SessionID) || requestInfo.Session.User.ID.Equals("") || requestInfo.Session.User.ID.Equals(User.SystemAccountID)
+				? null
+				: await Session.GetAsync<Session>(requestInfo.Session.SessionID, cancellationToken);
+			return session?.ToJson();
 		}
 		#endregion
 
-		#region Register session
+		#region Register a session
 		async Task<JObject> RegisterSessionAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
-			// anonymous/visitor or system account
-			if (requestInfo.Session.User.ID.Equals("") || requestInfo.Session.User.ID.IsEquals(User.SystemAccountID))
+			if (string.IsNullOrWhiteSpace(requestInfo.Session.SessionID) || requestInfo.Session.User.ID.Equals("") || requestInfo.Session.User.ID.Equals(User.SystemAccountID))
+				throw new InvalidRequestException();
+
+			var data = requestInfo.GetBodyExpando();
+			if (data == null)
+				throw new InformationRequiredException();
+
+			var session = await Session.GetAsync<Session>(requestInfo.Session.SessionID, cancellationToken);
+			if (session == null)
 			{
-				var sessionID = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("SessionID")
-					? requestInfo.Extra["SessionID"].Decrypt()
-					: null;
-
-				if (string.IsNullOrWhiteSpace(sessionID) || string.IsNullOrWhiteSpace(requestInfo.Session.SessionID) || !await Utility.Cache.ExistsAsync<Session>(sessionID))
-					throw new InvalidSessionException("Session is invalid (The session is not issued by the system)");
-
-				// register new session
-				var session = new Session()
-				{
-					ID = requestInfo.Session.SessionID,
-					IP = requestInfo.Session.IP,
-					DeviceID = requestInfo.Session.DeviceID,
-					AppInfo = requestInfo.Session.AppName + " @ " + requestInfo.Session.AppPlatform,
-					AccessToken = requestInfo.Extra.ContainsKey("AccessToken") ? requestInfo.Extra["AccessToken"].Decrypt() : null
-				};
-
-				// update cache
-				await Utility.Cache.SetAsync(session, 180);
-
-#if DEBUG
-				this.WriteInfo("A session of " + (requestInfo.Session.User.ID.Equals("") ? "visitor" : "system account") + " has been registered" + "\r\n" + session.ToJson().ToString(Formatting.Indented));
-#endif
-
-				// response
-				return new JObject()
-				{
-					{ "ID", requestInfo.Session.SessionID },
-					{ "DeviceID", requestInfo.Session.DeviceID }
-				};
+				session = new Session();
+				session.CopyFrom(data);
+				await Session.CreateAsync(session, cancellationToken);
 			}
-
-			// user
-			else
-				return await this.RegisterSessionAsync(requestInfo.Session, null, cancellationToken);
-		}
-
-		async Task<JObject> RegisterSessionAsync(Services.Session requestSession, string accessToken = null, CancellationToken cancellationToken = default(CancellationToken))
-		{
-			// check account
-			var userAccount = await Account.GetAsync<Account>(requestSession.User.ID, cancellationToken);
-			if (userAccount == null)
-				throw new InvalidSessionException("Account is not found");
-
-			// check session
-			var userSession = await Session.GetAsync<Session>(requestSession.SessionID, cancellationToken);
-			if (userSession == null || !userSession.UserID.Equals(userAccount.ID))
-				throw new InvalidSessionException("Session is not found");
-
-			// update (renew) session
-			userSession.ExpiredAt = DateTime.Now.AddDays(60);
-			userSession.AccessToken = accessToken ?? userSession.AccessToken;
-			userSession.AppInfo = requestSession.AppName + " @ " + requestSession.AppPlatform;
-			await Session.UpdateAsync(userSession, cancellationToken);
-
-			// update statistics of the account
-			userAccount.LastAccess = DateTime.Now;
-			if (userAccount.Sessions == null)
-				userAccount.Sessions = await Session.FindAsync(Filters<Session>.Equals("UserID", userAccount.ID), Sorts<Session>.Descending("ExpiredAt"), 0, 1);
 			else
 			{
-				var sessions = userAccount.Sessions.ToDictionary(s => s.ID);
-				if (sessions.ContainsKey(userSession.ID))
-					sessions[userSession.ID] = userSession;
-				else
-					sessions.Add(userSession.ID, userSession);
-				userAccount.Sessions = sessions.Select(i => i.Value).ToList();
+				if (!requestInfo.Session.SessionID.IsEquals(data.Get<string>("ID")) || !requestInfo.Session.User.ID.IsEquals(data.Get<string>("UserID")))
+					throw new InvalidSessionException();
+				session.CopyFrom(data);
+				await Session.UpdateAsync(session, cancellationToken);
 			}
-			await Account.UpdateAsync(userAccount, cancellationToken);
 
-#if DEBUG
-			this.WriteInfo("A session of user has been registered" + "\r\n" + userSession.ToJson().ToString(Formatting.Indented));
-#endif
-
-			// response
-			return new JObject()
-			{
-				{ "ID", requestSession.SessionID },
-				{ "DeviceID", requestSession.DeviceID }
-			};
+			return session.ToJson();
 		}
 		#endregion
 
-		#region Sign In
-		async Task<JObject> SignInAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
-		{
-			var key = "Attempt#" + requestInfo.Session.IP;
-			try
-			{
-				var accountType = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Type")
-					? requestInfo.Extra["Type"].ToEnum<AccountType>()
-					: AccountType.BuiltIn;
-
-				JObject result = null;
-				switch (accountType)
-				{
-					default:
-						result = await this.SignBuiltInAccountInAsync(requestInfo, cancellationToken);
-						break;
-				}
-
-				Utility.Cache.Remove(key);
-				return result;
-			}
-			catch (Exception ex)
-			{
-				var attempt = await Utility.Cache.ExistsAsync(key)
-					? await Utility.Cache.GetAsync<int>(key)
-					: 1;
-
-				await Task.WhenAll(
-						Task.Delay((attempt - 1) * 5000),
-						Utility.Cache.SetAbsoluteAsync(key, attempt, 15)
-					);
-
-				throw ex;
-			}
-		}
-
-		async Task<JObject> SignBuiltInAccountInAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		#region Sign a session in
+		async Task<JObject> SignSessionInAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// prepare
-			var email = requestInfo.Extra.ContainsKey("Email")
-				? requestInfo.Extra["Email"].Decrypt()
-				: null;
-			var password = requestInfo.Extra.ContainsKey("Password")
-				? requestInfo.Extra["Password"].Decrypt()
-				: null;
+			var body = requestInfo.GetBodyExpando();
+			var email = body.Get<string>("Email").Decrypt();
+			var password = body.Get<string>("Password").Decrypt();
 
 			// find account & check
-			var account = await Account.GetAsync<Account>(Filters<Account>.And(Filters<Account>.Equals("AccountName", email), Filters<Account>.Equals("Type", AccountType.BuiltIn.ToString())));
+			var filter = Filters<Account>.And(
+					Filters<Account>.Equals("AccountName", email),
+					Filters<Account>.Equals("Type", AccountType.BuiltIn.ToString())
+				);
+			var account = await Account.GetAsync<Account>(filter, null, null, cancellationToken);
 			if (account == null || !account.AccountKey.Equals(Account.HashPassword(account.ID, password)))
 				throw new WrongAccountException();
 
-			// register session
-			await Session.CreateAsync(new Session()
-			{
-				ID = requestInfo.Session.SessionID,
-				UserID = account.ID,
-				AccessToken = "",
-				IP = requestInfo.Session.IP,
-				DeviceID = requestInfo.Session.DeviceID,
-				AppInfo = requestInfo.Session.AppName + " @ " + requestInfo.Session.AppPlatform,
-				Online = true
-			}, cancellationToken);
-
 			// response
-			return new JObject()
-			{
-				{ "ID", account.ID }
-			};
+			return account.GetJson();
 		}
 		#endregion
 
-		#region Sign Out
-		async Task<JObject> SignOutAsync(RequestInfo requestInfo)
+		#region Sign a session out
+		async Task<JObject> SignSessionOutAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
-			// get account and perform sign-out
-			var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID);
+			// remove session
+			await Session.DeleteAsync<Session>(requestInfo.Session.SessionID, cancellationToken);
+
+			// update account
+			var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID, cancellationToken);
 			if (account != null)
 			{
 				if (account.Sessions == null)
-					account.Sessions = await Session.FindAsync(Filters<Session>.Equals("UserID", requestInfo.Session.User.ID), Sorts<Session>.Descending("ExpiredAt"), 0, 1);
+					await account.GetSessionsAsync(cancellationToken);
 				account.Sessions = account.Sessions.Where(s => !s.ID.Equals(requestInfo.Session.SessionID)).ToList();
 				account.LastAccess = DateTime.Now;
-
-				await Task.WhenAll(
-						Session.DeleteAsync<Session>(requestInfo.Session.SessionID),
-						Account.UpdateAsync(account)
-					);
+				await Account.UpdateAsync(account, cancellationToken);
 			}
-
-			// update into cache to mark the session is issued by the system
-			var sessionID = UtilityService.GetUUID();
-			await Utility.Cache.SetAbsoluteAsync(sessionID.GetCacheKey<Session>(), requestInfo.Session.DeviceID, 7);
 
 			// response
 			return new JObject()
 			{
-				{ "ID", sessionID },
-				{ "DeviceID", requestInfo.Session.DeviceID }
+				{ "Status", "OK" }
 			};
 		}
 		#endregion
 
-		#region Create account
+		Task<JObject> ProcessAccountAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		{
+			switch (requestInfo.Verb)
+			{
+				case "GET":
+					return this.GetAccountAsync(requestInfo, cancellationToken);
+
+				case "POST":
+					if (requestInfo.Query.ContainsKey("x-convert"))
+						return this.CreateAccountAsync(requestInfo, cancellationToken);
+					return Task.FromException<JObject>(new MethodNotAllowedException(requestInfo.Verb));
+
+				case "PUT":
+					if ("reset".IsEquals(requestInfo.GetObjectIdentity()))
+						return this.ResetPasswordAsync(requestInfo, cancellationToken);
+					else if ("password".IsEquals(requestInfo.GetObjectIdentity()))
+						return this.UpdatePasswordAsync(requestInfo, cancellationToken);
+					else if ("email".IsEquals(requestInfo.GetObjectIdentity()))
+						return this.UpdateEmailAsync(requestInfo, cancellationToken);
+					return Task.FromException<JObject>(new InvalidRequestException());
+			}
+
+			return Task.FromException<JObject>(new MethodNotAllowedException(requestInfo.Verb));
+		}
+
+		#region Get an account
+		async Task<JObject> GetAccountAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		{
+			if (!this.IsAuthenticated(requestInfo))
+				throw new AccessDeniedException();
+
+			var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID, cancellationToken);
+			if (account == null)
+				throw new InformationNotFoundException();
+
+			// response
+			return account.GetJson();
+		}
+		#endregion
+
+		#region Create an account
 		async Task<JObject> CreateAccountAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			if (!this.IsAuthenticated(requestInfo) || !requestInfo.Session.User.IsSystemAdministrator)
@@ -482,7 +315,10 @@ namespace net.vieapps.Services.Users
 		}
 		#endregion
 
-		#region Reset password
+		#region Update an account
+		#endregion
+
+		#region Get the instructions when update an account
 		async Task<Tuple<string, string, string, string, Tuple<string, int, bool, string, string>>> GetPasswordInstructionsAsync(RequestInfo requestInfo, CancellationToken cancellationToken, string mode = "reset")
 		{
 			string subject = "", body = "", signature = "", sender = "";
@@ -575,14 +411,23 @@ namespace net.vieapps.Services.Users
 
 			return new Tuple<string, string, string, string, Tuple<string, int, bool, string, string>>(subject, body, signature, sender, new Tuple<string, int, bool, string, string>(smtpServer, smtpServerPort, smtpServerEnableSsl, smtpUser, smtpUserPassword));
 		}
+		#endregion
 
+		#region Renew password of an account
 		async Task<JObject> ResetPasswordAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// get account
 			var email = requestInfo.Extra["Email"].Decrypt();
-			var account = Account.Get<Account>(Filters<Account>.And(Filters<Account>.Equals("AccountName", email), Filters<Account>.Equals("Type", AccountType.BuiltIn.ToString())));
+			var filter = Filters<Account>.And(
+					Filters<Account>.Equals("AccountName", email),
+					Filters<Account>.Equals("Type", AccountType.BuiltIn.ToString())
+				);
+			var account = await Account.GetAsync<Account>(filter, null, null, cancellationToken);
 			if (account == null)
-				return new JObject();
+				return new JObject()
+				{
+					{ "Message", "Please check your email and follow the instruction to activate" }
+				};
 
 			// prepare
 			var password = email.IndexOf("-") > 0
@@ -602,7 +447,7 @@ namespace net.vieapps.Services.Users
 			{
 				{ "ID", account.ID },
 				{ "Name", account.Profile.Name },
-				{ "Email", email },
+				{ "Email", account.AccountName },
 				{ "Password", password },
 				{ "Time", DateTime.Now },
 				{ "SessionID", requestInfo.Session.SessionID },
@@ -623,7 +468,7 @@ namespace net.vieapps.Services.Users
 			var data = new Dictionary<string, string>()
 			{
 				{ "Host", requestInfo.Query.ContainsKey("host") ? requestInfo.Query["host"] : "unknown" },
-				{ "Email", email },
+				{ "Email", account.AccountName },
 				{ "Password", password },
 				{ "Name", account.Profile.Name },
 				{ "Time", DateTime.Now.ToString("hh:mm tt @ dd/MM/yyyy") },
@@ -644,12 +489,154 @@ namespace net.vieapps.Services.Users
 			});
 
 			var smtp = instructions.Item5;
-			await this.SendEmailAsync(instructions.Item4, account.Profile.Name + " <" + email + ">", subject, body, smtp.Item1, smtp.Item2, smtp.Item3, smtp.Item4, smtp.Item5, cancellationToken);
+			await this.SendEmailAsync(instructions.Item4, account.Profile.Name + " <" + account.AccountName + ">", subject, body, smtp.Item1, smtp.Item2, smtp.Item3, smtp.Item4, smtp.Item5, cancellationToken);
 
-			// return info
-			return new JObject();
+			// response
+			return new JObject()
+			{
+				{ "Message", "Please check your email and follow the instruction to activate" }
+			};
 		}
 		#endregion
+
+		#region Update password of an account
+		async Task<JObject> UpdatePasswordAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		{
+			// get account and check
+			var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID, cancellationToken);
+			if (account == null)
+				throw new InformationNotFoundException();
+
+			var oldPassword = requestInfo.Extra["OldPassword"].Decrypt();
+			if (!account.AccountKey.Equals(Account.HashPassword(account.ID, oldPassword)))
+				throw new WrongAccountException();
+
+			// prepare
+			var password = requestInfo.Extra["Password"].Decrypt();
+			var code = (new JObject()
+			{
+				{ "ID", account.ID },
+				{ "Name", account.Profile.Name },
+				{ "Email", account.AccountName },
+				{ "Password", password },
+				{ "Time", DateTime.Now },
+				{ "SessionID", requestInfo.Session.SessionID },
+				{ "DeviceID", requestInfo.Session.DeviceID },
+				{ "AppName", requestInfo.Session.AppName },
+				{ "AppPlatform", requestInfo.Session.AppPlatform },
+				{ "IP", requestInfo.Session.IP }
+			}).ToString(Formatting.None).Encrypt(ServiceComponent.ActivationKey).ToBase64Url(true);
+
+			var uri = requestInfo.Query.ContainsKey("uri")
+				? requestInfo.Query["uri"].Url64Decode()
+				: "http://localhost/#?prego=activate&mode={mode}&code={code}";
+			uri = uri.Replace(StringComparison.OrdinalIgnoreCase, "{mode}", "password");
+			uri = uri.Replace(StringComparison.OrdinalIgnoreCase, "{code}", code);
+
+			// prepare activation email
+			var instructions = await this.GetPasswordInstructionsAsync(requestInfo, cancellationToken, "password");
+			var data = new Dictionary<string, string>()
+			{
+				{ "Host", requestInfo.Query.ContainsKey("host") ? requestInfo.Query["host"] : "unknown" },
+				{ "Email", account.AccountName },
+				{ "Password", password },
+				{ "Name", account.Profile.Name },
+				{ "Time", DateTime.Now.ToString("hh:mm tt @ dd/MM/yyyy") },
+				{ "AppPlatform", requestInfo.Session.AppName + " @ " + requestInfo.Session.AppPlatform },
+				{ "IP", requestInfo.Session.IP },
+				{ "Uri", uri },
+				{ "Code", code },
+				{ "Signature", instructions.Item3 }
+			};
+
+			// send an email
+			var subject = instructions.Item1;
+			var body = instructions.Item2;
+			data.ForEach(info =>
+			{
+				subject = subject.Replace(StringComparison.OrdinalIgnoreCase, "{" + info.Key + "}", info.Value);
+				body = body.Replace(StringComparison.OrdinalIgnoreCase, "{" + info.Key + "}", info.Value);
+			});
+
+			var smtp = instructions.Item5;
+			await this.SendEmailAsync(instructions.Item4, account.Profile.Name + " <" + account.AccountName + ">", subject, body, smtp.Item1, smtp.Item2, smtp.Item3, smtp.Item4, smtp.Item5, cancellationToken);
+
+			// response
+			return new JObject()
+			{
+				{ "Message", "Please check your email and follow the instruction to activate" }
+			};
+		}
+		#endregion
+
+		#region Update email of an account
+		async Task<JObject> UpdateEmailAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		{
+			// get account and check
+			var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID, cancellationToken);
+			if (account == null)
+				throw new InformationNotFoundException();
+
+			var oldPassword = requestInfo.Extra["OldPassword"].Decrypt();
+			if (!account.AccountKey.Equals(Account.HashPassword(account.ID, oldPassword)))
+				throw new WrongAccountException();
+
+			// check existing
+			var email = requestInfo.Extra["Email"].Decrypt();
+			var filter = Filters<Account>.And(
+					Filters<Account>.Equals("AccountName", email),
+					Filters<Account>.Equals("Type", AccountType.BuiltIn.ToString())
+				);
+			var otherAccount = await Account.GetAsync<Account>(filter, null, null, cancellationToken);
+			if (otherAccount != null)
+				throw new InformationExistedException("The email '" + email + "' is used by other account");
+
+			// update
+			account.AccountName = email.Trim().ToLower();
+			account.LastAccess = DateTime.Now;
+
+			account.Profile.Email = email;
+			account.Profile.LastUpdated = DateTime.Now;
+
+			await Task.WhenAll(
+					Account.UpdateAsync(account, cancellationToken),
+					Profile.UpdateAsync(account.Profile, cancellationToken)
+				);
+
+			// response
+			return account.Profile.ToJson();
+		}
+		#endregion
+
+		Task<JObject> ProcessProfileAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		{
+			switch (requestInfo.Verb)
+			{
+				case "GET":
+					// search
+					if ("search".IsEquals(requestInfo.GetObjectIdentity()))
+						return this.SearchProfilesAsync(requestInfo, cancellationToken);
+
+					// fetch
+					else if ("fetch".IsEquals(requestInfo.GetObjectIdentity()))
+						return this.FetchProfilesAsync(requestInfo, cancellationToken);
+
+					// get details of a profile
+					else
+						return this.GetProfileAsync(requestInfo, cancellationToken);
+
+				case "POST":
+					// create profile
+					if (requestInfo.Query.ContainsKey("x-convert"))
+						return this.CreateProfileAsync(requestInfo, cancellationToken);
+
+					// update profile
+					else
+						return this.UpdateProfileAsync(requestInfo, cancellationToken);
+			}
+
+			return Task.FromException<JObject>(new MethodNotAllowedException(requestInfo.Verb));
+		}
 
 		#region Search profiles
 		void NormalizeProfile(JObject json)
@@ -679,69 +666,86 @@ namespace net.vieapps.Services.Users
 			var request = requestInfo.GetRequestExpando();
 
 			var query = request.Get<string>("FilterBy.Query");
-			var province = request.Get<string>("FilterBy.Province");
-			var filter = string.IsNullOrWhiteSpace(province)
-				? null
-				: Filters<Profile>.Equals("Province", province);
 
+			var filter = request.Has("FilterBy")
+				? request.Get<ExpandoObject>("FilterBy").ToFilterBy<Profile>()
+				: null;
 
-			var pageNumber = request.Has("Pagination.PageNumber")
-				? request.Get<int>("Pagination.PageNumber")
-				: 1;
-			if (pageNumber < 1)
-				pageNumber = 1;
+			var sort = request.Has("SortBy")
+				? request.Get<ExpandoObject>("SortBy").ToSortBy<Profile>()
+				: null;
+			if (sort == null && string.IsNullOrWhiteSpace(query))
+				sort = Sorts<Profile>.Ascending("Name");
 
-			var pageSize = request.Has("Pagination.PageSize")
-				? request.Get<int>("Pagination.PageSize")
-				: 20;
-			if (pageSize < 0)
-				pageSize = 20;
+			var pagination = request.Has("Pagination")
+				? request.Get<ExpandoObject>("Pagination").GetPagination()
+				: new Tuple<long, int, int, int>(-1, 0, 20, 1);
 
-			// get total of records
-			var totalRecords = request.Has("Pagination.TotalRecords")
-				? request.Get<long>("Pagination.TotalRecords")
+			var pageNumber = pagination.Item4;
+
+			// check cache
+			var cacheKey = string.IsNullOrWhiteSpace(query) && (filter != null || sort != null)
+				? (filter != null ? filter.GetMD5() + ":" : "") + (sort != null ? sort.GetMD5() + ":" : "") + pageNumber.ToString()
+				: "";
+
+			var json = !cacheKey.Equals("")
+				? await Utility.DataCache.GetAsync<string>(cacheKey + "-json")
+				: "";
+
+			if (!string.IsNullOrWhiteSpace(json))
+				return JObject.Parse(json);
+
+			// prepare pagination
+			var totalRecords = pagination.Item1 > -1
+				? pagination.Item1
 				: -1;
+
 			if (totalRecords < 0)
 				totalRecords = string.IsNullOrWhiteSpace(query)
-					? await Profile.CountAsync(filter)
-					: await Profile.CountByQueryAsync(query, filter);
+					? await Profile.CountAsync(filter, cacheKey + "-total", cancellationToken)
+					: await Profile.CountByQueryAsync(query, filter, cancellationToken);
 
-			var totalPages = (int)(totalRecords / pageSize);
-			if (totalRecords - (totalPages * pageSize) > 0)
-				totalPages += 1;
+			var pageSize = pagination.Item3;
+
+			var totalPages = (new Tuple<long, int>(totalRecords, pageSize)).GetTotalPages();
 			if (totalPages > 0 && pageNumber > totalPages)
 				pageNumber = totalPages;
 
-			// get objects
-			var objects = string.IsNullOrWhiteSpace(query)
-				? await Profile.FindAsync(filter, Sorts<Profile>.Ascending("Name"), pageSize, pageNumber)
-				: await Profile.SearchAsync(query, filter, pageSize, pageNumber);
+			// search
+			var objects = totalRecords > 0
+				? string.IsNullOrWhiteSpace(query)
+					? await Profile.FindAsync(filter, sort, pageSize, pageNumber, cacheKey, cancellationToken)
+					: await Profile.SearchAsync(query, filter, pageSize, pageNumber, cancellationToken)
+				: new List<Profile>();
 
-			// generate JSONs
-			var data = objects.ToJsonArray();
+			// build result
+			var profiles = objects.ToJsonArray();
 			if (!requestInfo.Session.User.IsSystemAdministrator)
-				foreach (JObject json in data)
-					this.NormalizeProfile(json);
+				foreach (JObject profile in profiles)
+					this.NormalizeProfile(profile);
 
-			// return information
-			return new JObject()
+			pagination = new Tuple<long, int, int, int>(totalRecords, totalPages, pageSize, pageNumber);
+			var result = new JObject()
 			{
-				{ "FilterBy", new JObject()
-					{
-						{ "Query", !string.IsNullOrWhiteSpace(query) ? query : "" },
-						{ "Province", !string.IsNullOrWhiteSpace(province) ? province : "" }
-					}
-				},
-				{ "Pagination", new JObject()
-					{
-						{ "TotalRecords", totalRecords },
-						{ "TotalPages", totalPages},
-						{ "PageSize", pageSize },
-						{ "PageNumber", pageNumber },
-					}
-				},
-				{ "Objects", data }
+				{ "FilterBy", filter?.ToClientJson(query) },
+				{ "SortBy", sort?.ToClientJson() },
+				{ "Pagination", pagination?.GetPagination() },
+				{ "Objects", profiles }
 			};
+
+			// update cache
+			if (!cacheKey.Equals(""))
+			{
+#if DEBUG
+				json = result.ToString(Formatting.Indented);
+#else
+				json = result.ToString(Formatting.None);
+#endif
+				Utility.DataCache.Set(cacheKey + "-json", json);
+			}
+
+			// return the result
+			return result;
 		}
 		#endregion
 
@@ -798,9 +802,12 @@ namespace net.vieapps.Services.Users
 		}
 		#endregion
 
-		#region Activate
-		async Task<JObject> ActivateAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		async Task<JObject> ProcessActivationAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
+			if (!requestInfo.Verb.IsEquals("GET"))
+				throw new MethodNotAllowedException(requestInfo.Verb);
+
+			#region prepare
 			var mode = requestInfo.Query.ContainsKey("mode")
 				? requestInfo.Query["mode"]
 				: null;
@@ -822,10 +829,10 @@ namespace net.vieapps.Services.Users
 				throw new InvalidActivateInformationException(ex);
 			}
 
-			ExpandoObject activationInfo = null;
+			ExpandoObject info = null;
 			try
 			{
-				activationInfo = code.ToExpandoObject();
+				info = code.ToExpandoObject();
 			}
 			catch (Exception ex)
 			{
@@ -833,42 +840,44 @@ namespace net.vieapps.Services.Users
 			}
 
 			// check time
-			if (!activationInfo.Has("Time"))
+			if (!info.Has("Time"))
 				throw new InvalidActivateInformationException();
 
-			var time = activationInfo.Get<DateTime>("Time");
+			var time = info.Get<DateTime>("Time");
 			if (mode.IsEquals("account") && (DateTime.Now - time).TotalDays > 30)
 				throw new ActivateInformationExpiredException();
 			else if ((DateTime.Now - time).TotalHours > 24)
 				throw new ActivateInformationExpiredException();
+			#endregion
 
-			// activate
+			// activate password
 			if (mode.IsEquals("password"))
-				return await this.ActivatePasswordAsync(requestInfo, activationInfo, cancellationToken);
+				return await this.ActivatePasswordAsync(requestInfo, info, cancellationToken);
 
-			return new JObject();
+			throw new InvalidRequestException();
 		}
 
-		async Task<JObject> ActivatePasswordAsync(RequestInfo requestInfo, ExpandoObject  activationInfo, CancellationToken cancellationToken)
+		#region Activate new password
+		async Task<JObject> ActivatePasswordAsync(RequestInfo requestInfo, ExpandoObject  info, CancellationToken cancellationToken)
 		{
 			// prepare
-			var id = activationInfo.Get<string>("ID");
-			var password = activationInfo.Get<string>("Password");
+			var id = info.Get<string>("ID");
+			var password = info.Get<string>("Password");
 			var sessionID = requestInfo.Session.SessionID;
 			if (string.IsNullOrWhiteSpace(sessionID))
-				sessionID = activationInfo.Get<string>("SessionID");
+				sessionID = info.Get<string>("SessionID");
 			var deviceID = requestInfo.GetDeviceID();
 			if (string.IsNullOrWhiteSpace(deviceID))
-				deviceID = activationInfo.Get<string>("DeviceID");
+				deviceID = info.Get<string>("DeviceID");
 			var appName = requestInfo.GetAppName();
 			if (string.IsNullOrWhiteSpace(appName))
-				appName = activationInfo.Get<string>("AppName");
+				appName = info.Get<string>("AppName");
 			var appPlatform = requestInfo.GetAppPlatform();
 			if (string.IsNullOrWhiteSpace(appPlatform))
-				appPlatform = activationInfo.Get<string>("AppPlatform");
+				appPlatform = info.Get<string>("AppPlatform");
 
 			// load account
-			var account = await Account.GetAsync<Account>(id);
+			var account = await Account.GetAsync<Account>(id, cancellationToken);
 			if (account == null)
 				throw new InvalidActivateInformationException();
 
@@ -878,114 +887,16 @@ namespace net.vieapps.Services.Users
 			account.Sessions = null;
 			await Account.UpdateAsync(account);
 
-			// register session
-			var session = await Session.GetAsync<Session>(sessionID);
-			if (session == null)
-			{
-				session = new Session()
-				{
-					ID = sessionID,
-					UserID = account.ID,
-					IP = requestInfo.Session.IP,
-					DeviceID = deviceID,
-					AppInfo = appName + " @ " + appPlatform,
-					Online = true
-				};
-				await Session.CreateAsync(session, cancellationToken);
-			}
-			else
-			{
-				session.IP = requestInfo.Session.IP;
-				session.DeviceID = deviceID;
-				session.AppInfo = appName + " / " + appPlatform;
-				session.Online = true;
-				await Session.UpdateAsync(session, cancellationToken);
-			}
-
 			// response
-			return new JObject()
-			{
-				{ "UserID", account.ID },
-				{ "SessionID", sessionID },
-				{ "DeviceID", deviceID }
-			};
+			return account.GetJson();
 		}
 		#endregion
 
-		#region Mediators: check exist, verify, account info
-		async Task<JObject> CheckSessionExistedAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
-		{
-			// 1st step: check cached session
-			var isExisted = await Utility.Cache.ExistsAsync<Session>(requestInfo.Session.SessionID);
-
-			// 2nd step: load from data repository (user) if has no cache
-			if (!isExisted && !requestInfo.Session.User.ID.Equals("") && !requestInfo.Session.User.ID.Equals(User.SystemAccountID))
-			{
-				var session = await Session.GetAsync<Session>(requestInfo.Session.SessionID, cancellationToken);
-				isExisted = session != null;
-			}
-
-			// return
-			return new JObject()
-			{
-				{ "Existed", isExisted }
-			};
-		}
-
-		async Task<JObject> ValidateSessionAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
-		{
-			// 1st step: get cached session
-			var session = await Utility.Cache.FetchAsync<Session>(requestInfo.Session.SessionID);
-			if (session == null && !requestInfo.Session.User.ID.Equals("") && !requestInfo.Session.User.ID.Equals(User.SystemAccountID))
-				session = await Session.GetAsync<Session>(requestInfo.Session.SessionID, cancellationToken);
-
-			// validate
-			if (session == null)
-				throw new SessionNotFoundException();
-			else if (session.ExpiredAt < DateTime.Now)
-				throw new SessionExpiredException();
-
-			var accessToken = requestInfo.Extra.ContainsKey("AccessToken")
-				? requestInfo.Extra["AccessToken"].Decrypt()
-				: null;
-
-			if (string.IsNullOrWhiteSpace(accessToken))
-				throw new InvalidSessionException();
-			else if (!session.AccessToken.Equals(accessToken))
-				throw new TokenRevokedException();
-
-			// return the result
-			return new JObject()
-			{
-				{ "Status", "OK" }
-			};
-		}
-
-		async Task<JObject> GetAccountInfoAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
-		{
-			var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID, cancellationToken);
-			if (account == null)
-				throw new InvalidSessionException("Account is not found");
-
-			var json = new JObject()
-			{
-				{ "ID", account.ID }
-			};
-
-			if (requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Full"))
-			{
-				json.Add(new JProperty("Roles", (account.AccountRoles ?? new List<string>()).Concat("All,Authenticated".ToList()).Distinct().ToList()));
-				json.Add(new JProperty("Privileges", account.AccountPrivileges ?? new List<Privilege>()));
-			}
-
-			return json;
-		}
-		#endregion
-
-		#region Captchas
 		JObject RegisterSessionCaptcha(RequestInfo requestInfo)
 		{
-			if (!requestInfo.Query.ContainsKey("register"))
+			if (!requestInfo.Verb.IsEquals("GET"))
+				throw new MethodNotAllowedException(requestInfo.Verb);
+			else if (!requestInfo.Query.ContainsKey("register"))
 				throw new InvalidRequestException();
 
 			var code = Captcha.GenerateCode();
@@ -999,10 +910,9 @@ namespace net.vieapps.Services.Users
 				{ "Uri", uri }
 			};
 		}
-		#endregion
 
 		#region Process inter-communicate messages
-		void OnInterCommunicateMessageReceived(CommunicateMessage message)
+		protected override void ProcessInterCommunicateMessage(CommunicateMessage message)
 		{
 			// check
 			if (message.Data == null)
@@ -1016,13 +926,14 @@ namespace net.vieapps.Services.Users
 				return;
 
 			// online status
-			if (verb.IsEquals("Status"))
+			if (verb.IsEquals("Status") && !string.IsNullOrWhiteSpace(data.Get<string>("UserID")))
 				try
 				{
+					var isOnline = data.Get<bool>("IsOnline");
 					var session = Session.Get<Session>(data.Get<string>("SessionID"));
-					if (session != null && !session.UserID.Equals(""))
+					if (session != null && session.Online != isOnline)
 					{
-						session.Online = data.Get<bool>("IsOnline");
+						session.Online = isOnline;
 						Session.Update(session);
 					}
 #if DEBUG
@@ -1040,9 +951,5 @@ namespace net.vieapps.Services.Users
 		}
 		#endregion
 
-		~ServiceComponent()
-		{
-			this.Dispose(false);
-		}
 	}
 }

@@ -15,7 +15,7 @@ namespace net.vieapps.Services.Users
 	[Entity(CollectionName = "Sessions", TableName = "T_Users_Sessions", CacheStorageType = typeof(Utility), CacheStorageName = "Cache")]
 	public class Session : Repository<Session>
 	{
-		public Session() : base()
+		public Session()
 		{
 			this.ID = "";
 			this.IssuedAt = DateTime.Now;
@@ -51,13 +51,13 @@ namespace net.vieapps.Services.Users
 		/// <summary>
 		/// Gets or sets the identity of the user who performs the actions in this session
 		/// </summary>
-		[Property(MaxLength = 32), Sortable]
+		[Property(MaxLength = 32, NotNull = true), Sortable]
 		public string UserID { get; set; }
 
 		/// <summary>
 		/// Gets or sets the encrypted access token
 		/// </summary>
-		[JsonIgnore, Property(IsCLOB = true)]
+		[Property(NotNull = true)]
 		public string AccessToken { get; set; }
 
 		/// <summary>
@@ -69,7 +69,7 @@ namespace net.vieapps.Services.Users
 		/// <summary>
 		/// Gets or sets the identity of the device that use to performs the actions in this session
 		/// </summary>
-		[Property(MaxLength = 128), Sortable]
+		[Property(MaxLength = 128, NotNull = true), Sortable]
 		public string DeviceID { get; set; }
 
 		/// <summary>

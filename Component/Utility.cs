@@ -44,6 +44,10 @@ namespace net.vieapps.Services.Users
 
 		public static CacheManager Cache { get { return Utility._Cache; } }
 
+		static CacheManager _DataCache = new CacheManager("VIEApps-Services-Users-Data", "Absolute", Utility.CacheTime);
+
+		public static CacheManager DataCache { get { return Utility._DataCache; } }
+
 		static string _HttpFilesUri = null;
 
 		internal static string HttpFilesUri
