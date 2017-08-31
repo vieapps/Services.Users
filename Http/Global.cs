@@ -907,26 +907,15 @@ namespace net.vieapps.Services.Users
 			return json;
 		}
 
-		internal static Task<JObject> CallServiceAsync(Services.Session session, string serviceName, string objectName, string verb = "GET", Dictionary<string, string> header = null, Dictionary<string, string> query = null, Dictionary<string, string> extra = null, string body = null, string correlationID = null)
+		internal static Task<JObject> CallServiceAsync(Services.Session session, string serviceName, string objectName, string verb = "GET", Dictionary<string, string> query = null, Dictionary<string, string> header = null, string body = null, Dictionary<string, string> extra = null, string correlationID = null)
 		{
-			return Global.CallServiceAsync(new RequestInfo()
-			{
-				Session = session ?? Global.GetSession(),
-				ServiceName = serviceName ?? "unknown",
-				ObjectName = objectName ?? "unknown",
-				Verb = string.IsNullOrWhiteSpace(verb) ? "GET" : verb,
-				Query = query ?? new Dictionary<string, string>(),
-				Header = header ?? new Dictionary<string, string>(),
-				Body = body,
-				Extra = extra ?? new Dictionary<string, string>(),
-				CorrelationID = correlationID ?? Global.GetCorrelationID()
-			});
+			return Global.CallServiceAsync(new RequestInfo(session ?? Global.GetSession(), serviceName, objectName, verb, query, header, body, extra, correlationID ?? Global.GetCorrelationID()));
 		}
 
-		internal static Task<JObject> CallServiceAsync(HttpContext context, string serviceName, string objectName, string verb = "GET", Dictionary<string, string> header = null, Dictionary<string, string> query = null, Dictionary<string, string> extra = null, string body = null)
+		internal static Task<JObject> CallServiceAsync(HttpContext context, string serviceName, string objectName, string verb = "GET", Dictionary<string, string> query = null, Dictionary<string, string> header = null, string body = null, Dictionary<string, string> extra = null)
 		{
 			context = context ?? HttpContext.Current;
-			return Global.CallServiceAsync(Global.GetSession(context), serviceName, objectName, verb, header, query, extra, body, Global.GetCorrelationID(context.Items));
+			return Global.CallServiceAsync(Global.GetSession(context), serviceName, objectName, verb, query, header, body, extra, Global.GetCorrelationID(context.Items));
 		}
 		#endregion
 
@@ -1031,8 +1020,8 @@ namespace net.vieapps.Services.Users
 
 		internal static async Task<bool> ExistsAsync(this Services.Session session)
 		{
-			var result = await Global.CallServiceAsync(session, "users", "mediator", "GET", null, null, new Dictionary<string, string>() { { "Exist", "" } });
-			return result != null && result["Existed"] is JValue && (result["Existed"] as JValue).Value != null && (result["Existed"] as JValue).Value.CastAs<bool>() == true;
+			var result = await Global.CallServiceAsync(session, "users", "session");
+			return result != null && result["ID"] is JValue && session.SessionID.IsEquals((result["ID"] as JValue).Value as string);
 		}
 		#endregion
 

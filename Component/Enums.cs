@@ -1,0 +1,127 @@
+﻿#region Related components
+using System;
+using System.Diagnostics;
+
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+using Newtonsoft.Json.Converters;
+
+using MongoDB.Bson;
+using MongoDB.Bson.Serialization.Attributes;
+
+using net.vieapps.Components.Utility;
+using net.vieapps.Components.Security;
+using net.vieapps.Components.Repository;
+#endregion
+
+namespace net.vieapps.Services.Users
+{
+	/// <summary>
+	/// Available gender of an user's account profile
+	/// </summary>
+	[Serializable]
+	public enum Gender
+	{
+		/// <summary>
+		/// Don't want to provide
+		/// </summary>
+		NotProvided,
+
+		/// <summary>
+		/// Male
+		/// </summary>
+		Male,
+
+		/// <summary>
+		/// Femal
+		/// </summary>
+		Female
+	}
+
+	//  --------------------------------------------------------------------------------------------
+
+	/// <summary>
+	/// Available type of an user's account
+	/// </summary>
+	[Serializable]
+	public enum AccountType
+	{
+		/// <summary>
+		/// Presents the built-in account (default)
+		/// </summary>
+		BuiltIn,
+
+		/// <summary>
+		/// Presents the OAth account
+		/// </summary>
+		OAuth,
+
+		/// <summary>
+		/// Presents the Windows LDAP account
+		/// </summary>
+		Windows
+	}
+
+	//  --------------------------------------------------------------------------------------------
+
+	/// <summary>
+	/// Available status of an user's account
+	/// </summary>
+	[Serializable]
+	public enum AccountStatus
+	{
+		/// <summary>
+		/// Presents the registered account (but not yet activate)
+		/// </summary>
+		Registered,
+
+		/// <summary>
+		/// Presents the activated account
+		/// </summary>
+		Activated,
+
+		/// <summary>
+		/// Presents the locked account
+		/// </summary>
+		Locked,
+
+		/// <summary>
+		/// Presents the disabled account
+		/// </summary>
+		Disabled
+	}
+
+	//  --------------------------------------------------------------------------------------------
+
+	/// <summary>
+	/// Available type of an OAuth's account
+	/// </summary>
+	[Serializable]
+	public enum OAuthType
+	{
+		/// <summary>
+		/// Presents the account that are authenticated by Facebook OAuth
+		/// </summary>
+		Facebook,
+
+		/// <summary>
+		/// Presents the account that are authenticated by Goole OAuth
+		/// </summary>
+		Google,
+
+		/// <summary>
+		/// Presents the account that are authenticated by Microsoft OAuth
+		/// </summary>
+		Microsoft,
+
+		/// <summary>
+		/// Presents the account that are authenticated by Twitter OAuth
+		/// </summary>
+		Twitter,
+
+		/// <summary>
+		/// Presents the account that are authenticated by LinkedIn OAuth
+		/// </summary>
+		LinkedIn
+	}
+}

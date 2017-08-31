@@ -149,154 +149,7 @@ namespace net.vieapps.Services.Users
 			} 
 		}
 
-		Task<JObject> ProcessSessionAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
-		{
-			switch (requestInfo.Verb)
-			{
-				// get a session
-				case "GET":
-					return this.GetSessionAsync(requestInfo, cancellationToken);
-
-				// register a session
-				case "POST":
-					return this.RegisterSessionAsync(requestInfo, cancellationToken);
-
-				// sign a session in
-				case "PUT":
-					return this.SignSessionInAsync(requestInfo, cancellationToken);
-
-				// sign a session out
-				case "DELETE":
-					return this.SignSessionOutAsync(requestInfo, cancellationToken);
-			}
-			
-			return Task.FromException<JObject>(new MethodNotAllowedException(requestInfo.Verb));
-		}
-
-		#region Get a session
-		async Task<JObject> GetSessionAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
-		{
-			return string.IsNullOrWhiteSpace(requestInfo.Session.SessionID) || requestInfo.Session.User.ID.Equals("") || requestInfo.Session.User.ID.Equals(User.SystemAccountID)
-				? null
-				: (await Session.GetAsync<Session>(requestInfo.Session.SessionID, cancellationToken))?.ToJson();
-		}
-		#endregion
-
-		#region Register a session
-		async Task<JObject> RegisterSessionAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
-		{
-			// prepare
-			if (string.IsNullOrWhiteSpace(requestInfo.Session.SessionID) || requestInfo.Session.User.ID.Equals("") || requestInfo.Session.User.ID.Equals(User.SystemAccountID))
-				throw new InvalidRequestException();
-
-			var data = requestInfo.GetBodyExpando();
-			if (data == null)
-				throw new InformationRequiredException();
-
-			// register a session
-			var session = await Session.GetAsync<Session>(requestInfo.Session.SessionID, cancellationToken);
-			if (session == null)
-			{
-				session = new Session();
-				session.CopyFrom(data);
-				await Session.CreateAsync(session, cancellationToken);
-			}
-			else
-			{
-				if (!requestInfo.Session.SessionID.IsEquals(data.Get<string>("ID")) || !requestInfo.Session.User.ID.IsEquals(data.Get<string>("UserID")))
-					throw new InvalidSessionException();
-				session.CopyFrom(data);
-				await Session.UpdateAsync(session, cancellationToken);
-			}
-
-			// remove duplicated sessions
-			await Session.DeleteManyAsync(Filters<Session>.And(
-					Filters<Session>.Equals("DeviceID", session.DeviceID),
-					Filters<Session>.NotEquals("ID", session.ID)
-				), null, cancellationToken);
-
-			// update account information
-			var account = await Account.GetAsync<Account>(session.UserID, cancellationToken);
-			account.LastAccess = DateTime.Now;
-			await account.GetSessionsAsync(cancellationToken);
-			await Account.UpdateAsync(account, cancellationToken);
-
-			// response
-			return session.ToJson();
-		}
-		#endregion
-
-		#region Sign a session in
-		async Task<JObject> SignSessionInAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
-		{
-			// prepare
-			var body = requestInfo.GetBodyExpando();
-			var email = body.Get<string>("Email").Decrypt();
-			var password = body.Get<string>("Password").Decrypt();
-
-			// find account & check
-			var account = await Account.GetByEmailAsync(email, cancellationToken);
-			if (account == null || !Account.HashPassword(account.ID, password).Equals(account.AccessKey))
-				throw new WrongAccountException();
-
-			// response
-			return account.GetAccountJson();
-		}
-		#endregion
-
-		#region Sign a session out
-		async Task<JObject> SignSessionOutAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
-		{
-			// remove session
-			await Session.DeleteAsync<Session>(requestInfo.Session.SessionID, cancellationToken);
-
-			// update account
-			var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID, cancellationToken);
-			if (account != null)
-			{
-				if (account.Sessions == null)
-					await account.GetSessionsAsync(cancellationToken);
-				account.Sessions = account.Sessions.Where(s => !s.ID.Equals(requestInfo.Session.SessionID)).ToList();
-				account.LastAccess = DateTime.Now;
-				await Account.UpdateAsync(account, cancellationToken);
-			}
-
-			// response
-			return new JObject()
-			{
-				{ "Status", "OK" }
-			};
-		}
-		#endregion
-
-		Task<JObject> ProcessAccountAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
-		{
-			switch (requestInfo.Verb)
-			{
-				// get an account
-				case "GET":
-					return this.GetAccountAsync(requestInfo, cancellationToken);
-
-				// create an account
-				case "POST":
-					return this.CreateAccountAsync(requestInfo, cancellationToken);
-
-				// update an account
-				case "PUT":
-					if ("reset".IsEquals(requestInfo.GetObjectIdentity()))
-						return this.ResetPasswordAsync(requestInfo, cancellationToken);
-					else if ("password".IsEquals(requestInfo.GetObjectIdentity()))
-						return this.UpdatePasswordAsync(requestInfo, cancellationToken);
-					else if ("email".IsEquals(requestInfo.GetObjectIdentity()))
-						return this.UpdateEmailAsync(requestInfo, cancellationToken);
-					else
-						return this.UpdateAccountAsync(requestInfo, cancellationToken);
-			}
-
-			return Task.FromException<JObject>(new MethodNotAllowedException(requestInfo.Verb));
-		}
-
-		#region Get the instructions/alerts when update/create an account
+		#region Working with related services
 		async Task<Tuple<string, string, string, string, Tuple<string, int, bool, string, string>>> GetInstructionsOfRelatedServiceAsync(RequestInfo requestInfo, string mode = "reset", CancellationToken cancellationToken = default(CancellationToken))
 		{
 			var request = new RequestInfo()
@@ -357,7 +210,7 @@ namespace net.vieapps.Services.Users
 				catch { }
 
 			if (string.IsNullOrWhiteSpace(subject))
-				switch(mode)
+				switch (mode)
 				{
 					case "account":
 						subject = "[{Host}] Kích hoạt tài khoản đăng nhập";
@@ -585,34 +438,198 @@ namespace net.vieapps.Services.Users
 
 			return new Tuple<string, string, string, string, Tuple<string, int, bool, string, string>>(subject, body, signature, sender, new Tuple<string, int, bool, string, string>(smtpServer, smtpServerPort, smtpServerEnableSsl, smtpUser, smtpUserPassword));
 		}
-		#endregion
 
-		#region Call related service
-		async Task<JObject> CallRelatedServiceAsync(RequestInfo requestInfo, string objectName, string objectIdentity = null, CancellationToken cancellationToken = default(CancellationToken))
+		async Task<JObject> CallRelatedServiceAsync(RequestInfo requestInfo, string objectName, string verb = "GET", string objectIdentity = null, CancellationToken cancellationToken = default(CancellationToken))
 		{
-			var request = new RequestInfo()
-			{
-				Session = requestInfo.Session,
-				ServiceName = requestInfo.Query["related-service"],
-				ObjectName = objectName,
-				Query = requestInfo.Query,
-				Header = requestInfo.Header,
-				Extra = requestInfo.Extra,
-				CorrelationID = requestInfo.CorrelationID
-			};
-
+			var request = new RequestInfo(requestInfo.Session, requestInfo.Query["related-service"], objectName, verb, requestInfo.Query, requestInfo.Header, requestInfo.Body, requestInfo.Extra, requestInfo.CorrelationID);
 			if (!string.IsNullOrWhiteSpace(objectIdentity))
 			{
-				request.Query = new Dictionary<string, string>(request.Query ?? new Dictionary<string, string>());
 				if (request.Query.ContainsKey("object-identity"))
 					request.Query["object-identity"] = objectIdentity;
 				else
 					request.Query.Add("object-identity", objectIdentity);
 			}
-
 			return await this.CallServiceAsync(request, cancellationToken);
 		}
+
+		async Task<JObject> CallRelatedServiceAsync(RequestInfo requestInfo, User user, string objectName, string verb, CancellationToken cancellationToken = default(CancellationToken))
+		{
+			return await this.CallServiceAsync(new RequestInfo(
+				new Services.Session(requestInfo.Session) { User = user }, 
+				requestInfo.Query["related-service"], 
+				objectName, 
+				verb, 
+				requestInfo.Query, 
+				requestInfo.Header, 
+				requestInfo.Body, 
+				requestInfo.Extra, 
+				requestInfo.CorrelationID
+			), cancellationToken);
+		}
 		#endregion
+
+		Task<JObject> ProcessSessionAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		{
+			switch (requestInfo.Verb)
+			{
+				// get a session
+				case "GET":
+					return this.GetSessionAsync(requestInfo, cancellationToken);
+
+				// register a session
+				case "POST":
+					return this.RegisterSessionAsync(requestInfo, cancellationToken);
+
+				// sign a session in
+				case "PUT":
+					return this.SignSessionInAsync(requestInfo, cancellationToken);
+
+				// sign a session out
+				case "DELETE":
+					return this.SignSessionOutAsync(requestInfo, cancellationToken);
+			}
+			
+			return Task.FromException<JObject>(new MethodNotAllowedException(requestInfo.Verb));
+		}
+
+		#region Get a session
+		async Task<JObject> GetSessionAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		{
+			return !string.IsNullOrWhiteSpace(requestInfo.Session.SessionID)
+				? (requestInfo.Session.User.ID.Equals("") || requestInfo.Session.User.ID.Equals(User.SystemAccountID)
+						? await Utility.Cache.FetchAsync<Session>(requestInfo.Session.SessionID)
+						: await Session.GetAsync<Session>(requestInfo.Session.SessionID, cancellationToken)
+					)?.ToJson()
+				: null;
+		}
+		#endregion
+
+		#region Register a session
+		async Task<JObject> RegisterSessionAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		{
+			// prepare
+			if (string.IsNullOrWhiteSpace(requestInfo.Session.SessionID))
+				throw new InvalidRequestException();
+
+			var data = requestInfo.GetBodyExpando();
+			if (data == null)
+				throw new InformationRequiredException();
+
+			// register a session of vistor/system account
+			if (requestInfo.Session.User.ID.Equals("") || requestInfo.Session.User.ID.Equals(User.SystemAccountID))
+			{
+				// update cache of session
+				var session = data.Copy<Session>();
+				Utility.Cache.SetAbsolute(session, 180);
+
+				// response
+				return session.ToJson();
+			}
+
+			// register a session of authenticated account
+			else
+			{
+				var session = await Session.GetAsync<Session>(requestInfo.Session.SessionID, cancellationToken);
+				if (session == null)
+				{
+					session = data.Copy<Session>();
+					await Session.CreateAsync(session, cancellationToken);
+				}
+				else
+				{
+					if (!requestInfo.Session.SessionID.IsEquals(data.Get<string>("ID")) || !requestInfo.Session.User.ID.IsEquals(data.Get<string>("UserID")))
+						throw new InvalidSessionException();
+					session.CopyFrom(data);
+					await Session.UpdateAsync(session, cancellationToken);
+				}
+
+				// remove duplicated sessions
+				await Session.DeleteManyAsync(Filters<Session>.And(
+						Filters<Session>.Equals("DeviceID", session.DeviceID),
+						Filters<Session>.NotEquals("ID", session.ID)
+					), null, cancellationToken);
+
+				// update account information
+				var account = await Account.GetAsync<Account>(session.UserID, cancellationToken);
+				account.LastAccess = DateTime.Now;
+				await account.GetSessionsAsync(cancellationToken);
+				await Account.UpdateAsync(account, cancellationToken);
+
+				// response
+				return session.ToJson();
+			}
+		}
+		#endregion
+
+		#region Sign a session in
+		async Task<JObject> SignSessionInAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		{
+			// prepare
+			var body = requestInfo.GetBodyExpando();
+			var email = body.Get<string>("Email").Decrypt();
+			var password = body.Get<string>("Password").Decrypt();
+
+			// find account & check
+			var account = await Account.GetByEmailAsync(email, cancellationToken);
+			if (account == null || !Account.HashPassword(account.ID, password).Equals(account.AccessKey))
+				throw new WrongAccountException();
+
+			// response
+			return account.GetAccountJson();
+		}
+		#endregion
+
+		#region Sign a session out
+		async Task<JObject> SignSessionOutAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		{
+			// remove session
+			await Session.DeleteAsync<Session>(requestInfo.Session.SessionID, cancellationToken);
+
+			// update account
+			var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID, cancellationToken);
+			if (account != null)
+			{
+				if (account.Sessions == null)
+					await account.GetSessionsAsync(cancellationToken);
+				account.Sessions = account.Sessions.Where(s => !s.ID.Equals(requestInfo.Session.SessionID)).ToList();
+				account.LastAccess = DateTime.Now;
+				await Account.UpdateAsync(account, cancellationToken);
+			}
+
+			// response
+			return new JObject()
+			{
+				{ "Status", "OK" }
+			};
+		}
+		#endregion
+
+		Task<JObject> ProcessAccountAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		{
+			switch (requestInfo.Verb)
+			{
+				// get an account
+				case "GET":
+					return this.GetAccountAsync(requestInfo, cancellationToken);
+
+				// create an account
+				case "POST":
+					return this.CreateAccountAsync(requestInfo, cancellationToken);
+
+				// update an account
+				case "PUT":
+					if ("reset".IsEquals(requestInfo.GetObjectIdentity()))
+						return this.ResetPasswordAsync(requestInfo, cancellationToken);
+					else if ("password".IsEquals(requestInfo.GetObjectIdentity()))
+						return this.UpdatePasswordAsync(requestInfo, cancellationToken);
+					else if ("email".IsEquals(requestInfo.GetObjectIdentity()))
+						return this.UpdateEmailAsync(requestInfo, cancellationToken);
+					else
+						return this.UpdateAccountAsync(requestInfo, cancellationToken);
+			}
+
+			return Task.FromException<JObject>(new MethodNotAllowedException(requestInfo.Verb));
+		}
 
 		#region Get an account
 		async Task<JObject> GetAccountAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
@@ -631,7 +648,7 @@ namespace net.vieapps.Services.Users
 			if (requestInfo.Query.ContainsKey("related-service"))
 				try
 				{
-					var result = await this.CallRelatedServiceAsync(requestInfo, "account", null, cancellationToken);
+					var result = await this.CallRelatedServiceAsync(requestInfo, "account", "GET", null, cancellationToken);
 					foreach (var info in result)
 						if (json[info.Key] != null)
 							json[info.Key] = info.Value;
@@ -654,11 +671,10 @@ namespace net.vieapps.Services.Users
 				if (!requestInfo.Session.User.IsSystemAdministrator)
 					throw new AccessDeniedException();
 
-				var requestBody = requestInfo.GetBodyJson();
-				var account = new Account();
-				account.CopyFrom(requestBody);
-				if (requestBody["AccessKey"] != null)
-					account.AccessKey = (requestBody["AccessKey"] as JValue).Value as string;
+				var requestBody = requestInfo.GetBodyExpando();
+
+				var account = requestBody.Copy<Account>();
+				account.AccessKey = requestBody.Get<string>("AccessKey") ?? this.GenerateRandomPassword(account.AccessIdentity);
 
 				await Account.CreateAsync(account, cancellationToken);
 				return account.ToJson();
@@ -706,7 +722,7 @@ namespace net.vieapps.Services.Users
 					if (requestInfo.Query.ContainsKey("related-service"))
 						try
 						{
-							var result = await this.CallRelatedServiceAsync(requestInfo, "account", null, cancellationToken);
+							var result = await this.CallRelatedServiceAsync(requestInfo, json.FromJson<User>(), "account", "POST", cancellationToken);
 							foreach (var info in result)
 								if (json[info.Key] != null)
 									json[info.Key] = info.Value;
@@ -725,7 +741,7 @@ namespace net.vieapps.Services.Users
 					if (requestInfo.Query.ContainsKey("related-service"))
 						try
 						{
-							var result = await this.CallRelatedServiceAsync(requestInfo, "profile", null, cancellationToken);
+							var result = await this.CallRelatedServiceAsync(requestInfo, json.FromJson<User>(), "profile", "POST", cancellationToken);
 							foreach (var info in result)
 								if (json[info.Key] != null)
 									json[info.Key] = info.Value;
@@ -1107,7 +1123,7 @@ namespace net.vieapps.Services.Users
 				if (requestInfo.Query.ContainsKey("related-service"))
 					try
 					{
-						var data = await this.CallRelatedServiceAsync(requestInfo, "profile", (profile["ID"] as JValue).Value as string, cancellationToken);
+						var data = await this.CallRelatedServiceAsync(requestInfo, "profile", "GET", (profile["ID"] as JValue).Value as string, cancellationToken);
 						foreach (var info in data)
 							if (profile[info.Key] != null)
 								profile[info.Key] = info.Value;
@@ -1168,7 +1184,7 @@ namespace net.vieapps.Services.Users
 				if (requestInfo.Query.ContainsKey("related-service"))
 					try
 					{
-						var data = await this.CallRelatedServiceAsync(requestInfo, "profile", (profile["ID"] as JValue).Value as string, cancellationToken);
+						var data = await this.CallRelatedServiceAsync(requestInfo, "profile", "GET", (profile["ID"] as JValue).Value as string, cancellationToken);
 						foreach (var info in data)
 							if (profile[info.Key] != null)
 								profile[info.Key] = info.Value;
@@ -1197,8 +1213,7 @@ namespace net.vieapps.Services.Users
 				if (!requestInfo.Session.User.IsSystemAdministrator)
 					throw new AccessDeniedException();
 
-				var profile = new Profile();
-				profile.CopyFrom(requestInfo.GetBodyJson());
+				var profile = requestInfo.GetBodyJson().Copy<Profile>();
 				await Profile.CreateAsync(profile, cancellationToken);
 				return profile.ToJson();
 			}
@@ -1230,7 +1245,7 @@ namespace net.vieapps.Services.Users
 			if (requestInfo.Query.ContainsKey("related-service"))
 				try
 				{
-					var data = await this.CallRelatedServiceAsync(requestInfo, "profile", id, cancellationToken);
+					var data = await this.CallRelatedServiceAsync(requestInfo, "profile", "GET", id, cancellationToken);
 					foreach (var info in data)
 						if (json[info.Key] != null)
 							json[info.Key] = info.Value;
@@ -1273,7 +1288,7 @@ namespace net.vieapps.Services.Users
 			if (requestInfo.Query.ContainsKey("related-service"))
 				try
 				{
-					var data = await this.CallRelatedServiceAsync(requestInfo, "profile", id, cancellationToken);
+					var data = await this.CallRelatedServiceAsync(requestInfo, "profile", "GET", id, cancellationToken);
 					foreach (var info in data)
 						if (json[info.Key] != null)
 							json[info.Key] = info.Value;
@@ -1401,7 +1416,7 @@ namespace net.vieapps.Services.Users
 				if (requestInfo.Query.ContainsKey("related-service"))
 					try
 					{
-						var result = await this.CallRelatedServiceAsync(new RequestInfo(requestInfo, "POST"), "account", id, cancellationToken);
+						var result = await this.CallRelatedServiceAsync(requestInfo, json.FromJson<User>(), "account", "POST", cancellationToken);
 						foreach (var data in result)
 							if (json[data.Key] != null)
 								json[data.Key] = data.Value;
@@ -1423,7 +1438,7 @@ namespace net.vieapps.Services.Users
 				if (requestInfo.Query.ContainsKey("related-service"))
 					try
 					{
-						await this.CallRelatedServiceAsync(new RequestInfo(requestInfo, "POST"), "profile", id, cancellationToken);
+						await this.CallRelatedServiceAsync(requestInfo, json.FromJson<User>(), "profile", "POST", cancellationToken);
 					}
 					catch { }
 
@@ -1431,7 +1446,7 @@ namespace net.vieapps.Services.Users
 				return json;
 			}
 		}
-		#endregion
+		#endregion 
 
 		#region Activate new password
 		async Task<JObject> ActivatePasswordAsync(RequestInfo requestInfo, ExpandoObject  info, CancellationToken cancellationToken)

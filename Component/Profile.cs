@@ -16,13 +16,6 @@ using net.vieapps.Components.Repository;
 
 namespace net.vieapps.Services.Users
 {
-	public enum Gender
-	{
-		NotProvided,
-		Male,
-		Female
-	}
-
 	[Serializable, BsonIgnoreExtraElements, DebuggerDisplay("ID = {ID}, Name = {Name}, Email = {Email}")]
 	[Entity(CollectionName = "Profiles", TableName = "T_Users_Profiles", CacheStorageType = typeof(Utility), CacheStorageName = "Cache", Searchable = true)]
 	public class Profile : Repository<Profile>

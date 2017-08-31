@@ -140,17 +140,22 @@ namespace net.vieapps.Services.Users
 			this.Sessions = await Session.FindAsync(Filters<Session>.Equals("UserID", this.ID), Sorts<Session>.Descending("ExpiredAt"), 0, 1, null, cancellationToken);
 		}
 
-		public JObject GetAccountJson()
+		public JObject GetAccountJson(bool addStatus = false)
 		{
 			var roles = SystemRole.All.ToString() + "," + SystemRole.Authenticated.ToString()
 				+ (User.SystemAdministrators.Contains(this.ID) ? "," + SystemRole.SystemAdministrator.ToString() : "");
-			return new JObject()
+
+			var json = new JObject()
 			{
 				{ "ID", this.ID },
-				{ "Status", this.Status.ToString() },
 				{ "Roles", (this.AccessRoles ?? new List<string>()).Concat(roles.ToList()).Distinct().ToJArray() },
 				{ "Privileges", (this.AccessPrivileges ?? new List<Privilege>()).ToJArray() }
 			};
+
+			if (addStatus)
+				json.Add(new JProperty("Status", this.Status.ToString()));
+
+			return json;
 		}
 
 		/// <summary>
