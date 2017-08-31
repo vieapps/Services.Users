@@ -43,6 +43,8 @@ namespace net.vieapps.Services.Users
 			this.Email = "";
 			this.Mobile = "";
 			this.Avatar = "";
+			this.Alias = "";
+			this.Bio = "";
 			this.Notes = "";
 			this.LastUpdated = DateTime.Now;
 		}
@@ -85,10 +87,16 @@ namespace net.vieapps.Services.Users
 		public string Email { get; set; }
 
 		[Property(MaxLength = 1000)]
-		public string Notes { get; set; }
-
-		[Property(MaxLength = 1000)]
 		public string Avatar { get; set; }
+
+		[Property(MaxLength = 250, NotNull = true), Searchable, Sortable(IndexName = "ContactInfo")]
+		public string Alias { get; set; }
+
+		[Property(MaxLength = 250), Searchable]
+		public string Bio { get; set; }
+
+		[Searchable]
+		public string Notes { get; set; }
 
 		[Sortable]
 		public DateTime LastUpdated { get; set; }

@@ -20,84 +20,102 @@ using net.vieapps.Components.Repository;
 
 namespace net.vieapps.Services.Users
 {
-	[Serializable, BsonIgnoreExtraElements, DebuggerDisplay("ID = {ID}, Name = {AccountName}, Type = {Type}")]
+	[Serializable, BsonIgnoreExtraElements, DebuggerDisplay("ID = {ID}, Identity = {Identity}, Type = {Type}")]
 	[Entity(CollectionName = "Accounts", TableName = "T_Users_Accounts", CacheStorageType = typeof(Utility), CacheStorageName = "Cache")]
 	public class Account : Repository<Account>
 	{
 		public Account()
 		{
 			this.ID = "";
+			this.Status = AccountStatus.Activated;
 			this.Type = AccountType.BuiltIn;
 			this.Joined = DateTime.Now;
 			this.LastAccess = DateTime.Now;
 			this.OAuthType = "";
-			this.AccountName = "";
-			this.AccountID = "";
-			this.AccountKey = "";
-			this.AccountRoles = new List<string>();
-			this.AccountPrivileges = new List<Privilege>();
+			this.AccessRoles = new List<string>();
+			this.AccessPrivileges = new List<Privilege>();
 		}
 
 		#region Properties
 		/// <summary>
-		/// Gets or sets type of user account
+		/// Gets or sets the status
+		/// </summary>
+		[JsonConverter(typeof(StringEnumConverter)), BsonRepresentation(BsonType.String), Property(NotNull = true), Sortable]
+		public AccountStatus Status { get; set; }
+
+		/// <summary>
+		/// Gets or sets the type
 		/// </summary>
 		[JsonConverter(typeof(StringEnumConverter)), BsonRepresentation(BsonType.String), Property(NotNull = true), Sortable]
 		public AccountType Type { get; set; }
 
 		/// <summary>
-		/// Gets or sets joined time of the user
+		/// Gets or sets the joined time of the user account
 		/// </summary>
 		[Sortable(IndexName = "Times")]
 		public DateTime Joined { get; set; }
 
 		/// <summary>
-		/// Gets or sets last activity time of the user
+		/// Gets or sets the last activity time of the user account
 		/// </summary>
 		[Sortable(IndexName = "Times")]
 		public DateTime LastAccess { get; set; }
 
 		/// <summary>
-		/// Gets or sets the type of OAuth account, must be string of <see cref="OAuthType">OAuthType</see> when the type of user account is OAuth
+		/// Gets or sets the type of the OAuth user account, must be string of <see cref="OAuthType">OAuthType</see> when the type of user account is OAuth
 		/// </summary>
 		[Property(MaxLength = 20, NotNull = true), Sortable(UniqueIndexName = "Account")]
 		public string OAuthType { get; set; }
 
 		/// <summary>
-		/// Gets or sets the name of the user account (email address when the user is built-in account, OAuth ID if the user is OAuth account, account with full domain if the user is Windows account)
-		/// </summary>
-		[Property(MaxLength = 250, NotNull = true), Sortable(UniqueIndexName = "Account")]
-		public string AccountName { get; set; }
-
-		/// <summary>
-		/// Gets or sets the mapped account identity (when the user account is OAuth and mapped to a built-in user account)
+		/// Gets or sets the identity of the mapped user account (when the user account is OAuth and mapped to a built-in user account)
 		/// </summary>
 		[Property(MaxLength = 32), Sortable(UniqueIndexName = "Account")]
-		public string AccountID { get; set; }
+		public string AccessMapIdentity { get; set; }
 
 		/// <summary>
-		/// Gets or sets the key for logging this user account in (hashed password when the user is built-in account or access token when the user is OAuth account)
+		/// Gets or sets the identiy of the user account (email address when the user is built-in account, OAuth ID if the user is OAuth account, account with full domain if the user is Windows account)
 		/// </summary>
-		[JsonIgnore, Property(MaxLength = 250)]
-		public string AccountKey { get; set; }
+		[Property(MaxLength = 250, NotNull = true), Sortable(UniqueIndexName = "Account")]
+		public string AccessIdentity { get; set; }
+
+		/// <summary>
+		/// Gets or sets the key of the user account in (hashed password when the user is built-in account or access token when the user is OAuth account)
+		/// </summary>
+		[JsonIgnore]
+		public string AccessKey { get; set; }
 
 		/// <summary>
 		/// Gets or sets the working roles (means working roles of business services) of the user account
 		/// </summary>
 		[AsJson]
-		public List<string> AccountRoles { get; set; }
+		public List<string> AccessRoles { get; set; }
 
 		/// <summary>
 		/// Gets or sets the working privileges (means scopes/working privileges of services/services' objects) of the user account
 		/// </summary>
 		[AsJson]
-		public List<Privilege> AccountPrivileges { get; set; }
+		public List<Privilege> AccessPrivileges { get; set; }
 
 		/// <summary>
 		/// Gets or sets the collection of sessions of the user account
 		/// </summary>
 		[JsonIgnore, BsonIgnore, Ignore]
 		public List<Session> Sessions { get; set; }
+
+		[NonSerialized]
+		Profile _profile = null;
+
+		[JsonIgnore, BsonIgnore, Ignore]
+		public Profile Profile
+		{
+			get
+			{
+				if (this._profile == null)
+					this._profile = Profile.Get<Profile>(this.ID);
+				return this._profile;
+			}
+		}
 		#endregion
 
 		#region IBusiness properties
@@ -117,35 +135,36 @@ namespace net.vieapps.Services.Users
 		public override Privileges OriginalPrivileges { get; set; }
 		#endregion
 
-		[NonSerialized]
-		Profile _profile = null;
-
-		[JsonIgnore, BsonIgnore, Ignore]
-		public Profile Profile
-		{
-			get
-			{
-				if (this._profile == null)
-					this._profile = Profile.Get<Profile>(this.ID);
-				return this._profile;
-			}
-		}
-
 		public async Task GetSessionsAsync(CancellationToken cancellationToken = default(CancellationToken))
 		{
-			var filter = Filters<Session>.Equals("UserID", this.ID);
-			var sort = Sorts<Session>.Descending("ExpiredAt");
-			this.Sessions = await Session.FindAsync(filter, sort, 0, 1, null, cancellationToken);
+			this.Sessions = await Session.FindAsync(Filters<Session>.Equals("UserID", this.ID), Sorts<Session>.Descending("ExpiredAt"), 0, 1, null, cancellationToken);
 		}
 
-		public JObject GetJson()
+		public JObject GetAccountJson()
 		{
+			var roles = SystemRole.All.ToString() + "," + SystemRole.Authenticated.ToString()
+				+ (User.SystemAdministrators.Contains(this.ID) ? "," + SystemRole.SystemAdministrator.ToString() : "");
 			return new JObject()
 			{
 				{ "ID", this.ID },
-				{ "Roles", (this.AccountRoles ?? new List<string>()).Concat("All,Authenticated".ToList()).Distinct().ToJArray() },
-				{ "Privileges", (this.AccountPrivileges ?? new List<Privilege>()).ToJArray() }
+				{ "Status", this.Status.ToString() },
+				{ "Roles", (this.AccessRoles ?? new List<string>()).Concat(roles.ToList()).Distinct().ToJArray() },
+				{ "Privileges", (this.AccessPrivileges ?? new List<Privilege>()).ToJArray() }
 			};
+		}
+
+		/// <summary>
+		/// Gets an user account by email address (available for built-in account only)
+		/// </summary>
+		/// <param name="email"></param>
+		/// <param name="cancellationToken"></param>
+		/// <returns></returns>
+		public static async Task<Account> GetByEmailAsync(string email, CancellationToken cancellationToken = default(CancellationToken))
+		{
+			return await Account.GetAsync<Account>(Filters<Account>.And(
+					Filters<Account>.Equals("AccessIdentity", email),
+					Filters<Account>.Equals("Type", AccountType.BuiltIn.ToString())
+				), null, null, cancellationToken);
 		}
 
 		/// <summary>

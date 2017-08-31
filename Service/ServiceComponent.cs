@@ -153,7 +153,7 @@ namespace net.vieapps.Services.Users
 		{
 			switch (requestInfo.Verb)
 			{
-				// get information of a session
+				// get a session
 				case "GET":
 					return this.GetSessionAsync(requestInfo, cancellationToken);
 
@@ -176,16 +176,16 @@ namespace net.vieapps.Services.Users
 		#region Get a session
 		async Task<JObject> GetSessionAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
-			var session = string.IsNullOrWhiteSpace(requestInfo.Session.SessionID) || requestInfo.Session.User.ID.Equals("") || requestInfo.Session.User.ID.Equals(User.SystemAccountID)
+			return string.IsNullOrWhiteSpace(requestInfo.Session.SessionID) || requestInfo.Session.User.ID.Equals("") || requestInfo.Session.User.ID.Equals(User.SystemAccountID)
 				? null
-				: await Session.GetAsync<Session>(requestInfo.Session.SessionID, cancellationToken);
-			return session?.ToJson();
+				: (await Session.GetAsync<Session>(requestInfo.Session.SessionID, cancellationToken))?.ToJson();
 		}
 		#endregion
 
 		#region Register a session
 		async Task<JObject> RegisterSessionAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
+			// prepare
 			if (string.IsNullOrWhiteSpace(requestInfo.Session.SessionID) || requestInfo.Session.User.ID.Equals("") || requestInfo.Session.User.ID.Equals(User.SystemAccountID))
 				throw new InvalidRequestException();
 
@@ -193,6 +193,7 @@ namespace net.vieapps.Services.Users
 			if (data == null)
 				throw new InformationRequiredException();
 
+			// register a session
 			var session = await Session.GetAsync<Session>(requestInfo.Session.SessionID, cancellationToken);
 			if (session == null)
 			{
@@ -208,6 +209,19 @@ namespace net.vieapps.Services.Users
 				await Session.UpdateAsync(session, cancellationToken);
 			}
 
+			// remove duplicated sessions
+			await Session.DeleteManyAsync(Filters<Session>.And(
+					Filters<Session>.Equals("DeviceID", session.DeviceID),
+					Filters<Session>.NotEquals("ID", session.ID)
+				), null, cancellationToken);
+
+			// update account information
+			var account = await Account.GetAsync<Account>(session.UserID, cancellationToken);
+			account.LastAccess = DateTime.Now;
+			await account.GetSessionsAsync(cancellationToken);
+			await Account.UpdateAsync(account, cancellationToken);
+
+			// response
 			return session.ToJson();
 		}
 		#endregion
@@ -221,16 +235,12 @@ namespace net.vieapps.Services.Users
 			var password = body.Get<string>("Password").Decrypt();
 
 			// find account & check
-			var filter = Filters<Account>.And(
-					Filters<Account>.Equals("AccountName", email),
-					Filters<Account>.Equals("Type", AccountType.BuiltIn.ToString())
-				);
-			var account = await Account.GetAsync<Account>(filter, null, null, cancellationToken);
-			if (account == null || !account.AccountKey.Equals(Account.HashPassword(account.ID, password)))
+			var account = await Account.GetByEmailAsync(email, cancellationToken);
+			if (account == null || !Account.HashPassword(account.ID, password).Equals(account.AccessKey))
 				throw new WrongAccountException();
 
 			// response
-			return account.GetJson();
+			return account.GetAccountJson();
 		}
 		#endregion
 
@@ -263,14 +273,15 @@ namespace net.vieapps.Services.Users
 		{
 			switch (requestInfo.Verb)
 			{
+				// get an account
 				case "GET":
 					return this.GetAccountAsync(requestInfo, cancellationToken);
 
+				// create an account
 				case "POST":
-					if (requestInfo.Query.ContainsKey("x-convert"))
-						return this.CreateAccountAsync(requestInfo, cancellationToken);
-					return Task.FromException<JObject>(new MethodNotAllowedException(requestInfo.Verb));
+					return this.CreateAccountAsync(requestInfo, cancellationToken);
 
+				// update an account
 				case "PUT":
 					if ("reset".IsEquals(requestInfo.GetObjectIdentity()))
 						return this.ResetPasswordAsync(requestInfo, cancellationToken);
@@ -278,11 +289,330 @@ namespace net.vieapps.Services.Users
 						return this.UpdatePasswordAsync(requestInfo, cancellationToken);
 					else if ("email".IsEquals(requestInfo.GetObjectIdentity()))
 						return this.UpdateEmailAsync(requestInfo, cancellationToken);
-					return Task.FromException<JObject>(new InvalidRequestException());
+					else
+						return this.UpdateAccountAsync(requestInfo, cancellationToken);
 			}
 
 			return Task.FromException<JObject>(new MethodNotAllowedException(requestInfo.Verb));
 		}
+
+		#region Get the instructions/alerts when update/create an account
+		async Task<Tuple<string, string, string, string, Tuple<string, int, bool, string, string>>> GetInstructionsOfRelatedServiceAsync(RequestInfo requestInfo, string mode = "reset", CancellationToken cancellationToken = default(CancellationToken))
+		{
+			var request = new RequestInfo()
+			{
+				Session = requestInfo.Session,
+				ServiceName = requestInfo.Query["related-service"],
+				ObjectName = "instruction",
+				Query = new Dictionary<string, string>(requestInfo.Query ?? new Dictionary<string, string>())
+				{
+					{ "object-identity", "account" }
+				},
+				Header = requestInfo.Header,
+				Extra = new Dictionary<string, string>(requestInfo.Extra ?? new Dictionary<string, string>())
+				{
+					{ "mode", mode }
+				},
+				CorrelationID = requestInfo.CorrelationID
+			};
+			var data = (await this.CallServiceAsync(request, cancellationToken)).ToExpandoObject();
+
+			var subject = data.Get<string>("Subject");
+			var body = data.Get<string>("Body");
+			var signature = data.Get<string>("Signature");
+			var sender = data.Get<string>("Sender");
+			var smtpServer = data.Get<string>("SmtpServer");
+			var smtpServerPort = data.Has("SmtpServerPort")
+				? data.Get<int>("SmtpServerPort")
+				: 25;
+			var smtpServerEnableSsl = data.Get<bool>("SmtpServerEnableSsl");
+			var smtpUser = data.Get<string>("SmtpUser");
+			var smtpUserPassword = data.Get<string>("SmtpUserPassword");
+
+			return new Tuple<string, string, string, string, Tuple<string, int, bool, string, string>>(subject, body, signature, sender, new Tuple<string, int, bool, string, string>(smtpServer, smtpServerPort, smtpServerEnableSsl, smtpUser, smtpUserPassword));
+		}
+
+		async Task<Tuple<string, string, string, string, Tuple<string, int, bool, string, string>>> GetActivateInstructionsAsync(RequestInfo requestInfo, string mode = "reset", CancellationToken cancellationToken = default(CancellationToken))
+		{
+			string subject = "", body = "", signature = "", sender = "";
+			string smtpServer = "", smtpUser = "", smtpUserPassword = "";
+			var smtpServerPort = 25;
+			var smtpServerEnableSsl = false;
+
+			if (requestInfo.Query.ContainsKey("related-service"))
+				try
+				{
+					var data = await this.GetInstructionsOfRelatedServiceAsync(requestInfo, mode, cancellationToken);
+
+					subject = data.Item1;
+					body = data.Item2;
+					signature = data.Item3;
+					sender = data.Item4;
+					smtpServer = data.Item5.Item1;
+					smtpServerPort = data.Item5.Item2;
+					smtpServerEnableSsl = data.Item5.Item3;
+					smtpUser = data.Item5.Item4;
+					smtpUserPassword = data.Item5.Item5;
+				}
+				catch { }
+
+			if (string.IsNullOrWhiteSpace(subject))
+				switch(mode)
+				{
+					case "account":
+						subject = "[{Host}] Kích hoạt tài khoản đăng nhập";
+						break;
+
+					case "invite":
+						subject = "[{Host}] Lời mời tham gia hệ thống";
+						break;
+
+					case "reset":
+						subject = "[{Host}] Kích hoạt mật khẩu đăng nhập mới";
+						break;
+				}
+
+			if (string.IsNullOrWhiteSpace(body))
+				switch (mode)
+				{
+					case "account":
+						body = @"
+						Xin chào <b>{Name}</b>
+						<br/><br/>
+						Chào mừng bạn đã tham gia vào hệ thống cùng chúng tôi.
+						<br/><br/>
+						Tài khoản thành viên của bạn đã được khởi tạo với các thông tin sau:
+						<blockquote>
+							Email đăng nhập: <b>{Email}</b>
+							<br/>
+							Mật khẩu đăng nhập: <b>{Password}</b>
+						</blockquote>
+						<br/>
+						Để hoàn tất quá trình đăng ký, bạn vui lòng kích hoạt tài khoản đã đăng ký bằng cách mở liên kết dưới:
+						<br/><br/>
+						<span style='display:inline-block;padding:15px;border-radius:5px;background-color:#eee;font-weight:bold'>
+						<a href='{Uri}' style='color:red'>Kích hoạt tài khoản</a>
+						</span>
+						<br/><br/>
+						<br/>
+						<i>Thông tin thêm:</i>
+						<ul>
+							<li>
+								Hoạt động đăng ký tài khoản được thực hiện lúc <b>{Time}</b> với thiết bị có địa chỉ IP là <b>{IP}</b>
+							</li>
+							<li>
+								Mã kích hoạt chỉ có giá trị trong vòng 01 tháng kể từ thời điểm nhận được email này.
+								<br/>
+								Sau thời gian đó, để gia nhập hệ thống bạn cần thực hiện  lại hoạt động đăng ký thành viên.
+							</li>
+							<li>
+								Nếu không phải bạn thực hiện hoạt động này, bạn cũng không phải bận tâm 
+								vì hệ thống sẽ tự động loại bỏ các thông tin không sử dụng sau thời gian đăng ký 01 tháng.
+							</li>
+						</ul>
+						<br/><br/>
+						{Signature}".Replace("\t", "");
+						break;
+
+					case "invite":
+						body = @"
+						Xin chào <b>{Name}</b>
+						<br/><br/>
+						Chào mừng bạn đến với hệ thống qua lời mời của <b>{Inviter}</b> ({InviterEmail}).
+						<br/><br/>
+						Tài khoản thành viên của bạn sẽ được khởi tạo với các thông tin sau:
+						<blockquote>
+							Email đăng nhập: <b>{Email}</b>
+							<br/>
+							Mật khẩu đăng nhập: <b>{Password}</b>
+						</blockquote>
+						<br/>
+						Để hoàn tất quá trình và trở thành thành viên của hệ thống, bạn vui lòng khởi tạo & kích hoạt tài khoản bằng cách mở liên kết dưới:
+						<br/><br/>
+						<span style='display:inline-block;padding:15px;border-radius:5px;background-color:#eee;font-weight:bold'>
+						<a href='{Uri}' style='color:red'>Khởi tạo &amp; Kích hoạt tài khoản</a>
+						</span>
+						<br/><br/>
+						<br/>
+						<i>Thông tin thêm:</i>
+						<ul>
+							<li>
+								Lời mời tham gia hệ thống được thực hiện lúc <b>{Time}</b> với thiết bị có địa chỉ IP là <b>{IP}</b>
+							</li>
+							<li>
+								Mã khởi tạo & kích hoạt chỉ có giá trị trong vòng 01 tháng kể từ thời điểm nhận được email này.
+								<br/>
+								Sau thời gian đó, để gia nhập hệ thống bạn cần thực hiện  hoạt động đăng ký thành viên.
+							</li>
+							<li>
+								Nếu bạn không muốn tham gia vào hệ thống, bạn cũng không phải bận tâm  vì hệ thống sẽ chỉ khởi tạo tài khoản khi bạn thực hiện hoạt động này.
+							</li>
+						</ul>
+						<br/><br/>
+						{Signature}".Replace("\t", "");
+						break;
+
+					case "reset":
+						body = @"
+						Xin chào <b>{Name}</b>
+						<br/><br/>
+						Tài khoản đăng nhập của bạn đã được yêu cầu đặt lại thông tin đăng nhập như sau:
+						<blockquote>
+							Email đăng nhập: <b>{Email}</b>
+							<br/>
+							Mật khẩu đăng nhập (mới): <b>{Password}</b>
+						</blockquote>
+						<br/>
+						Để hoàn tất quá trình thay đổi mật khẩu mới, bạn vui lòng kích hoạt bằng cách mở liên kết dưới:
+						<br/><br/>
+						<span style='display:inline-block;padding:15px;border-radius:5px;background-color:#eee;font-weight:bold'>
+						<a href='{Uri}' style='color:red'>Kích hoạt mật khẩu đăng nhập mới</a>
+						</span>
+						<br/><br/>
+						<br/>
+						<i>Thông tin thêm:</i>
+						<ul>
+							<li>
+								Hoạt động này được thực hiện lúc <b>{Time}</b> với thiết bị <b>{AppPlatform}</b> có địa chỉ IP là <b>{IP}</b>
+							</li>
+							<li>
+								Mã kích hoạt chỉ có giá trị trong vòng 01 ngày kể từ thời điểm nhận được email này.
+							</li>
+							<li>
+								Nếu không phải bạn thực hiện hoạt động này, bạn nên kiểm tra lại thông tin đăng nhập cũng như email liên quan
+								vì có thể một điểm nào đó trong hệ thống thông tin bị rò rỉ (và có thể gây hại cho bạn).
+								<br/>
+								Khi bạn chưa kích hoạt thì mật khẩu đăng nhập mới là chưa có tác dụng.
+							</li>
+						</ul>
+						<br/><br/>
+						{Signature}".Replace("\t", "");
+						break;
+				}
+
+			return new Tuple<string, string, string, string, Tuple<string, int, bool, string, string>>(subject, body, signature, sender, new Tuple<string, int, bool, string, string>(smtpServer, smtpServerPort, smtpServerEnableSsl, smtpUser, smtpUserPassword));
+		}
+
+		async Task<Tuple<string, string, string, string, Tuple<string, int, bool, string, string>>> GetUpdateInstructionsAsync(RequestInfo requestInfo, string mode = "password", CancellationToken cancellationToken = default(CancellationToken))
+		{
+			string subject = "", body = "", signature = "", sender = "";
+			string smtpServer = "", smtpUser = "", smtpUserPassword = "";
+			var smtpServerPort = 25;
+			var smtpServerEnableSsl = false;
+
+			if (requestInfo.Query.ContainsKey("related-service"))
+				try
+				{
+					var data = await this.GetInstructionsOfRelatedServiceAsync(requestInfo, mode, cancellationToken);
+
+					subject = data.Item1;
+					body = data.Item2;
+					signature = data.Item3;
+					sender = data.Item4;
+					smtpServer = data.Item5.Item1;
+					smtpServerPort = data.Item5.Item2;
+					smtpServerEnableSsl = data.Item5.Item3;
+					smtpUser = data.Item5.Item4;
+					smtpUserPassword = data.Item5.Item5;
+				}
+				catch { }
+
+			if (string.IsNullOrWhiteSpace(subject))
+				switch (mode)
+				{
+					case "password":
+						subject = "[{Host}] Thông báo thông tin đăng nhập tài khoản thay đổi (mật khẩu)";
+						break;
+
+					case "email":
+						subject = "[{Host}] Thông báo thông tin đăng nhập tài khoản thay đổi (email)";
+						break;
+				}
+
+			if (string.IsNullOrWhiteSpace(body))
+				switch (mode)
+				{
+					case "password":
+						body = @"
+						Xin chào <b>{Name}</b>
+						<br/><br/>
+						Tài khoản đăng nhập của bạn đã được cật nhật thông tin đăng nhập như sau:
+						<blockquote>
+							Email đăng nhập: <b>{Email}</b>
+							<br/>
+							Mật khẩu đăng nhập (mới): <b>{Password}</b>
+						</blockquote>
+						<br/>
+						<i>Thông tin thêm:</i>
+						<ul>
+							<li>
+								Hoạt động này được thực hiện lúc <b>{Time}</b> với thiết bị <b>{AppPlatform}</b> có địa chỉ IP là <b>{IP}</b>
+							</li>
+							<li>
+								Nếu không phải bạn thực hiện hoạt động này, bạn nên kiểm tra lại thông tin đăng nhập cũng như email liên quan
+								vì có thể một điểm nào đó trong hệ thống thông tin bị rò rỉ (và có thể gây hại cho bạn).
+							</li>
+						</ul>
+						<br/><br/>
+						{Signature}".Replace("\t", "");
+						break;
+
+					case "email":
+						body = @"
+						Xin chào <b>{Name}</b>
+						<br/><br/>
+						Tài khoản đăng nhập của bạn đã được cật nhật thông tin đăng nhập như sau:
+						<blockquote>
+							Email đăng nhập (mới): <b>{Email}</b>
+							<br/>
+							Email đăng nhập (cũ): <b>{OldEmail}</b>
+						</blockquote>
+						<br/>
+						<i>Thông tin thêm:</i>
+						<ul>
+							<li>
+								Hoạt động này được thực hiện lúc <b>{Time}</b> với thiết bị <b>{AppPlatform}</b> có địa chỉ IP là <b>{IP}</b>
+							</li>
+							<li>
+								Nếu không phải bạn thực hiện hoạt động này, bạn nên kiểm tra lại thông tin đăng nhập cũng như email liên quan
+								vì có thể một điểm nào đó trong hệ thống thông tin bị rò rỉ (và có thể gây hại cho bạn).
+							</li>
+						</ul>
+						<br/><br/>
+						{Signature}".Replace("\t", "");
+						break;
+				}
+
+			return new Tuple<string, string, string, string, Tuple<string, int, bool, string, string>>(subject, body, signature, sender, new Tuple<string, int, bool, string, string>(smtpServer, smtpServerPort, smtpServerEnableSsl, smtpUser, smtpUserPassword));
+		}
+		#endregion
+
+		#region Call related service
+		async Task<JObject> CallRelatedServiceAsync(RequestInfo requestInfo, string objectName, string objectIdentity = null, CancellationToken cancellationToken = default(CancellationToken))
+		{
+			var request = new RequestInfo()
+			{
+				Session = requestInfo.Session,
+				ServiceName = requestInfo.Query["related-service"],
+				ObjectName = objectName,
+				Query = requestInfo.Query,
+				Header = requestInfo.Header,
+				Extra = requestInfo.Extra,
+				CorrelationID = requestInfo.CorrelationID
+			};
+
+			if (!string.IsNullOrWhiteSpace(objectIdentity))
+			{
+				request.Query = new Dictionary<string, string>(request.Query ?? new Dictionary<string, string>());
+				if (request.Query.ContainsKey("object-identity"))
+					request.Query["object-identity"] = objectIdentity;
+				else
+					request.Query.Add("object-identity", objectIdentity);
+			}
+
+			return await this.CallServiceAsync(request, cancellationToken);
+		}
+		#endregion
 
 		#region Get an account
 		async Task<JObject> GetAccountAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
@@ -294,142 +624,192 @@ namespace net.vieapps.Services.Users
 			if (account == null)
 				throw new InformationNotFoundException();
 
-			// response
-			return account.GetJson();
+			// prepare response
+			var json = account.GetAccountJson();
+
+			// related service
+			if (requestInfo.Query.ContainsKey("related-service"))
+				try
+				{
+					var result = await this.CallRelatedServiceAsync(requestInfo, "account", null, cancellationToken);
+					foreach (var info in result)
+						if (json[info.Key] != null)
+							json[info.Key] = info.Value;
+						else
+							json.Add(info.Key, info.Value);
+				}
+				catch { }
+
+			// return the result
+			return json;
 		}
 		#endregion
 
 		#region Create an account
 		async Task<JObject> CreateAccountAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
-			if (!this.IsAuthenticated(requestInfo) || !requestInfo.Session.User.IsSystemAdministrator)
-				throw new AccessDeniedException();
+			// convert
+			if (requestInfo.Extra != null && requestInfo.Extra.ContainsKey("x-convert"))
+			{
+				if (!requestInfo.Session.User.IsSystemAdministrator)
+					throw new AccessDeniedException();
 
-			var json = requestInfo.GetBodyJson();
-			var account = new Account();
-			account.CopyFrom(json);
-			if (json["AccountKey"] != null)
-				account.AccountKey = (json["AccountKey"] as JValue).Value as string;
-			await Account.CreateAsync(account, cancellationToken);
-			return account.ToJson();
+				var requestBody = requestInfo.GetBodyJson();
+				var account = new Account();
+				account.CopyFrom(requestBody);
+				if (requestBody["AccessKey"] != null)
+					account.AccessKey = (requestBody["AccessKey"] as JValue).Value as string;
+
+				await Account.CreateAsync(account, cancellationToken);
+				return account.ToJson();
+			}
+
+			// register
+			else
+			{
+				// prepare
+				var requestBody = requestInfo.GetBodyExpando();
+
+				var id = UtilityService.GetUUID();
+				var json = new JObject()
+				{
+					{ "Message", "Please check email and follow the instructions" }
+				};
+
+				var name = requestBody.Get<string>("Name");
+				var email = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Email")
+					? requestInfo.Extra["Email"].Decrypt()
+					: null;
+				var password = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Password")
+					? requestInfo.Extra["Password"].Decrypt()
+					: null;
+				if (string.IsNullOrWhiteSpace(password) && !string.IsNullOrWhiteSpace(email))
+					password = this.GenerateRandomPassword(email);
+
+				// create new account & profile
+				if (requestInfo.Extra != null && requestInfo.Extra.ContainsKey("x-create"))
+				{
+					// create account
+					var status = requestBody.Get<string>("Status");
+					var account = new Account()
+					{
+						ID = id,
+						Status = string.IsNullOrWhiteSpace(status) ? AccountStatus.Registered : status.ToEnum<AccountStatus>(),
+						Type = (requestBody.Get<string>("Type") ?? "BuiltIn").ToEnum<AccountType>(),
+						AccessIdentity = email,
+						AccessKey = password,
+					};
+
+					await Account.CreateAsync(account, cancellationToken);
+
+					json = account.GetAccountJson();
+					if (requestInfo.Query.ContainsKey("related-service"))
+						try
+						{
+							var result = await this.CallRelatedServiceAsync(requestInfo, "account", null, cancellationToken);
+							foreach (var info in result)
+								if (json[info.Key] != null)
+									json[info.Key] = info.Value;
+								else
+									json.Add(info.Key, info.Value);
+						}
+						catch { }
+
+					// create profile
+					var profile = new Profile() { ID = id };
+					profile.CopyFrom(requestBody);
+					profile.Name = name;
+					profile.Email = email;
+
+					await Profile.CreateAsync(profile, cancellationToken);
+					if (requestInfo.Query.ContainsKey("related-service"))
+						try
+						{
+							var result = await this.CallRelatedServiceAsync(requestInfo, "profile", null, cancellationToken);
+							foreach (var info in result)
+								if (json[info.Key] != null)
+									json[info.Key] = info.Value;
+								else
+									json.Add(info.Key, info.Value);
+						}
+						catch { }
+				}
+
+				// send activation email
+				var mode = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("x-invite")
+					? "invite"
+					: "account";
+
+				var code = (new JObject()
+				{
+					{ "ID", id },
+					{ "Name", name },
+					{ "Email", email },
+					{ "Password", password },
+					{ "Time", DateTime.Now },
+					{ "Mode", requestInfo.Extra != null && requestInfo.Extra.ContainsKey("x-create") ? "Status" : "Create"  }
+				}).ToString(Formatting.None).Encrypt(ServiceComponent.ActivationKey).ToBase64Url(true);
+
+				var uri = requestInfo.Query.ContainsKey("uri")
+					? requestInfo.Query["uri"].Url64Decode()
+					: "http://localhost/#?prego=activate&mode={mode}&code={code}";
+				uri = uri.Replace(StringComparison.OrdinalIgnoreCase, "{mode}", "account");
+				uri = uri.Replace(StringComparison.OrdinalIgnoreCase, "{code}", code);
+
+				// prepare activation email
+				string inviter = "", inviterEmail = "";
+				if (mode.Equals("invite"))
+				{
+					var profile = await Profile.GetAsync<Profile>(requestInfo.Session.User.ID, cancellationToken);
+					inviter = profile.Name;
+					inviterEmail = profile.Email;
+				}
+
+				var instructions = await this.GetActivateInstructionsAsync(requestInfo, mode, cancellationToken);
+				var data = new Dictionary<string, string>()
+				{
+					{ "Host", requestInfo.GetQueryParameter("host") ?? "unknown" },
+					{ "Email", email },
+					{ "Password", password },
+					{ "Name", name },
+					{ "Time", DateTime.Now.ToString("hh:mm tt @ dd/MM/yyyy") },
+					{ "AppPlatform", requestInfo.Session.AppName + " @ " + requestInfo.Session.AppPlatform },
+					{ "IP", requestInfo.Session.IP },
+					{ "Uri", uri },
+					{ "Code", code },
+					{ "Inviter", inviter },
+					{ "InviterEmail", inviterEmail },
+					{ "Signature", instructions.Item3 }
+				};
+
+				// send an email
+				var subject = instructions.Item1;
+				var body = instructions.Item2;
+				data.ForEach(info =>
+				{
+					subject = subject.Replace(StringComparison.OrdinalIgnoreCase, "{" + info.Key + "}", info.Value);
+					body = body.Replace(StringComparison.OrdinalIgnoreCase, "{" + info.Key + "}", info.Value);
+				});
+
+				var smtp = instructions.Item5;
+				await this.SendEmailAsync(instructions.Item4, name + " <" + email + ">", subject, body, smtp.Item1, smtp.Item2, smtp.Item3, smtp.Item4, smtp.Item5, cancellationToken);
+
+				// result
+				return json;
+			}
 		}
 		#endregion
 
 		#region Update an account
-		#endregion
-
-		#region Get the instructions when update an account
-		async Task<Tuple<string, string, string, string, Tuple<string, int, bool, string, string>>> GetPasswordInstructionsAsync(RequestInfo requestInfo, CancellationToken cancellationToken, string mode = "reset")
+		Task<JObject> UpdateAccountAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
-			string subject = "", body = "", signature = "", sender = "";
-			string smtpServer = "", smtpUser = "", smtpUserPassword = "";
-			var smtpServerPort = 25;
-			var smtpServerEnableSsl = false;
-
-			if (requestInfo.Query.ContainsKey("related-service"))
-				try
-				{
-					var data = await this.CallServiceAsync(requestInfo, requestInfo.Query["related-service"], cancellationToken);
-
-					subject = data["Subject"] != null && data["Subject"] is JValue && (data["Subject"] as JValue).Value != null
-						? (data["Subject"] as JValue).Value as string
-						: "";
-
-					body = data["Body"] != null && data["Body"] is JValue && (data["Body"] as JValue).Value != null
-						? (data["Body"] as JValue).Value as string
-						: "";
-
-					signature = data["Body"] != null && data["Signature"] is JValue && (data["Signature"] as JValue).Value != null
-						? (data["Signature"] as JValue).Value as string
-						: "";
-
-					sender = data["Sender"] != null && data["Sender"] is JValue && (data["Sender"] as JValue).Value != null
-						? (data["Sender"] as JValue).Value as string
-						: "";
-
-					smtpServer = data["SmtpServer"] != null && data["SmtpServer"] is JValue && (data["SmtpServer"] as JValue).Value != null
-						? (data["SmtpServer"] as JValue).Value as string
-						: "";
-
-					smtpServerPort = data["SmtpServerPort"] != null && data["SmtpServerPort"] is JValue && (data["SmtpServerPort"] as JValue).Value != null
-						? (data["SmtpServerPort"] as JValue).Value.CastAs<int>()
-						: 25;
-
-					smtpServerEnableSsl = data["SmtpServerEnableSsl"] != null && data["SmtpServerEnableSsl"] is JValue && (data["SmtpServerEnableSsl"] as JValue).Value != null
-						? (data["SmtpServerEnableSsl"] as JValue).Value.CastAs<bool>()
-						: false;
-
-					smtpUser = data["SmtpUser"] != null && data["SmtpUser"] is JValue && (data["SmtpUser"] as JValue).Value != null
-						? (data["SmtpUser"] as JValue).Value as string
-						: "";
-
-					smtpUserPassword = data["SmtpUserPassword"] != null && data["SmtpUserPassword"] is JValue && (data["SmtpUserPassword"] as JValue).Value != null
-						? (data["SmtpUserPassword"] as JValue).Value as string
-						: "";
-				}
-				catch { }
-
-			if (string.IsNullOrWhiteSpace(subject))
-				subject = "[{Host}] Kích hoạt mật khẩu đăng nhập mới";
-
-			if (string.IsNullOrWhiteSpace(body))
-				body = @"
-				Xin chào <b>{Name}</b>
-				<br/><br/>
-				Tài khoản đăng nhập của bạn đã được yêu cầu " + ("reset".IsEquals(mode) ? "đặt lại" : "thay đổi") + @" thông tin đăng nhập như sau:
-				<blockquote>
-					Email đăng nhập: <b>{Email}</b>
-					<br/>
-					Mật khẩu đăng nhập (mới): <b>{Password}</b>
-				</blockquote>
-				<br/>
-				Để hoàn tất quá trình thay đổi mật khẩu mới, bạn vui lòng kích hoạt bằng cách mở liên kết dưới:
-				<br/><br/>
-				<span style='display:inline-block;padding:15px;border-radius:5px;background-color:#eee;font-weight:bold'>
-				<a href='{Uri}' style='color:red'>Kích hoạt mật khẩu đăng nhập mới</a>
-				</span>
-				<br/><br/>
-				<br/>
-				<i>Thông tin thêm:</i>
-				<ul>
-					<li>
-						Hoạt động này được thực hiện lúc <b>{Time}</b> với thiết bị <b>{AppPlatform}</b> có địa chỉ IP là <b>{IP}</b>
-					</li>
-					<li>
-						Mã kích hoạt chỉ có giá trị trong vòng 01 ngày kể từ thời điểm nhận được email này.
-					</li>
-					<li>
-						Nếu không phải bạn thực hiện hoạt động này, bạn nên kiểm tra lại thông tin đăng nhập cũng như email liên quan
-						vì có thể một điểm nào đó trong hệ thống thông tin bị rò rỉ (và có thể gây hại cho bạn).
-						<br/>
-						Khi bạn chưa kích hoạt thì mật khẩu đăng nhập mới là chưa có tác dụng.
-					</li>
-				</ul>
-				<br/><br/>
-				{Signature}
-				";
-
-			return new Tuple<string, string, string, string, Tuple<string, int, bool, string, string>>(subject, body, signature, sender, new Tuple<string, int, bool, string, string>(smtpServer, smtpServerPort, smtpServerEnableSsl, smtpUser, smtpUserPassword));
+			return Task.FromException<JObject>(new InvalidRequestException());
 		}
 		#endregion
 
 		#region Renew password of an account
-		async Task<JObject> ResetPasswordAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		string GenerateRandomPassword(string email)
 		{
-			// get account
-			var email = requestInfo.Extra["Email"].Decrypt();
-			var filter = Filters<Account>.And(
-					Filters<Account>.Equals("AccountName", email),
-					Filters<Account>.Equals("Type", AccountType.BuiltIn.ToString())
-				);
-			var account = await Account.GetAsync<Account>(filter, null, null, cancellationToken);
-			if (account == null)
-				return new JObject()
-				{
-					{ "Message", "Please check your email and follow the instruction to activate" }
-				};
-
-			// prepare
 			var password = email.IndexOf("-") > 0
 				? email.Substring(email.IndexOf("-"), 1)
 				: email.IndexOf(".") > 0
@@ -438,23 +818,30 @@ namespace net.vieapps.Services.Users
 						? email.Substring(email.IndexOf("_"), 1)
 						: "#";
 
-			password = Captcha.GenerateRandomCode(true, true).ToUpper() + password
+			return Captcha.GenerateRandomCode(true, true).ToUpper() + password
 				+ Captcha.GenerateRandomCode(true, false).ToLower()
 				+ UtilityService.GetUUID().GetHMACSHA1(email, false).Left(3).GetCapitalizedFirstLetter()
 				+ UtilityService.GetUUID().Right(3).ToLower();
+		}
 
+		async Task<JObject> ResetPasswordAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		{
+			// get account
+			var email = requestInfo.Extra["Email"].Decrypt();
+			var account = await Account.GetByEmailAsync(email, cancellationToken);
+			if (account == null)
+				return new JObject()
+				{
+					{ "Message", "Please check your email and follow the instruction to activate" }
+				};
+
+			// prepare
+			var password = this.GenerateRandomPassword(email);
 			var code = (new JObject()
 			{
 				{ "ID", account.ID },
-				{ "Name", account.Profile.Name },
-				{ "Email", account.AccountName },
 				{ "Password", password },
-				{ "Time", DateTime.Now },
-				{ "SessionID", requestInfo.Session.SessionID },
-				{ "DeviceID", requestInfo.Session.DeviceID },
-				{ "AppName", requestInfo.Session.AppName },
-				{ "AppPlatform", requestInfo.Session.AppPlatform },
-				{ "IP", requestInfo.Session.IP }
+				{ "Time", DateTime.Now }
 			}).ToString(Formatting.None).Encrypt(ServiceComponent.ActivationKey).ToBase64Url(true);
 
 			var uri = requestInfo.Query.ContainsKey("uri")
@@ -464,11 +851,11 @@ namespace net.vieapps.Services.Users
 			uri = uri.Replace(StringComparison.OrdinalIgnoreCase, "{code}", code);
 
 			// prepare activation email
-			var instructions = await this.GetPasswordInstructionsAsync(requestInfo, cancellationToken, "reset");
+			var instructions = await this.GetActivateInstructionsAsync(requestInfo, "reset", cancellationToken);
 			var data = new Dictionary<string, string>()
 			{
-				{ "Host", requestInfo.Query.ContainsKey("host") ? requestInfo.Query["host"] : "unknown" },
-				{ "Email", account.AccountName },
+				{ "Host", requestInfo.GetQueryParameter("host") ?? "unknown" },
+				{ "Email", account.AccessIdentity },
 				{ "Password", password },
 				{ "Name", account.Profile.Name },
 				{ "Time", DateTime.Now.ToString("hh:mm tt @ dd/MM/yyyy") },
@@ -489,7 +876,7 @@ namespace net.vieapps.Services.Users
 			});
 
 			var smtp = instructions.Item5;
-			await this.SendEmailAsync(instructions.Item4, account.Profile.Name + " <" + account.AccountName + ">", subject, body, smtp.Item1, smtp.Item2, smtp.Item3, smtp.Item4, smtp.Item5, cancellationToken);
+			await this.SendEmailAsync(instructions.Item4, account.Profile.Name + " <" + account.AccessIdentity + ">", subject, body, smtp.Item1, smtp.Item2, smtp.Item3, smtp.Item4, smtp.Item5, cancellationToken);
 
 			// response
 			return new JObject()
@@ -503,49 +890,28 @@ namespace net.vieapps.Services.Users
 		async Task<JObject> UpdatePasswordAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// get account and check
-			var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID, cancellationToken);
-			if (account == null)
-				throw new InformationNotFoundException();
-
 			var oldPassword = requestInfo.Extra["OldPassword"].Decrypt();
-			if (!account.AccountKey.Equals(Account.HashPassword(account.ID, oldPassword)))
+			var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID, cancellationToken);
+			if (account == null || !Account.HashPassword(account.ID, oldPassword).Equals(account.AccessKey))
 				throw new WrongAccountException();
 
-			// prepare
+			// update
 			var password = requestInfo.Extra["Password"].Decrypt();
-			var code = (new JObject()
-			{
-				{ "ID", account.ID },
-				{ "Name", account.Profile.Name },
-				{ "Email", account.AccountName },
-				{ "Password", password },
-				{ "Time", DateTime.Now },
-				{ "SessionID", requestInfo.Session.SessionID },
-				{ "DeviceID", requestInfo.Session.DeviceID },
-				{ "AppName", requestInfo.Session.AppName },
-				{ "AppPlatform", requestInfo.Session.AppPlatform },
-				{ "IP", requestInfo.Session.IP }
-			}).ToString(Formatting.None).Encrypt(ServiceComponent.ActivationKey).ToBase64Url(true);
+			account.AccessKey = Account.HashPassword(account.ID, password);
+			account.LastAccess = DateTime.Now;
+			await Account.UpdateAsync(account, cancellationToken);
 
-			var uri = requestInfo.Query.ContainsKey("uri")
-				? requestInfo.Query["uri"].Url64Decode()
-				: "http://localhost/#?prego=activate&mode={mode}&code={code}";
-			uri = uri.Replace(StringComparison.OrdinalIgnoreCase, "{mode}", "password");
-			uri = uri.Replace(StringComparison.OrdinalIgnoreCase, "{code}", code);
-
-			// prepare activation email
-			var instructions = await this.GetPasswordInstructionsAsync(requestInfo, cancellationToken, "password");
+			// send alert email
+			var instructions = await this.GetUpdateInstructionsAsync(requestInfo, "password", cancellationToken);
 			var data = new Dictionary<string, string>()
 			{
-				{ "Host", requestInfo.Query.ContainsKey("host") ? requestInfo.Query["host"] : "unknown" },
-				{ "Email", account.AccountName },
+				{ "Host", requestInfo.GetQueryParameter("host") ?? "unknown" },
+				{ "Email", account.AccessIdentity },
 				{ "Password", password },
 				{ "Name", account.Profile.Name },
 				{ "Time", DateTime.Now.ToString("hh:mm tt @ dd/MM/yyyy") },
 				{ "AppPlatform", requestInfo.Session.AppName + " @ " + requestInfo.Session.AppPlatform },
 				{ "IP", requestInfo.Session.IP },
-				{ "Uri", uri },
-				{ "Code", code },
 				{ "Signature", instructions.Item3 }
 			};
 
@@ -559,13 +925,10 @@ namespace net.vieapps.Services.Users
 			});
 
 			var smtp = instructions.Item5;
-			await this.SendEmailAsync(instructions.Item4, account.Profile.Name + " <" + account.AccountName + ">", subject, body, smtp.Item1, smtp.Item2, smtp.Item3, smtp.Item4, smtp.Item5, cancellationToken);
+			await this.SendEmailAsync(instructions.Item4, account.Profile.Name + " <" + account.AccessIdentity + ">", subject, body, smtp.Item1, smtp.Item2, smtp.Item3, smtp.Item4, smtp.Item5, cancellationToken);
 
 			// response
-			return new JObject()
-			{
-				{ "Message", "Please check your email and follow the instruction to activate" }
-			};
+			return account.Profile.ToJson();
 		}
 		#endregion
 
@@ -573,26 +936,20 @@ namespace net.vieapps.Services.Users
 		async Task<JObject> UpdateEmailAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// get account and check
-			var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID, cancellationToken);
-			if (account == null)
-				throw new InformationNotFoundException();
-
 			var oldPassword = requestInfo.Extra["OldPassword"].Decrypt();
-			if (!account.AccountKey.Equals(Account.HashPassword(account.ID, oldPassword)))
+			var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID, cancellationToken);
+			if (account == null || !Account.HashPassword(account.ID, oldPassword).Equals(account.AccessKey))
 				throw new WrongAccountException();
 
 			// check existing
 			var email = requestInfo.Extra["Email"].Decrypt();
-			var filter = Filters<Account>.And(
-					Filters<Account>.Equals("AccountName", email),
-					Filters<Account>.Equals("Type", AccountType.BuiltIn.ToString())
-				);
-			var otherAccount = await Account.GetAsync<Account>(filter, null, null, cancellationToken);
+			var otherAccount = await Account.GetByEmailAsync(email, cancellationToken);
 			if (otherAccount != null)
 				throw new InformationExistedException("The email '" + email + "' is used by other account");
 
 			// update
-			account.AccountName = email.Trim().ToLower();
+			var oldEmail = account.AccessIdentity;
+			account.AccessIdentity = email.Trim().ToLower();
 			account.LastAccess = DateTime.Now;
 
 			account.Profile.Email = email;
@@ -602,6 +959,32 @@ namespace net.vieapps.Services.Users
 					Account.UpdateAsync(account, cancellationToken),
 					Profile.UpdateAsync(account.Profile, cancellationToken)
 				);
+
+			// send alert email
+			var instructions = await this.GetUpdateInstructionsAsync(requestInfo, "email", cancellationToken);
+			var data = new Dictionary<string, string>()
+			{
+				{ "Host", requestInfo.GetQueryParameter("host") ?? "unknown" },
+				{ "Email", account.AccessIdentity },
+				{ "OldEmail", oldEmail },
+				{ "Name", account.Profile.Name },
+				{ "Time", DateTime.Now.ToString("hh:mm tt @ dd/MM/yyyy") },
+				{ "AppPlatform", requestInfo.Session.AppName + " @ " + requestInfo.Session.AppPlatform },
+				{ "IP", requestInfo.Session.IP },
+				{ "Signature", instructions.Item3 }
+			};
+
+			// send an email
+			var subject = instructions.Item1;
+			var body = instructions.Item2;
+			data.ForEach(info =>
+			{
+				subject = subject.Replace(StringComparison.OrdinalIgnoreCase, "{" + info.Key + "}", info.Value);
+				body = body.Replace(StringComparison.OrdinalIgnoreCase, "{" + info.Key + "}", info.Value);
+			});
+
+			var smtp = instructions.Item5;
+			await this.SendEmailAsync(instructions.Item4, account.Profile.Name + " <" + account.AccessIdentity + ">", subject, body, smtp.Item1, smtp.Item2, smtp.Item3, smtp.Item4, smtp.Item5, cancellationToken);
 
 			// response
 			return account.Profile.ToJson();
@@ -625,14 +1008,13 @@ namespace net.vieapps.Services.Users
 					else
 						return this.GetProfileAsync(requestInfo, cancellationToken);
 
+				// create a profile
 				case "POST":
-					// create profile
-					if (requestInfo.Query.ContainsKey("x-convert"))
-						return this.CreateProfileAsync(requestInfo, cancellationToken);
+					return this.CreateProfileAsync(requestInfo, cancellationToken);
 
-					// update profile
-					else
-						return this.UpdateProfileAsync(requestInfo, cancellationToken);
+				// update a profile
+				case "PUT":
+					return this.UpdateProfileAsync(requestInfo, cancellationToken);
 			}
 
 			return Task.FromException<JObject>(new MethodNotAllowedException(requestInfo.Verb));
@@ -720,9 +1102,23 @@ namespace net.vieapps.Services.Users
 
 			// build result
 			var profiles = objects.ToJsonArray();
-			if (!requestInfo.Session.User.IsSystemAdministrator)
-				foreach (JObject profile in profiles)
+			foreach (JObject profile in profiles)
+			{
+				if (requestInfo.Query.ContainsKey("related-service"))
+					try
+					{
+						var data = await this.CallRelatedServiceAsync(requestInfo, "profile", (profile["ID"] as JValue).Value as string, cancellationToken);
+						foreach (var info in data)
+							if (profile[info.Key] != null)
+								profile[info.Key] = info.Value;
+							else
+								profile.Add(info.Key, info.Value);
+					}
+					catch { }
+
+				if (!requestInfo.Session.User.IsSystemAdministrator)
 					this.NormalizeProfile(profile);
+			}
 
 			pagination = new Tuple<long, int, int, int>(totalRecords, totalPages, pageSize, pageNumber);
 			var result = new JObject()
@@ -752,53 +1148,144 @@ namespace net.vieapps.Services.Users
 		#region Fetch profiles
 		async Task<JObject> FetchProfilesAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
-			await Task.Delay(0);
-			return new JObject();
+			// prepare
+			if (!this.IsAuthenticated(requestInfo))
+				throw new AccessDeniedException();
+			else if (!this.IsAuthorized(requestInfo, Components.Security.Action.View))
+				throw new AccessDeniedException();
+
+			var request = requestInfo.GetRequestExpando();
+			var ids = request.Get<List<string>>("IDs");
+
+			// fetch
+			var filter = Filters<Profile>.Or(ids.Select(id => Filters<Profile>.Equals("ID", id)));
+			var objects = await Profile.FindAsync(filter, null, 0, 1, null, cancellationToken);
+
+			// build result
+			var profiles = objects.ToJsonArray();
+			foreach (JObject profile in profiles)
+			{
+				if (requestInfo.Query.ContainsKey("related-service"))
+					try
+					{
+						var data = await this.CallRelatedServiceAsync(requestInfo, "profile", (profile["ID"] as JValue).Value as string, cancellationToken);
+						foreach (var info in data)
+							if (profile[info.Key] != null)
+								profile[info.Key] = info.Value;
+							else
+								profile.Add(info.Key, info.Value);
+					}
+					catch { }
+
+				if (!requestInfo.Session.User.IsSystemAdministrator)
+					this.NormalizeProfile(profile);
+			}
+
+			// return
+			return new JObject()
+			{
+				{ "Objects", profiles }
+			};
 		}
 		#endregion
 
-		#region Get profile
+		#region Create a profile
+		async Task<JObject> CreateProfileAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		{
+			if (requestInfo.Extra != null && requestInfo.Extra.ContainsKey("x-convert"))
+			{
+				if (!requestInfo.Session.User.IsSystemAdministrator)
+					throw new AccessDeniedException();
+
+				var profile = new Profile();
+				profile.CopyFrom(requestInfo.GetBodyJson());
+				await Profile.CreateAsync(profile, cancellationToken);
+				return profile.ToJson();
+			}
+
+			throw new InvalidRequestException();
+		}
+		#endregion
+
+		#region Get a profile
 		async Task<JObject> GetProfileAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
-			// prepare
-			var userID = requestInfo.GetObjectIdentity() ?? requestInfo.Session.User.ID;
-			var gotRights = this.IsAuthenticated(requestInfo) && requestInfo.Session.User.ID.IsEquals(userID);
+			// check permissions
+			var id = requestInfo.GetObjectIdentity() ?? requestInfo.Session.User.ID;
+			var gotRights = this.IsAuthenticated(requestInfo) && requestInfo.Session.User.ID.IsEquals(id);
 			if (!gotRights)
 				gotRights = this.IsAuthorized(requestInfo, Components.Security.Action.View);
 			if (!gotRights)
 				throw new AccessDeniedException();
 
 			// get information
-			var profile = await Profile.GetAsync<Profile>(userID);
+			var profile = await Profile.GetAsync<Profile>(id);
 			if (profile == null)
 				throw new InformationNotFoundException();
 
-			// return information
+			// prepare response
 			var json = profile.ToJson();
+
+			// information of related service
+			if (requestInfo.Query.ContainsKey("related-service"))
+				try
+				{
+					var data = await this.CallRelatedServiceAsync(requestInfo, "profile", id, cancellationToken);
+					foreach (var info in data)
+						if (json[info.Key] != null)
+							json[info.Key] = info.Value;
+						else
+							json.Add(info.Key, info.Value);
+				}
+				catch { }
+
+			// normalize and return
 			if (!requestInfo.Session.User.ID.Equals(profile.ID))
 				this.NormalizeProfile(json);
 			return json;
 		}
 		#endregion
 
-		#region Create profile
-		async Task<JObject> CreateProfileAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
-		{
-			if (!this.IsAuthenticated(requestInfo) || !requestInfo.Session.User.IsSystemAdministrator)
-				throw new AccessDeniedException();
-
-			var profile = new Profile();
-			profile.CopyFrom(requestInfo.GetBodyJson());
-			await Profile.CreateAsync(profile, cancellationToken);
-			return profile.ToJson();
-		}
-		#endregion
-
-		#region Update profile
+		#region Update a profile
 		async Task<JObject> UpdateProfileAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
-			await Task.Delay(0);
-			return new JObject();
+			// check permissions
+			var id = requestInfo.GetObjectIdentity() ?? requestInfo.Session.User.ID;
+			var gotRights = this.IsAuthenticated(requestInfo) && requestInfo.Session.User.ID.IsEquals(id);
+			if (!gotRights)
+				gotRights = this.IsAuthorized(requestInfo, Components.Security.Action.Update);
+			if (!gotRights)
+				throw new AccessDeniedException();
+
+			// get information
+			var profile = await Profile.GetAsync<Profile>(id);
+			if (profile == null)
+				throw new InformationNotFoundException();
+
+			// update
+			profile.CopyFrom(requestInfo.GetBodyJson());
+			await Profile.UpdateAsync(profile, cancellationToken);
+
+			// prepare response
+			var json = profile.ToJson();
+
+			// update information of related service
+			if (requestInfo.Query.ContainsKey("related-service"))
+				try
+				{
+					var data = await this.CallRelatedServiceAsync(requestInfo, "profile", id, cancellationToken);
+					foreach (var info in data)
+						if (json[info.Key] != null)
+							json[info.Key] = info.Value;
+						else
+							json.Add(info.Key, info.Value);
+				}
+				catch { }
+
+			// response
+			if (!requestInfo.Session.User.ID.Equals(profile.ID))
+				this.NormalizeProfile(json);
+			return json;
 		}
 		#endregion
 
@@ -850,12 +1337,101 @@ namespace net.vieapps.Services.Users
 				throw new ActivateInformationExpiredException();
 			#endregion
 
+			// activate account
+			if (mode.IsEquals("account"))
+				return await this.ActivateAccountAsync(requestInfo, info, cancellationToken);
+
 			// activate password
-			if (mode.IsEquals("password"))
+			else if (mode.IsEquals("password"))
 				return await this.ActivatePasswordAsync(requestInfo, info, cancellationToken);
 
 			throw new InvalidRequestException();
 		}
+
+		#region Activate new account
+		async Task<JObject> ActivateAccountAsync(RequestInfo requestInfo, ExpandoObject info, CancellationToken cancellationToken)
+		{
+			// prepare
+			var id = info.Get<string>("ID");
+			var mode = info.Get<string>("Mode");
+
+			// activate
+			if (mode.IsEquals("Status"))
+			{
+				// check
+				var account = await Account.GetAsync<Account>(id, cancellationToken);
+				if (account == null)
+					throw new InformationNotFoundException();
+
+				// update status
+				if (account.Status.Equals(AccountStatus.Registered))
+				{
+					account.Status = AccountStatus.Activated;
+					account.LastAccess = DateTime.Now;
+					await Account.UpdateAsync(account, cancellationToken);
+				}
+
+				// response
+				return account.GetAccountJson();
+			}
+
+			// create new account
+			else
+			{
+				// prepare
+				var name = info.Get<string>("Name");
+				var email = info.Get<string>("Email");
+
+				// create account
+				var account = new Account()
+				{
+					ID = id,
+					Status = AccountStatus.Activated,
+					Type = (info.Get<string>("Type") ?? "BuiltIn").ToEnum<AccountType>(),
+					Joined = info.Get<DateTime>("Time"),
+					AccessIdentity = email,
+					AccessKey = Account.HashPassword(id, info.Get<string>("Password"))
+				};
+				await Account.CreateAsync(account, cancellationToken);
+
+				// prepare response
+				var json = account.GetAccountJson();
+
+				// update information of related service
+				if (requestInfo.Query.ContainsKey("related-service"))
+					try
+					{
+						var result = await this.CallRelatedServiceAsync(new RequestInfo(requestInfo, "POST"), "account", id, cancellationToken);
+						foreach (var data in result)
+							if (json[data.Key] != null)
+								json[data.Key] = data.Value;
+							else
+								json.Add(data.Key, data.Value);
+					}
+					catch { }
+
+				// create profile
+				var profile = new Profile()
+				{
+					ID = id,
+					Name = name,
+					Email = email
+				};
+				await  Profile.CreateAsync(profile, cancellationToken);
+
+				// update information of related service
+				if (requestInfo.Query.ContainsKey("related-service"))
+					try
+					{
+						await this.CallRelatedServiceAsync(new RequestInfo(requestInfo, "POST"), "profile", id, cancellationToken);
+					}
+					catch { }
+
+				// return
+				return json;
+			}
+		}
+		#endregion
 
 		#region Activate new password
 		async Task<JObject> ActivatePasswordAsync(RequestInfo requestInfo, ExpandoObject  info, CancellationToken cancellationToken)
@@ -863,18 +1439,6 @@ namespace net.vieapps.Services.Users
 			// prepare
 			var id = info.Get<string>("ID");
 			var password = info.Get<string>("Password");
-			var sessionID = requestInfo.Session.SessionID;
-			if (string.IsNullOrWhiteSpace(sessionID))
-				sessionID = info.Get<string>("SessionID");
-			var deviceID = requestInfo.GetDeviceID();
-			if (string.IsNullOrWhiteSpace(deviceID))
-				deviceID = info.Get<string>("DeviceID");
-			var appName = requestInfo.GetAppName();
-			if (string.IsNullOrWhiteSpace(appName))
-				appName = info.Get<string>("AppName");
-			var appPlatform = requestInfo.GetAppPlatform();
-			if (string.IsNullOrWhiteSpace(appPlatform))
-				appPlatform = info.Get<string>("AppPlatform");
 
 			// load account
 			var account = await Account.GetAsync<Account>(id, cancellationToken);
@@ -882,13 +1446,13 @@ namespace net.vieapps.Services.Users
 				throw new InvalidActivateInformationException();
 
 			// update new password
-			account.AccountKey = Account.HashPassword(account.ID, password);
+			account.AccessKey = Account.HashPassword(account.ID, password);
 			account.LastAccess = DateTime.Now;
 			account.Sessions = null;
 			await Account.UpdateAsync(account);
 
 			// response
-			return account.GetJson();
+			return account.GetAccountJson();
 		}
 		#endregion
 
@@ -902,7 +1466,8 @@ namespace net.vieapps.Services.Users
 			var code = Captcha.GenerateCode();
 			var uri = UtilityService.GetAppSetting("HttpFilesUri", "https://afs.vieapps.net")
 				+ "/captchas/" + code.Url64Encode() + "/"
-				+ requestInfo.Query["register"].Substring(UtilityService.GetRandomNumber(1, 32), 13).Reverse() + ".jpg";
+				+ (requestInfo.GetQueryParameter("register") ?? UtilityService.NewUID.Encrypt(CryptoService.DefaultEncryptionKey, true))
+					.Substring(UtilityService.GetRandomNumber(13, 43), 13).Reverse() + ".jpg";
 
 			return new JObject()
 			{
