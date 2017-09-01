@@ -574,6 +574,9 @@ namespace net.vieapps.Services.Users
 			if (account == null || !Account.HashPassword(account.ID, password).Equals(account.AccessKey))
 				throw new WrongAccountException();
 
+			// clear cached of current session
+			await Utility.Cache.RemoveAsync<Session>(requestInfo.Session.SessionID);
+
 			// response
 			return account.GetAccountJson();
 		}
@@ -642,7 +645,7 @@ namespace net.vieapps.Services.Users
 				throw new InformationNotFoundException();
 
 			// prepare response
-			var json = account.GetAccountJson();
+			var json = account.GetAccountJson(requestInfo.Extra != null && requestInfo.Extra.ContainsKey("x-status"));
 
 			// related service
 			if (requestInfo.Query.ContainsKey("related-service"))
@@ -1037,27 +1040,11 @@ namespace net.vieapps.Services.Users
 		}
 
 		#region Search profiles
-		void NormalizeProfile(JObject json)
-		{
-			var value = json["Email"] != null && json["Email"] is JValue && (json["Email"] as JValue).Value != null
-				? (json["Email"] as JValue).Value.ToString()
-				: null;
-			if (!string.IsNullOrWhiteSpace(value))
-				(json["Email"] as JValue).Value = value.Left(value.Length - value.IndexOf("@"));
-
-			value = json["Mobile"] != null && json["Mobile"] is JValue && (json["Mobile"] as JValue).Value != null
-				? (json["Mobile"] as JValue).Value.ToString()
-				: null;
-			if (!string.IsNullOrWhiteSpace(value))
-				(json["Mobile"] as JValue).Value = "xxxxxx" + value.Trim().Replace(" ", "").Right(4);
-		}
-
 		async Task<JObject> SearchProfilesAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// check
-			if (!this.IsAuthenticated(requestInfo))
-				throw new AccessDeniedException();
-			else if (!this.IsAuthorized(requestInfo, Components.Security.Action.View))
+			var gotRIghts = requestInfo.Session.User.IsSystemAdministrator || (this.IsAuthenticated(requestInfo) && this.IsAuthorized(requestInfo, Components.Security.Action.View));
+			if (!gotRIghts)
 				throw new AccessDeniedException();
 
 			// prepare
@@ -1082,12 +1069,12 @@ namespace net.vieapps.Services.Users
 			var pageNumber = pagination.Item4;
 
 			// check cache
-			var cacheKey = string.IsNullOrWhiteSpace(query) && (filter != null || sort != null)
-				? (filter != null ? filter.GetMD5() + ":" : "") + (sort != null ? sort.GetMD5() + ":" : "") + pageNumber.ToString()
+			var cacheKey = string.IsNullOrWhiteSpace(query)
+				? this.GetCacheKey<Profile>(filter, sort)
 				: "";
 
 			var json = !cacheKey.Equals("")
-				? await Utility.DataCache.GetAsync<string>(cacheKey + "-json")
+				? await Utility.Cache.GetAsync<string>(cacheKey + ":" + pageNumber.ToString() + "-json")
 				: "";
 
 			if (!string.IsNullOrWhiteSpace(json))
@@ -1112,34 +1099,21 @@ namespace net.vieapps.Services.Users
 			// search
 			var objects = totalRecords > 0
 				? string.IsNullOrWhiteSpace(query)
-					? await Profile.FindAsync(filter, sort, pageSize, pageNumber, cacheKey, cancellationToken)
+					? await Profile.FindAsync(filter, sort, pageSize, pageNumber, cacheKey + ":" + pageNumber.ToString(), cancellationToken)
 					: await Profile.SearchAsync(query, filter, pageSize, pageNumber, cancellationToken)
 				: new List<Profile>();
 
 			// build result
-			var profiles = objects.ToJsonArray();
-			foreach (JObject profile in profiles)
+			var profiles = new JArray();
+			await objects.ForEachAsync(async (profile, ct) =>
 			{
-				if (requestInfo.Query.ContainsKey("related-service"))
-					try
-					{
-						var data = await this.CallRelatedServiceAsync(requestInfo, "profile", "GET", (profile["ID"] as JValue).Value as string, cancellationToken);
-						foreach (var info in data)
-							if (profile[info.Key] != null)
-								profile[info.Key] = info.Value;
-							else
-								profile.Add(info.Key, info.Value);
-					}
-					catch { }
-
-				if (!requestInfo.Session.User.IsSystemAdministrator)
-					this.NormalizeProfile(profile);
-			}
+				profiles.Add(await this.GetProfileJsonAsync(requestInfo, profile, !requestInfo.Session.User.IsSystemAdministrator, ct));
+			}, cancellationToken);
 
 			pagination = new Tuple<long, int, int, int>(totalRecords, totalPages, pageSize, pageNumber);
 			var result = new JObject()
 			{
-				{ "FilterBy", filter?.ToClientJson(query) },
+				{ "FilterBy", (filter ?? new FilterBys<Profile>()).ToClientJson(query) },
 				{ "SortBy", sort?.ToClientJson() },
 				{ "Pagination", pagination?.GetPagination() },
 				{ "Objects", profiles }
@@ -1153,7 +1127,7 @@ namespace net.vieapps.Services.Users
 #else
 				json = result.ToString(Formatting.None);
 #endif
-				Utility.DataCache.Set(cacheKey + "-json", json);
+				Utility.Cache.SetAbsolute(cacheKey + ":" + pageNumber.ToString() + "-json", json, Utility.CacheTime / 2);
 			}
 
 			// return the result
@@ -1178,24 +1152,11 @@ namespace net.vieapps.Services.Users
 			var objects = await Profile.FindAsync(filter, null, 0, 1, null, cancellationToken);
 
 			// build result
-			var profiles = objects.ToJsonArray();
-			foreach (JObject profile in profiles)
+			var profiles = new JArray();
+			await objects.ForEachAsync(async (profile, ct) =>
 			{
-				if (requestInfo.Query.ContainsKey("related-service"))
-					try
-					{
-						var data = await this.CallRelatedServiceAsync(requestInfo, "profile", "GET", (profile["ID"] as JValue).Value as string, cancellationToken);
-						foreach (var info in data)
-							if (profile[info.Key] != null)
-								profile[info.Key] = info.Value;
-							else
-								profile.Add(info.Key, info.Value);
-					}
-					catch { }
-
-				if (!requestInfo.Session.User.IsSystemAdministrator)
-					this.NormalizeProfile(profile);
-			}
+				profiles.Add(await this.GetProfileJsonAsync(requestInfo, profile, !requestInfo.Session.User.IsSystemAdministrator, ct));
+			}, cancellationToken);
 
 			// return
 			return new JObject()
@@ -1215,7 +1176,8 @@ namespace net.vieapps.Services.Users
 
 				var profile = requestInfo.GetBodyJson().Copy<Profile>();
 				await Profile.CreateAsync(profile, cancellationToken);
-				return profile.ToJson();
+
+				return await this.GetProfileJsonAsync(requestInfo, profile, false, cancellationToken);
 			}
 
 			throw new InvalidRequestException();
@@ -1223,6 +1185,48 @@ namespace net.vieapps.Services.Users
 		#endregion
 
 		#region Get a profile
+		async Task<JObject> GetProfileJsonAsync(RequestInfo requestInfo, Profile profile, bool doNormalize, CancellationToken cancellationToken)
+		{
+			// prepare response
+			var json = profile.ToJson();
+
+			var account = await Account.GetAsync<Account>(profile.ID, cancellationToken);
+			json.Add(new JProperty("LastAccess", account.LastAccess));
+			json.Add(new JProperty("Joined", account.Joined));
+
+			// information of related service
+			if (requestInfo.Query.ContainsKey("related-service"))
+				try
+				{
+					var data = await this.CallRelatedServiceAsync(requestInfo, "profile", "GET", profile.ID, cancellationToken);
+					foreach (var info in data)
+						if (json[info.Key] != null)
+							json[info.Key] = info.Value;
+						else
+							json.Add(info.Key, info.Value);
+				}
+				catch { }
+
+			// normalize and return
+			if (doNormalize)
+			{
+				var value = json["Email"] != null && json["Email"] is JValue && (json["Email"] as JValue).Value != null
+					? (json["Email"] as JValue).Value.ToString()
+					: null;
+				if (!string.IsNullOrWhiteSpace(value))
+					(json["Email"] as JValue).Value = value.Left(value.Length - value.IndexOf("@"));
+
+				value = json["Mobile"] != null && json["Mobile"] is JValue && (json["Mobile"] as JValue).Value != null
+					? (json["Mobile"] as JValue).Value.ToString()
+					: null;
+				if (!string.IsNullOrWhiteSpace(value))
+					(json["Mobile"] as JValue).Value = "xxxxxx" + value.Trim().Replace(" ", "").Right(4);
+			}
+
+			// return full JSON
+			return json;
+		}
+
 		async Task<JObject> GetProfileAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// check permissions
@@ -1238,26 +1242,8 @@ namespace net.vieapps.Services.Users
 			if (profile == null)
 				throw new InformationNotFoundException();
 
-			// prepare response
-			var json = profile.ToJson();
-
-			// information of related service
-			if (requestInfo.Query.ContainsKey("related-service"))
-				try
-				{
-					var data = await this.CallRelatedServiceAsync(requestInfo, "profile", "GET", id, cancellationToken);
-					foreach (var info in data)
-						if (json[info.Key] != null)
-							json[info.Key] = info.Value;
-						else
-							json.Add(info.Key, info.Value);
-				}
-				catch { }
-
-			// normalize and return
-			if (!requestInfo.Session.User.ID.Equals(profile.ID))
-				this.NormalizeProfile(json);
-			return json;
+			// response
+			return await this.GetProfileJsonAsync(requestInfo, profile, !requestInfo.Session.User.ID.Equals(profile.ID), cancellationToken);
 		}
 		#endregion
 
@@ -1266,7 +1252,7 @@ namespace net.vieapps.Services.Users
 		{
 			// check permissions
 			var id = requestInfo.GetObjectIdentity() ?? requestInfo.Session.User.ID;
-			var gotRights = this.IsAuthenticated(requestInfo) && requestInfo.Session.User.ID.IsEquals(id);
+			var gotRights = (this.IsAuthenticated(requestInfo) && requestInfo.Session.User.ID.IsEquals(id)) || requestInfo.Session.User.IsSystemAdministrator;
 			if (!gotRights)
 				gotRights = this.IsAuthorized(requestInfo, Components.Security.Action.Update);
 			if (!gotRights)
@@ -1279,28 +1265,22 @@ namespace net.vieapps.Services.Users
 
 			// update
 			profile.CopyFrom(requestInfo.GetBodyJson());
+			profile.ID = id;
+			if (string.IsNullOrWhiteSpace(profile.Alias))
+				profile.Alias = "";
+			profile.LastUpdated = DateTime.Now;
 			await Profile.UpdateAsync(profile, cancellationToken);
 
-			// prepare response
-			var json = profile.ToJson();
-
-			// update information of related service
+			// update information of the related service
 			if (requestInfo.Query.ContainsKey("related-service"))
 				try
 				{
-					var data = await this.CallRelatedServiceAsync(requestInfo, "profile", "GET", id, cancellationToken);
-					foreach (var info in data)
-						if (json[info.Key] != null)
-							json[info.Key] = info.Value;
-						else
-							json.Add(info.Key, info.Value);
+					await this.CallRelatedServiceAsync(requestInfo, "profile", "PUT", profile.ID, cancellationToken);
 				}
 				catch { }
 
 			// response
-			if (!requestInfo.Session.User.ID.Equals(profile.ID))
-				this.NormalizeProfile(json);
-			return json;
+			return await this.GetProfileJsonAsync(requestInfo, profile, false, cancellationToken);
 		}
 		#endregion
 
@@ -1509,6 +1489,7 @@ namespace net.vieapps.Services.Users
 			if (verb.IsEquals("Status") && !string.IsNullOrWhiteSpace(data.Get<string>("UserID")))
 				try
 				{
+					// update database
 					var isOnline = data.Get<bool>("IsOnline");
 					var session = Session.Get<Session>(data.Get<string>("SessionID"));
 					if (session != null && session.Online != isOnline)
@@ -1516,6 +1497,23 @@ namespace net.vieapps.Services.Users
 						session.Online = isOnline;
 						Session.Update(session);
 					}
+
+					// broadcast
+					Task.Run(async () =>
+					{
+						try
+						{
+							await this.SendUpdateMessageAsync(new UpdateMessage()
+							{
+								Type = "Users#Status",
+								DeviceID = "*",
+								ExcludedDeviceID = data.Get<string>("DeviceID"),
+								Data = message.Data
+							});
+						}
+						catch { }
+					});
+
 #if DEBUG
 					this.WriteInfo("Update online status successful" + "\r\n" + "=====>" + "\r\n" + message.ToJson().ToString(Formatting.Indented));
 #endif
