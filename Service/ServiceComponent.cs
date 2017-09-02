@@ -175,9 +175,7 @@ namespace net.vieapps.Services.Users
 			var signature = data.Get<string>("Signature");
 			var sender = data.Get<string>("Sender");
 			var smtpServer = data.Get<string>("SmtpServer");
-			var smtpServerPort = data.Has("SmtpServerPort")
-				? data.Get<int>("SmtpServerPort")
-				: 25;
+			var smtpServerPort = data.Get("SmtpServerPort", 25);
 			var smtpServerEnableSsl = data.Get<bool>("SmtpServerEnableSsl");
 			var smtpUser = data.Get<string>("SmtpUser");
 			var smtpUserPassword = data.Get<string>("SmtpUserPassword");
@@ -495,12 +493,61 @@ namespace net.vieapps.Services.Users
 		#region Get a session
 		async Task<JObject> GetSessionAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
-			return !string.IsNullOrWhiteSpace(requestInfo.Session.SessionID)
-				? (requestInfo.Session.User.ID.Equals("") || requestInfo.Session.User.ID.Equals(User.SystemAccountID)
-						? await Utility.Cache.FetchAsync<Session>(requestInfo.Session.SessionID)
-						: await Session.GetAsync<Session>(requestInfo.Session.SessionID, cancellationToken)
-					)?.ToJson()
-				: null;
+			// check existed
+			if (requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Exist"))
+			{
+				var existed = await Utility.Cache.ExistsAsync<Session>(requestInfo.Session.SessionID);
+				if (!existed && !requestInfo.Session.User.ID.Equals("") && !requestInfo.Session.User.ID.Equals(User.SystemAccountID))
+					existed = (await Session.GetAsync<Session>(requestInfo.Session.SessionID, cancellationToken)) != null;
+
+				return new JObject()
+				{
+					{ "ID", requestInfo.Session.SessionID },
+					{ "Existed", existed }
+				};
+			}
+
+			// verify integrity
+			else if (requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Verify"))
+			{
+				if (string.IsNullOrWhiteSpace(requestInfo.Session.SessionID))
+					throw new SessionNotFoundException();
+
+				var accessToken = requestInfo.Extra["AccessToken"].Decrypt();
+				if (string.IsNullOrWhiteSpace(accessToken))
+					throw new TokenNotFoundException();
+
+				var session = requestInfo.Session.User.ID.Equals("") || requestInfo.Session.User.ID.Equals(User.SystemAccountID)
+					? await Utility.Cache.FetchAsync<Session>(requestInfo.Session.SessionID)
+					: await Session.GetAsync<Session>(requestInfo.Session.SessionID, cancellationToken);
+
+				if (session == null)
+					throw new SessionNotFoundException();
+				else if (session.ExpiredAt < DateTime.Now)
+					throw new SessionExpiredException();
+				else if (!accessToken.Equals(session.AccessToken))
+					throw new TokenRevokedException();
+
+				return new JObject()
+				{
+					{ "ID", session.ID },
+					{ "Integrity", "Good" }
+				};
+			}
+
+			// get session
+			else
+			{
+				var session = requestInfo.Session.User.ID.Equals("") || requestInfo.Session.User.ID.Equals(User.SystemAccountID)
+					? await Utility.Cache.FetchAsync<Session>(requestInfo.Session.SessionID)
+					: await Session.GetAsync<Session>(requestInfo.Session.SessionID, cancellationToken);
+
+				var result = session?.ToJson();
+				if (result != null)
+					result["AccessToken"] = ((result["AccessToken"] as JValue).Value as string).Encrypt();
+
+				return result;
+			}
 		}
 		#endregion
 
@@ -637,9 +684,19 @@ namespace net.vieapps.Services.Users
 		#region Get an account
 		async Task<JObject> GetAccountAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
+			// check to see the user in the request is system administrator or not
+			if (requestInfo.Extra != null && requestInfo.Extra.ContainsKey("IsSystemAdministrator"))
+				return new JObject()
+				{
+					{ "ID", requestInfo.Session.User.ID },
+					{ "IsSystemAdministrator", requestInfo.Session.User.IsSystemAdministrator }
+				};
+
+			// check permission
 			if (!this.IsAuthenticated(requestInfo))
 				throw new AccessDeniedException();
 
+			// get account information
 			var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID, cancellationToken);
 			if (account == null)
 				throw new InformationNotFoundException();
@@ -709,12 +766,11 @@ namespace net.vieapps.Services.Users
 				if (requestInfo.Extra != null && requestInfo.Extra.ContainsKey("x-create"))
 				{
 					// create account
-					var status = requestBody.Get<string>("Status");
 					var account = new Account()
 					{
 						ID = id,
-						Status = string.IsNullOrWhiteSpace(status) ? AccountStatus.Registered : status.ToEnum<AccountStatus>(),
-						Type = (requestBody.Get<string>("Type") ?? "BuiltIn").ToEnum<AccountType>(),
+						Status = requestBody.Get("Status", "Registered").ToEnum<AccountStatus>(),
+						Type = requestBody.Get("Type", "BuiltIn").ToEnum<AccountType>(),
 						AccessIdentity = email,
 						AccessKey = password,
 					};
@@ -735,8 +791,8 @@ namespace net.vieapps.Services.Users
 						catch { }
 
 					// create profile
-					var profile = new Profile() { ID = id };
-					profile.CopyFrom(requestBody);
+					var profile = requestBody.Copy<Profile>();
+					profile.ID = id;
 					profile.Name = name;
 					profile.Email = email;
 
@@ -1052,13 +1108,9 @@ namespace net.vieapps.Services.Users
 
 			var query = request.Get<string>("FilterBy.Query");
 
-			var filter = request.Has("FilterBy")
-				? request.Get<ExpandoObject>("FilterBy").ToFilterBy<Profile>()
-				: null;
+			var filter = request.Get<ExpandoObject>("FilterBy", null)?.ToFilterBy<Profile>();
 
-			var sort = request.Has("SortBy")
-				? request.Get<ExpandoObject>("SortBy").ToSortBy<Profile>()
-				: null;
+			var sort = request.Get<ExpandoObject>("SortBy", null)?.ToSortBy<Profile>();
 			if (sort == null && string.IsNullOrWhiteSpace(query))
 				sort = Sorts<Profile>.Ascending("Name");
 
@@ -1144,11 +1196,9 @@ namespace net.vieapps.Services.Users
 			else if (!this.IsAuthorized(requestInfo, Components.Security.Action.View))
 				throw new AccessDeniedException();
 
-			var request = requestInfo.GetRequestExpando();
-			var ids = request.Get<List<string>>("IDs");
-
 			// fetch
-			var filter = Filters<Profile>.Or(ids.Select(id => Filters<Profile>.Equals("ID", id)));
+			var request = requestInfo.GetRequestExpando();
+			var filter = Filters<Profile>.Or(request.Get("IDs", new List<string>()).Select(id => Filters<Profile>.Equals("ID", id)));
 			var objects = await Profile.FindAsync(filter, null, 0, 1, null, cancellationToken);
 
 			// build result
@@ -1252,7 +1302,7 @@ namespace net.vieapps.Services.Users
 		{
 			// check permissions
 			var id = requestInfo.GetObjectIdentity() ?? requestInfo.Session.User.ID;
-			var gotRights = (this.IsAuthenticated(requestInfo) && requestInfo.Session.User.ID.IsEquals(id)) || requestInfo.Session.User.IsSystemAdministrator;
+			var gotRights = requestInfo.Session.User.IsSystemAdministrator || (this.IsAuthenticated(requestInfo) && requestInfo.Session.User.ID.IsEquals(id));
 			if (!gotRights)
 				gotRights = this.IsAuthorized(requestInfo, Components.Security.Action.Update);
 			if (!gotRights)
@@ -1382,7 +1432,7 @@ namespace net.vieapps.Services.Users
 				{
 					ID = id,
 					Status = AccountStatus.Activated,
-					Type = (info.Get<string>("Type") ?? "BuiltIn").ToEnum<AccountType>(),
+					Type = info.Get("Type", "BuiltIn").ToEnum<AccountType>(),
 					Joined = info.Get<DateTime>("Time"),
 					AccessIdentity = email,
 					AccessKey = Account.HashPassword(id, info.Get<string>("Password"))
@@ -1426,7 +1476,7 @@ namespace net.vieapps.Services.Users
 				return json;
 			}
 		}
-		#endregion 
+		#endregion
 
 		#region Activate new password
 		async Task<JObject> ActivatePasswordAsync(RequestInfo requestInfo, ExpandoObject  info, CancellationToken cancellationToken)
