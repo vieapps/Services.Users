@@ -1027,7 +1027,7 @@ namespace net.vieapps.Services.Users
 			account.AccessIdentity = email.Trim().ToLower();
 			account.LastAccess = DateTime.Now;
 
-			account.Profile.Email = email;
+			account.Profile.Email = email.Trim().ToLower();
 			account.Profile.LastUpdated = DateTime.Now;
 
 			await Task.WhenAll(
@@ -1237,12 +1237,12 @@ namespace net.vieapps.Services.Users
 		#region Get a profile
 		async Task<JObject> GetProfileJsonAsync(RequestInfo requestInfo, Profile profile, bool doNormalize, CancellationToken cancellationToken)
 		{
-			// prepare response
-			var json = profile.ToJson();
-
+			// serialize JSON with some additional information
 			var account = await Account.GetAsync<Account>(profile.ID, cancellationToken);
-			json.Add(new JProperty("LastAccess", account.LastAccess));
-			json.Add(new JProperty("Joined", account.Joined));
+			var json = profile.ToJson(false, (obj) => {
+				obj.Add(new JProperty("LastAccess", account.LastAccess));
+				obj.Add(new JProperty("Joined", account.Joined));
+			});
 
 			// information of related service
 			if (requestInfo.Query.ContainsKey("related-service"))
@@ -1309,16 +1309,23 @@ namespace net.vieapps.Services.Users
 				throw new AccessDeniedException();
 
 			// get information
-			var profile = await Profile.GetAsync<Profile>(id);
-			if (profile == null)
+			var profile = await Profile.GetAsync<Profile>(id, cancellationToken);
+			var account = await Account.GetAsync<Account>(id, cancellationToken);
+			if (profile == null || account == null)
 				throw new InformationNotFoundException();
 
-			// update
+			// validate
 			profile.CopyFrom(requestInfo.GetBodyJson());
 			profile.ID = id;
+			profile.LastUpdated = DateTime.Now;
+			if (account.Type.Equals(AccountType.BuiltIn) && !profile.Email.Equals(account.AccessIdentity))
+				profile.Email = account.AccessIdentity;
+
+			// check alias
 			if (string.IsNullOrWhiteSpace(profile.Alias))
 				profile.Alias = "";
-			profile.LastUpdated = DateTime.Now;
+
+			// update
 			await Profile.UpdateAsync(profile, cancellationToken);
 
 			// update information of the related service
