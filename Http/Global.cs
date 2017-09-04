@@ -46,7 +46,9 @@ namespace net.vieapps.Services.Users
 		internal static Dictionary<string, IService> Services = new Dictionary<string, IService>();
 		internal static IManagementService ManagementService = null;
 		internal static IDisposable InterCommunicationMessageUpdater = null;
-		internal static IRTUService _RTUService = null;
+		internal static IRTUService RTUService = null;
+
+		static Queue<Tuple<string, List<string>, string, string>> Logs = new Queue<Tuple<string, List<string>, string, string>>();
 
 		static string _AESKey = null, _JWTKey = null, _PublicJWTKey = null, _RSAKey = null, _RSAExponent = null, _RSAModulus = null;
 		static RSACryptoServiceProvider _RSA = null;
@@ -285,6 +287,7 @@ namespace net.vieapps.Services.Users
 				{
 					try
 					{
+						await Global.InitializeManagementServiceAsync();
 						await Global.InitializeRTUServiceAsync();
 					}
 					catch { }
@@ -362,7 +365,7 @@ namespace net.vieapps.Services.Users
 
 			await Global.OpenOutgoingChannelAsync(
 				(sender, arguments) => {
-					Global.WriteLogs("The outgoing connection is established - Session ID: " + arguments.SessionId);
+					Global.Logs.Enqueue(new Tuple<string, List<string>, string, string>(UtilityService.NewUID, new List<string>() { "The outgoing connection is established - Session ID: " + arguments.SessionId }, null, null));
 				},
 				(sender, arguments) => {
 					if (arguments.CloseType.Equals(SessionCloseType.Disconnection))
@@ -384,7 +387,7 @@ namespace net.vieapps.Services.Users
 					}
 				},
 				(sender, arguments) => {
-					Global.WriteLogs("Got an error of incoming connection: " + (arguments.Exception != null ? arguments.Exception.Message : "None"), arguments.Exception);
+					Global.WriteLogs("Got an error of outgoing connection: " + (arguments.Exception != null ? arguments.Exception.Message : "None"), arguments.Exception);
 				}
 			);
 		}
@@ -426,28 +429,40 @@ namespace net.vieapps.Services.Users
 		internal static async Task WriteLogsAsync(string correlationID, List<string> logs, Exception exception = null)
 		{
 			// prepare
-			var stack = "";
+			var simpleStack = exception != null
+				? exception.StackTrace
+				: "";
+
+			var fullStack = "";
 			if (exception != null)
 			{
-				stack = exception.StackTrace;
+				fullStack = exception.StackTrace;
 				var inner = exception.InnerException;
-				int counter = 0;
+				var counter = 0;
 				while (inner != null)
 				{
 					counter++;
-					stack += "\r\n" + "-> Inner (" + counter.ToString() + "): ---->>>>" + "\r\n" + inner.StackTrace;
+					fullStack += "\r\n" + "-> Inner (" + counter.ToString() + "): ---->>>>" + "\r\n" + inner.StackTrace;
 					inner = inner.InnerException;
 				}
-				stack += "\r\n" + "-------------------------------------" + "\r\n";
+				fullStack += "\r\n" + "-------------------------------------" + "\r\n";
 			}
 
 			// write logs
 			try
 			{
 				await Global.InitializeManagementServiceAsync();
-				await Global.ManagementService.WriteLogsAsync(correlationID, "files", "http", logs, stack);
+				while (Global.Logs.Count > 0)
+				{
+					var log = Global.Logs.Dequeue();
+					await Global.ManagementService.WriteLogsAsync(log.Item1, "users", "http", log.Item2, log.Item3, log.Item4, Global.CancellationTokenSource.Token);
+				}
+				await Global.ManagementService.WriteLogsAsync(correlationID, "users", "http", logs, simpleStack, fullStack, Global.CancellationTokenSource.Token);
 			}
-			catch { }
+			catch
+			{
+				Global.Logs.Enqueue(new Tuple<string, List<string>, string, string>(correlationID, logs, simpleStack, fullStack));
+			}
 		}
 
 		internal static Task WriteLogsAsync(string correlationID, string log, Exception exception = null)
@@ -567,7 +582,7 @@ namespace net.vieapps.Services.Users
 			// update special headers on OPTIONS request
 			if (app.Context.Request.HttpMethod.Equals("OPTIONS"))
 			{
-				app.Context.Response.Headers.Add("access-control-allow-methods", "HEAD,GET,POST,OPTIONS");
+				app.Context.Response.Headers.Add("access-control-allow-methods", "GET");
 
 				var allowHeaders = app.Context.Request.Headers.Get("access-control-request-headers");
 				if (!string.IsNullOrWhiteSpace(allowHeaders))
@@ -690,7 +705,7 @@ namespace net.vieapps.Services.Users
 				if (Global._StateCookieName == null)
 				{
 					var section = ConfigurationManager.GetSection("system.web/sessionState") as SessionStateSection;
-					Global._StateCookieName = section != null && !string.IsNullOrWhiteSpace(section.CookieName)
+					Global._StateCookieName = !string.IsNullOrWhiteSpace(section?.CookieName)
 						? section.CookieName
 						: "ASP.NET_SessionId";
 				}
@@ -1028,10 +1043,10 @@ namespace net.vieapps.Services.Users
 		#region Send & process inter-communicate message
 		static async Task InitializeRTUServiceAsync()
 		{
-			if (Global._RTUService == null)
+			if (Global.RTUService == null)
 			{
 				await Global.OpenOutgoingChannelAsync();
-				Global._RTUService = Global.OutgoingChannel.RealmProxy.Services.GetCalleeProxy<IRTUService>();
+				Global.RTUService = Global.OutgoingChannel.RealmProxy.Services.GetCalleeProxy<IRTUService>();
 			}
 		}
 
@@ -1040,7 +1055,7 @@ namespace net.vieapps.Services.Users
 			try
 			{
 				await Global.InitializeRTUServiceAsync();
-				await Global._RTUService.SendInterCommunicateMessageAsync(message, Global.CancellationTokenSource.Token);
+				await Global.RTUService.SendInterCommunicateMessageAsync(message, Global.CancellationTokenSource.Token);
 			}
 			catch { }
 		}
