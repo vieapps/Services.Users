@@ -765,7 +765,7 @@ namespace net.vieapps.Services.Users
 
 				var name = requestBody.Get<string>("Name");
 				var email = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Email")
-					? requestInfo.Extra["Email"].Decrypt()
+					? requestInfo.Extra["Email"].Decrypt().Trim().ToLower()
 					: null;
 				var password = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Password")
 					? requestInfo.Extra["Password"].Decrypt()
@@ -773,8 +773,12 @@ namespace net.vieapps.Services.Users
 				if (string.IsNullOrWhiteSpace(password) && !string.IsNullOrWhiteSpace(email))
 					password = this.GenerateRandomPassword(email);
 
+				// check existing account
+				if ((await Account.GetByEmailAsync(email, cancellationToken)) != null)
+					throw new InformationExistedException("The email address (" + email + ") has been used for another account");
+
 				// create new account & profile
-				if (requestInfo.Extra != null && requestInfo.Extra.ContainsKey("x-create"))
+				if (requestInfo.GetQueryParameter("x-create") != null)
 				{
 					// create account
 					var account = new Account()
@@ -833,12 +837,12 @@ namespace net.vieapps.Services.Users
 					{ "Email", email },
 					{ "Password", password },
 					{ "Time", DateTime.Now },
-					{ "Mode", requestInfo.Extra != null && requestInfo.Extra.ContainsKey("x-create") ? "Status" : "Create"  }
+					{ "Mode", requestInfo.GetQueryParameter("x-create") != null ? "Status" : "Create"  }
 				}).ToString(Formatting.None).Encrypt(ServiceComponent.ActivationKey).ToBase64Url(true);
 
 				var uri = requestInfo.Query.ContainsKey("uri")
 					? requestInfo.Query["uri"].Url64Decode()
-					: "http://localhost/#?prego=activate&mode={mode}&code={code}";
+					: "https://accounts.vieapps.net/#?prego=activate&mode={mode}&code={code}";
 				uri = uri.Replace(StringComparison.OrdinalIgnoreCase, "{mode}", "account");
 				uri = uri.Replace(StringComparison.OrdinalIgnoreCase, "{code}", code);
 
@@ -932,7 +936,7 @@ namespace net.vieapps.Services.Users
 
 			var uri = requestInfo.Query.ContainsKey("uri")
 				? requestInfo.Query["uri"].Url64Decode()
-				: "http://localhost/#?prego=activate&mode={mode}&code={code}";
+				: "https://accounts.vieapps.net/#?prego=activate&mode={mode}&code={code}";
 			uri = uri.Replace(StringComparison.OrdinalIgnoreCase, "{mode}", "password");
 			uri = uri.Replace(StringComparison.OrdinalIgnoreCase, "{code}", code);
 
@@ -1540,23 +1544,17 @@ namespace net.vieapps.Services.Users
 		#region Process inter-communicate messages
 		protected override void ProcessInterCommunicateMessage(CommunicateMessage message)
 		{
-			// check
-			if (message.Data == null)
-				return;
-
 			// prepare
-			var data = message.Data.ToExpandoObject();
-
-			var verb = data.Get<string>("Verb");
-			if (string.IsNullOrWhiteSpace(verb))
+			var data = message.Data?.ToExpandoObject();
+			if (data == null)
 				return;
 
 			// online status
-			if (verb.IsEquals("Status") && !string.IsNullOrWhiteSpace(data.Get<string>("UserID")))
+			if (message.Type.IsEquals("OnlineStatus") && !string.IsNullOrWhiteSpace(data.Get<string>("UserID")))
 				try
 				{
 					// update database
-					var isOnline = data.Get<bool>("IsOnline");
+					var isOnline = data.Get("IsOnline", false);
 					var session = Session.Get<Session>(data.Get<string>("SessionID"));
 					if (session != null && session.Online != isOnline)
 					{
@@ -1573,7 +1571,7 @@ namespace net.vieapps.Services.Users
 							{
 								Type = "Users#Status",
 								DeviceID = "*",
-								ExcludedDeviceID = data.Get<string>("DeviceID"),
+								ExcludedDeviceID = data.Get("DeviceID", ""),
 								Data = message.Data
 							});
 						}
