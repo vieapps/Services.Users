@@ -1064,8 +1064,6 @@ namespace net.vieapps.Services.Users
 	{
 		public GlobalHandler() : base() { }
 
-		public override bool IsReusable { get { return true; } }
-
 		public override async Task ProcessRequestAsync(HttpContext context)
 		{
 			// stop process request is OPTIONS

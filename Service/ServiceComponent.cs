@@ -117,6 +117,25 @@ namespace net.vieapps.Services.Users
 					}
 			})
 			.ConfigureAwait(false);
+
+			// timer to request client update state (15 minutes)
+			var timer = new System.Timers.Timer()
+			{
+				Interval = 15 * 60 * 1000,
+				AutoReset = true
+			};
+			timer.Elapsed += (s, a) =>
+			{
+				Task.Run(async () =>
+				{
+					await this.SendUpdateMessageAsync(new UpdateMessage()
+					{
+						Type = "OnlineStatus",
+						DeviceID = "*",
+					});
+				}).ConfigureAwait(false);
+			};
+			timer.Start();
 		}
 		#endregion
 
@@ -142,6 +161,9 @@ namespace net.vieapps.Services.Users
 
 					case "activate":
 						return await this.ProcessActivationAsync(requestInfo, cancellationToken);
+
+					case "status":
+						return await this.UpdateOnlineStatusAsync(requestInfo, cancellationToken);
 
 					case "captcha":
 						return this.RegisterSessionCaptcha(requestInfo);
@@ -778,7 +800,8 @@ namespace net.vieapps.Services.Users
 					throw new InformationExistedException("The email address (" + email + ") has been used for another account");
 
 				// create new account & profile
-				if (requestInfo.GetQueryParameter("x-create") != null)
+				var isCreateNew = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("x-create");
+				if (isCreateNew)
 				{
 					// create account
 					var account = new Account()
@@ -837,7 +860,7 @@ namespace net.vieapps.Services.Users
 					{ "Email", email },
 					{ "Password", password },
 					{ "Time", DateTime.Now },
-					{ "Mode", requestInfo.GetQueryParameter("x-create") != null ? "Status" : "Create"  }
+					{ "Mode", isCreateNew ? "Status" : "Create"  }
 				}).ToString(Formatting.None).Encrypt(ServiceComponent.ActivationKey).ToBase64Url(true);
 
 				var uri = requestInfo.Query.ContainsKey("uri")
@@ -1523,6 +1546,141 @@ namespace net.vieapps.Services.Users
 		}
 		#endregion
 
+		async Task<JObject> UpdateOnlineStatusAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		{
+			// update the collection of online session
+			try
+			{
+				if (this._onlineSessions.ContainsKey(requestInfo.Session.SessionID))
+					this._onlineSessions[requestInfo.Session.SessionID] = requestInfo.Session.User.ID;
+				else
+					this._onlineSessions.Add(requestInfo.Session.SessionID, requestInfo.Session.User.ID);
+			}
+			catch { }
+
+			// update last access
+			if (!requestInfo.Session.User.ID.Equals(User.SystemAccountID) && !requestInfo.Session.User.ID.Equals(""))
+			{
+				var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID, cancellationToken);
+				if (account != null)
+				{
+					account.LastAccess = DateTime.Now;
+					await Account.UpdateAsync(account, cancellationToken);
+				}
+			}
+
+			// broadcast & return
+			var info = new JObject()
+			{
+				{ "UserID", requestInfo.Session.User.ID },
+				{ "SessionID", requestInfo.Session.SessionID },
+				{ "DeviceID", requestInfo.Session.DeviceID },
+				{ "AppName", requestInfo.Session.AppName },
+				{ "AppPlatform", requestInfo.Session.AppPlatform },
+				{ "IP", requestInfo.Session.IP },
+				{ "IsOnline", true }
+			};
+
+			await this.SendUpdateMessageAsync(new UpdateMessage()
+			{
+				Type = "Users#Status",
+				DeviceID = "*",
+				ExcludedDeviceID = requestInfo.Session.DeviceID,
+				Data = info
+			});
+
+			return info;
+		}
+
+		#region Process inter-communicate messages
+		Dictionary<string, string> _onlineSessions = new Dictionary<string, string>();
+
+		protected override void ProcessInterCommunicateMessage(CommunicateMessage message)
+		{
+			// prepare
+			var data = message.Data?.ToExpandoObject();
+			if (data == null)
+				return;
+
+			// online status
+			if (message.Type.IsEquals("OnlineStatus"))
+				try
+				{
+					// prepare
+					var userID = data.Get<string>("UserID");
+					var isOnline = data.Get("IsOnline", false);
+					var sessionID = data.Get<string>("SessionID");
+					var deviceID = data.Get("DeviceID", "");
+
+					// update the collection of online session
+					if (!isOnline)
+						this._onlineSessions.Remove(sessionID);
+					else
+						try
+						{
+							if (this._onlineSessions.ContainsKey(sessionID))
+								this._onlineSessions[sessionID] = userID;
+							else
+								this._onlineSessions.Add(sessionID, userID);
+						}
+						catch { }
+
+					// update & broadcast
+					if (!string.IsNullOrWhiteSpace(userID))
+					{
+						var session = Session.Get<Session>(sessionID);
+						if (session != null && session.Online != isOnline)
+						{
+							session.Online = isOnline;
+							Session.Update(session);
+						}
+						Task.Run(async () =>
+						{
+							try
+							{
+								await this.SendUpdateMessageAsync(new UpdateMessage()
+								{
+									Type = "Users#Status",
+									DeviceID = "*",
+									ExcludedDeviceID = deviceID,
+									Data = message.Data
+								});
+							}
+							catch { }
+						});
+					}
+
+#if DEBUG
+					this.WriteInfo(UtilityService.NewUID, "Update online status successful" + "\r\n" + "=====>" + "\r\n" + message.ToJson().ToString(Formatting.Indented));
+#endif
+				}
+#if DEBUG
+				catch (Exception ex)
+				{
+					this.WriteInfo(UtilityService.NewUID, "Error occurred while updating online status", ex);
+				}
+#else
+				catch { }
+#endif
+
+			// total of online users
+			else if (message.Type.IsEquals("OnlineUsers"))
+				Task.Run(async () =>
+				{
+					try
+					{
+						await this.SendUpdateMessageAsync(new UpdateMessage()
+						{
+							Type = "Users#Online",
+							DeviceID = "*",
+							Data = new JValue(this._onlineSessions.Count)
+						});
+					}
+					catch { }
+				});
+		}
+		#endregion
+
 		JObject RegisterSessionCaptcha(RequestInfo requestInfo)
 		{
 			if (!requestInfo.Verb.IsEquals("GET"))
@@ -1540,58 +1698,6 @@ namespace net.vieapps.Services.Users
 				{ "Uri", uri }
 			};
 		}
-
-		#region Process inter-communicate messages
-		protected override void ProcessInterCommunicateMessage(CommunicateMessage message)
-		{
-			// prepare
-			var data = message.Data?.ToExpandoObject();
-			if (data == null)
-				return;
-
-			// online status
-			if (message.Type.IsEquals("OnlineStatus") && !string.IsNullOrWhiteSpace(data.Get<string>("UserID")))
-				try
-				{
-					// update database
-					var isOnline = data.Get("IsOnline", false);
-					var session = Session.Get<Session>(data.Get<string>("SessionID"));
-					if (session != null && session.Online != isOnline)
-					{
-						session.Online = isOnline;
-						Session.Update(session);
-					}
-
-					// broadcast
-					Task.Run(async () =>
-					{
-						try
-						{
-							await this.SendUpdateMessageAsync(new UpdateMessage()
-							{
-								Type = "Users#Status",
-								DeviceID = "*",
-								ExcludedDeviceID = data.Get("DeviceID", ""),
-								Data = message.Data
-							});
-						}
-						catch { }
-					});
-
-#if DEBUG
-					this.WriteInfo(UtilityService.NewUID, "Update online status successful" + "\r\n" + "=====>" + "\r\n" + message.ToJson().ToString(Formatting.Indented));
-#endif
-				}
-#if DEBUG
-				catch (Exception ex)
-				{
-					this.WriteInfo(UtilityService.NewUID, "Error occurred while updating online status", ex);
-				}
-#else
-				catch { }
-#endif
-		}
-		#endregion
 
 	}
 }
