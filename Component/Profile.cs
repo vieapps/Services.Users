@@ -95,7 +95,7 @@ namespace net.vieapps.Services.Users
 		public DateTime LastUpdated { get; set; }
 		#endregion
 
-		#region IBusiness properties
+		#region IBusinessEntity Properties
 		[JsonIgnore, BsonIgnore, Ignore]
 		public override string Title { get; set; }
 

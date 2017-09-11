@@ -33,6 +33,8 @@ namespace net.vieapps.Services.Users
 				return ServiceComponent._ActivationKey;
 			}
 		}
+
+		internal List<System.Timers.Timer> _timers = new List<System.Timers.Timer>();
 		#endregion
 
 		#region Start
@@ -74,6 +76,9 @@ namespace net.vieapps.Services.Users
 			{
 				this.WriteInfo(correlationID, "Error occurred while initializing the repository", ex);
 			}
+
+			// register timers for working with background workers & schedulers
+			this.RegisterTimes();
 
 			// start the service
 			Task.Run(async () =>
@@ -117,25 +122,6 @@ namespace net.vieapps.Services.Users
 					}
 			})
 			.ConfigureAwait(false);
-
-			// timer to request client update state (15 minutes)
-			var timer = new System.Timers.Timer()
-			{
-				Interval = 15 * 60 * 1000,
-				AutoReset = true
-			};
-			timer.Elapsed += (s, a) =>
-			{
-				Task.Run(async () =>
-				{
-					await this.SendUpdateMessageAsync(new UpdateMessage()
-					{
-						Type = "OnlineStatus",
-						DeviceID = "*",
-					});
-				}).ConfigureAwait(false);
-			};
-			timer.Start();
 		}
 		#endregion
 
@@ -1698,6 +1684,40 @@ namespace net.vieapps.Services.Users
 				{ "Uri", uri }
 			};
 		}
+
+		#region Timers for working with background workers & schedulers
+		void StartTimer(int interval, Action<object, System.Timers.ElapsedEventArgs> action, bool autoReset = true)
+		{
+			var timer = new System.Timers.Timer()
+			{
+				Interval = interval * 1000,
+				AutoReset = autoReset
+			};
+			timer.Elapsed += new System.Timers.ElapsedEventHandler(action);
+			timer.Start();
+			this._timers.Add(timer);
+		}
+
+		void RegisterTimes()
+		{
+			// timer to request client update state (10 minutes)
+			this.StartTimer(10 * 60, (sender, args) =>
+			{
+				Task.Run(async () =>
+				{
+					await this.SendUpdateMessageAsync(new UpdateMessage()
+					{
+						Type = "OnlineStatus",
+						DeviceID = "*",
+					});
+
+#if DEBUG
+					this.WriteInfo(UtilityService.NewUID, "Send message to request update online status successful", null, false);
+#endif
+				}).ConfigureAwait(false);
+			});
+		}
+		#endregion
 
 	}
 }
