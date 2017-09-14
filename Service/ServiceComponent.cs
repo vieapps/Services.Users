@@ -695,6 +695,10 @@ namespace net.vieapps.Services.Users
 						return this.UpdateEmailAsync(requestInfo, cancellationToken);
 					else
 						return this.UpdateAccountAsync(requestInfo, cancellationToken);
+
+				// get sessions of an account
+				case "HEAD":
+					return this.GetAccountSessionsAsync(requestInfo, cancellationToken);
 			}
 
 			return Task.FromException<JObject>(new MethodNotAllowedException(requestInfo.Verb));
@@ -1087,6 +1091,35 @@ namespace net.vieapps.Services.Users
 
 			// response
 			return account.Profile.ToJson();
+		}
+		#endregion
+
+		#region Get the sessions of an account
+		async Task<JObject> GetAccountSessionsAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		{
+			var userID = requestInfo.GetObjectIdentity() ?? requestInfo.Session.User.ID;
+			var account = !userID.Equals("") && !userID.Equals(User.SystemAccountID)
+				? await Account.GetAsync<Account>(userID, cancellationToken)
+				: null;
+
+			if (account != null && account.Sessions == null)
+				await account.GetSessionsAsync(cancellationToken);
+
+			var sessions = account != null
+				? account.Sessions.ToJArray(s => new JObject()
+					{
+						{ "SessionID", s.ID },
+						{ "DeviceID", s.DeviceID },
+						{ "AppInfo", s.AppInfo },
+						{ "IsOnline", s.Online }
+					})
+				: new JArray();
+
+			return new JObject()
+			{
+				{ "ID", userID },
+				{ "Sessions", sessions }
+			};
 		}
 		#endregion
 
