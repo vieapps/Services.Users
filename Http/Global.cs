@@ -219,11 +219,11 @@ namespace net.vieapps.Services.Users
 			Global.IncommingChannel.RealmProxy.Monitor.ConnectionEstablished += (sender, arguments) =>
 			{
 				Global.IncommingChannelSessionID = arguments.SessionId;
-				var subject = Global.IncommingChannel?.RealmProxy.Services.GetSubject<CommunicateMessage>("net.vieapps.rtu.communicate.messages");
-				if (subject != null)
-					Global.InterCommunicationMessageUpdater = subject.Subscribe(
-						msg => Global.ProcessInterCommunicateMessage(msg),
-						ex => Global.WriteLogs(UtilityService.BlankUID, "Error occurred while fetching inter-communicate message", ex)
+				Global.IncommingChannel.RealmProxy.Services
+					.GetSubject<CommunicateMessage>("net.vieapps.rtu.communicate.messages.users")
+					.Subscribe(
+						message => Global.ProcessInterCommunicateMessage(message),
+						exception => Global.WriteLogs(UtilityService.BlankUID, "Error occurred while fetching inter-communicate message", exception)
 					);
 			};
 
