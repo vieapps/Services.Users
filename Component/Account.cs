@@ -20,7 +20,7 @@ using net.vieapps.Components.Repository;
 
 namespace net.vieapps.Services.Users
 {
-	[Serializable, BsonIgnoreExtraElements, DebuggerDisplay("ID = {ID}, Identity = {Identity}, Type = {Type}")]
+	[Serializable, BsonIgnoreExtraElements, DebuggerDisplay("ID = {ID}, Identity = {AccessIdentity}, Type = {Type}")]
 	[Entity(CollectionName = "Accounts", TableName = "T_Users_Accounts", CacheStorageType = typeof(Utility), CacheStorageName = "Cache")]
 	public class Account : Repository<Account>
 	{
@@ -32,6 +32,9 @@ namespace net.vieapps.Services.Users
 			this.Joined = DateTime.Now;
 			this.LastAccess = DateTime.Now;
 			this.OAuthType = "";
+			this.AccessMapIdentity = "";
+			this.AccessIdentity = "";
+			this.AccessKey = "";
 			this.AccessRoles = new List<string>();
 			this.AccessPrivileges = new List<Privilege>();
 		}
@@ -140,14 +143,14 @@ namespace net.vieapps.Services.Users
 			this.Sessions = await Session.FindAsync(Filters<Session>.Equals("UserID", this.ID), Sorts<Session>.Descending("ExpiredAt"), 0, 1, null, cancellationToken);
 		}
 
-		public JObject GetAccountJson(bool addStatus = false)
+		public JObject GetAccountJson(bool addStatus = false, string idNode = "ID")
 		{
 			var roles = SystemRole.All.ToString() + "," + SystemRole.Authenticated.ToString()
 				+ (User.SystemAdministrators.Contains(this.ID) ? "," + SystemRole.SystemAdministrator.ToString() : "");
 
 			var json = new JObject()
 			{
-				{ "ID", this.ID },
+				{ idNode, this.ID },
 				{ "Roles", (this.AccessRoles ?? new List<string>()).Concat(roles.ToList()).Distinct().ToJArray() },
 				{ "Privileges", (this.AccessPrivileges ?? new List<Privilege>()).ToJArray() }
 			};
@@ -159,16 +162,16 @@ namespace net.vieapps.Services.Users
 		}
 
 		/// <summary>
-		/// Gets an user account by email address (available for built-in account only)
+		/// Gets an user account by identity
 		/// </summary>
-		/// <param name="email"></param>
+		/// <param name="identity"></param>
 		/// <param name="cancellationToken"></param>
 		/// <returns></returns>
-		public static async Task<Account> GetByEmailAsync(string email, CancellationToken cancellationToken = default(CancellationToken))
+		public static async Task<Account> GetByIdentityAsync(string identity, AccountType type = AccountType.BuiltIn, CancellationToken cancellationToken = default(CancellationToken))
 		{
 			return await Account.GetAsync<Account>(Filters<Account>.And(
-					Filters<Account>.Equals("AccessIdentity", email),
-					Filters<Account>.Equals("Type", AccountType.BuiltIn.ToString())
+					Filters<Account>.Equals("AccessIdentity", identity),
+					Filters<Account>.Equals("Type", type.ToString())
 				), null, null, cancellationToken);
 		}
 

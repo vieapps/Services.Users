@@ -115,7 +115,8 @@ namespace net.vieapps.Services.Users
 		#region To JSON
 		public override JObject ToJson(bool addTypeOfExtendedProperties = false, Action<JObject> onPreCompleted = null)
 		{
-			return base.ToJson(addTypeOfExtendedProperties, (obj) => {
+			return base.ToJson(addTypeOfExtendedProperties, (obj) =>
+			{
 				obj.Add(new JProperty("Gravatar", string.IsNullOrWhiteSpace(this.Email) ? Utility.HttpFilesUri + "/avatars/default.png" : "https://secure.gravatar.com/avatar/" + this.Email.ToLower().Trim().GetMD5() + "?s=300&d=" + (Utility.HttpFilesUri + "/avatars/default.png").UrlEncode()));
 				onPreCompleted?.Invoke(obj);
 			});

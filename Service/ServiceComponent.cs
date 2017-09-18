@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using System.Diagnostics;
 using System.Collections.Generic;
 using System.Dynamic;
+using System.DirectoryServices.AccountManagement;
 
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -13,7 +14,6 @@ using Newtonsoft.Json.Linq;
 using net.vieapps.Components.Utility;
 using net.vieapps.Components.Security;
 using net.vieapps.Components.Repository;
-using net.vieapps.Components.Caching;
 #endregion
 
 namespace net.vieapps.Services.Users
@@ -44,7 +44,7 @@ namespace net.vieapps.Services.Users
 		{
 			// prepare
 			var msg = string.IsNullOrWhiteSpace(info)
-				? ex != null ? ex.Message : ""
+				? ex?.Message ?? ""
 				: info;
 
 			// write to logs
@@ -54,10 +54,11 @@ namespace net.vieapps.Services.Users
 			// write to console
 			if (!Program.AsService)
 			{
-				Console.WriteLine("~~~~~~~~~~~~~~~~~~~~>");
 				Console.WriteLine(msg);
 				if (ex != null)
 					Console.WriteLine("-----------------------\r\n" + "==> [" + ex.GetType().GetTypeName(true) + "]: " + ex.Message + "\r\n" + ex.StackTrace + "\r\n-----------------------");
+				else
+					Console.WriteLine("~~~~~~~~~~~~~~~~~~~~>");
 			}
 		}
 
@@ -86,14 +87,8 @@ namespace net.vieapps.Services.Users
 				try
 				{
 					await this.StartAsync(
-						() =>
-						{
-							this.WriteInfo(correlationID, "The service is registered - PID: " + Process.GetCurrentProcess().Id.ToString());
-						},
-						(ex) =>
-						{
-							this.WriteInfo(correlationID, "Error occurred while registering the service", ex);
-						}
+						service => this.WriteInfo(correlationID, "The service is registered - PID: " + Process.GetCurrentProcess().Id.ToString()),
+						exception => this.WriteInfo(correlationID, "Error occurred while registering the service", exception)
 					);
 				}
 				catch (Exception ex)
@@ -632,13 +627,51 @@ namespace net.vieapps.Services.Users
 		{
 			// prepare
 			var body = requestInfo.GetBodyExpando();
-			var email = body.Get<string>("Email").Decrypt();
+			var email = body.Get<string>("Email").Decrypt().Trim().ToLower();
 			var password = body.Get<string>("Password").Decrypt();
+			var type = body.Get("Type", "BuiltIn").ToEnum<AccountType>();
+			Account account = null;
 
-			// find account & check
-			var account = await Account.GetByEmailAsync(email, cancellationToken);
-			if (account == null || !Account.HashPassword(account.ID, password).Equals(account.AccessKey))
-				throw new WrongAccountException();
+			// Windows account
+			if (type.Equals(AccountType.Windows))
+			{
+				var username = email.Left(email.PositionOf("@") - 1);
+				var domain = email.Right(email.Length - email.PositionOf("@") - 1);
+				using (var principalContext = new PrincipalContext(ContextType.Domain, domain))
+				{
+					if (!principalContext.ValidateCredentials(username, password, ContextOptions.Negotiate))
+						throw new WrongAccountException();
+				}
+
+				// create information of account/profile
+				account = await Account.GetByIdentityAsync(email, AccountType.Windows, cancellationToken);
+				if (account == null)
+				{
+					account = new Account()
+					{
+						ID = UtilityService.NewUID,
+						Type = AccountType.Windows,
+						AccessIdentity = email
+					};
+					await Account.CreateAsync(account, cancellationToken);
+
+					var profile = new Profile()
+					{
+						ID = account.ID,
+						Name = body.Get("Name", username),
+						Email = email
+					};
+					await Profile.CreateAsync(profile, cancellationToken);
+				}
+			}
+
+			// BuiltIn account
+			else
+			{
+				account = await Account.GetByIdentityAsync(email, AccountType.BuiltIn, cancellationToken);
+				if (account == null || !Account.HashPassword(account.ID, password).Equals(account.AccessKey))
+					throw new WrongAccountException();
+			}
 
 			// clear cached of current session
 			await Utility.Cache.RemoveAsync<Session>(requestInfo.Session.SessionID);
@@ -720,28 +753,12 @@ namespace net.vieapps.Services.Users
 				throw new AccessDeniedException();
 
 			// get account information
-			var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID, cancellationToken);
+			var account = await Account.GetAsync<Account>(requestInfo.GetObjectIdentity() ?? requestInfo.Session.User.ID, cancellationToken);
 			if (account == null)
 				throw new InformationNotFoundException();
 
-			// prepare response
-			var json = account.GetAccountJson(requestInfo.Extra != null && requestInfo.Extra.ContainsKey("x-status"));
-
-			// related service
-			if (requestInfo.Query.ContainsKey("related-service"))
-				try
-				{
-					var result = await this.CallRelatedServiceAsync(requestInfo, "account", "GET", null, cancellationToken);
-					foreach (var info in result)
-						if (json[info.Key] != null)
-							json[info.Key] = info.Value;
-						else
-							json.Add(info.Key, info.Value);
-				}
-				catch { }
-
-			// return the result
-			return json;
+			// response
+			return account.GetAccountJson(requestInfo.Extra != null && requestInfo.Extra.ContainsKey("x-status"));
 		}
 		#endregion
 
@@ -786,7 +803,7 @@ namespace net.vieapps.Services.Users
 					password = this.GenerateRandomPassword(email);
 
 				// check existing account
-				if ((await Account.GetByEmailAsync(email, cancellationToken)) != null)
+				if ((await Account.GetByIdentityAsync(email, AccountType.BuiltIn, cancellationToken)) != null)
 					throw new InformationExistedException("The email address (" + email + ") has been used for another account");
 
 				// create new account & profile
@@ -804,19 +821,7 @@ namespace net.vieapps.Services.Users
 					};
 
 					await Account.CreateAsync(account, cancellationToken);
-
 					json = account.GetAccountJson();
-					if (requestInfo.Query.ContainsKey("related-service"))
-						try
-						{
-							var result = await this.CallRelatedServiceAsync(requestInfo, json.FromJson<User>(), "account", "POST", cancellationToken);
-							foreach (var info in result)
-								if (json[info.Key] != null)
-									json[info.Key] = info.Value;
-								else
-									json.Add(info.Key, info.Value);
-						}
-						catch { }
 
 					// create profile
 					var profile = requestBody.Copy<Profile>();
@@ -828,12 +833,7 @@ namespace net.vieapps.Services.Users
 					if (requestInfo.Query.ContainsKey("related-service"))
 						try
 						{
-							var result = await this.CallRelatedServiceAsync(requestInfo, json.FromJson<User>(), "profile", "POST", cancellationToken);
-							foreach (var info in result)
-								if (json[info.Key] != null)
-									json[info.Key] = info.Value;
-								else
-									json.Add(info.Key, info.Value);
+							await this.CallRelatedServiceAsync(requestInfo, json.FromJson<User>(), "profile", "POST", cancellationToken);
 						}
 						catch { }
 				}
@@ -904,9 +904,35 @@ namespace net.vieapps.Services.Users
 		#endregion
 
 		#region Update an account
-		Task<JObject> UpdateAccountAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		async Task<JObject> UpdateAccountAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
-			return Task.FromException<JObject>(new InvalidRequestException());
+			// check permissions
+			var gotRights = requestInfo.Session.User.IsSystemAdministrator;
+			if (!gotRights && requestInfo.Query.ContainsKey("related-service"))
+				gotRights = this.IsAuthenticated(requestInfo) && requestInfo.Session.User.IsAuthorized(requestInfo.Query["related-service"], null, Components.Security.Action.Full);
+			if (!gotRights)
+				throw new AccessDeniedException();
+
+			// get account
+			var account = await Account.GetAsync<Account>(requestInfo.GetObjectIdentity(), cancellationToken);
+			if (account == null)
+				throw new InformationNotFoundException();
+
+			// update
+			var data = requestInfo.GetBodyExpando();
+
+			var roles = data.Get<List<string>>("Roles");
+			if (roles != null)
+				account.AccessRoles = roles;
+
+			var privileges = data.Get<List<Privilege>>("Privileges");
+			if (privileges != null)
+				account.AccessPrivileges = privileges;
+
+			await Account.UpdateAsync(account, cancellationToken);
+
+			// response
+			return account.GetAccountJson();
 		}
 		#endregion
 
@@ -931,7 +957,7 @@ namespace net.vieapps.Services.Users
 		{
 			// get account
 			var email = requestInfo.Extra["Email"].Decrypt();
-			var account = await Account.GetByEmailAsync(email, cancellationToken);
+			var account = await Account.GetByIdentityAsync(email, AccountType.BuiltIn, cancellationToken);
 			if (account == null)
 				return new JObject()
 				{
@@ -1046,7 +1072,7 @@ namespace net.vieapps.Services.Users
 
 			// check existing
 			var email = requestInfo.Extra["Email"].Decrypt();
-			var otherAccount = await Account.GetByEmailAsync(email, cancellationToken);
+			var otherAccount = await Account.GetByIdentityAsync(email, AccountType.BuiltIn, cancellationToken);
 			if (otherAccount != null)
 				throw new InformationExistedException("The email '" + email + "' is used by other account");
 
@@ -1101,24 +1127,24 @@ namespace net.vieapps.Services.Users
 			var account = !userID.Equals("") && !userID.Equals(User.SystemAccountID)
 				? await Account.GetAsync<Account>(userID, cancellationToken)
 				: null;
-
 			if (account != null && account.Sessions == null)
 				await account.GetSessionsAsync(cancellationToken);
-
-			var sessions = account != null
-				? account.Sessions.ToJArray(s => new JObject()
-					{
-						{ "SessionID", s.ID },
-						{ "DeviceID", s.DeviceID },
-						{ "AppInfo", s.AppInfo },
-						{ "IsOnline", s.Online }
-					})
-				: new JArray();
 
 			return new JObject()
 			{
 				{ "ID", userID },
-				{ "Sessions", sessions }
+				{
+					"Sessions",
+					account != null
+						? account.Sessions.ToJArray(session => new JObject()
+							{
+								{ "SessionID", session.ID },
+								{ "DeviceID", session.DeviceID },
+								{ "AppInfo", session.AppInfo },
+								{ "IsOnline", session.Online }
+							})
+						: new JArray()
+				}
 			};
 		}
 		#endregion
@@ -1156,8 +1182,8 @@ namespace net.vieapps.Services.Users
 		async Task<JObject> SearchProfilesAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// check
-			var gotRIghts = requestInfo.Session.User.IsSystemAdministrator || (this.IsAuthenticated(requestInfo) && this.IsAuthorized(requestInfo, Components.Security.Action.View));
-			if (!gotRIghts)
+			var gotRights = requestInfo.Session.User.IsSystemAdministrator || (this.IsAuthenticated(requestInfo) && await this.IsAuthorizedAsync(requestInfo, Components.Security.Action.View));
+			if (!gotRights)
 				throw new AccessDeniedException();
 
 			// prepare
@@ -1250,7 +1276,7 @@ namespace net.vieapps.Services.Users
 			// prepare
 			if (!this.IsAuthenticated(requestInfo))
 				throw new AccessDeniedException();
-			else if (!this.IsAuthorized(requestInfo, Components.Security.Action.View))
+			else if (!await this.IsAuthorizedAsync(requestInfo, Components.Security.Action.View))
 				throw new AccessDeniedException();
 
 			// fetch
@@ -1296,7 +1322,8 @@ namespace net.vieapps.Services.Users
 		{
 			// serialize JSON with some additional information
 			var account = await Account.GetAsync<Account>(profile.ID, cancellationToken);
-			var json = profile.ToJson(false, (obj) => {
+			var json = profile.ToJson(false, (obj) =>
+			{
 				obj.Add(new JProperty("LastAccess", account.LastAccess));
 				obj.Add(new JProperty("Joined", account.Joined));
 			});
@@ -1321,7 +1348,7 @@ namespace net.vieapps.Services.Users
 					? (json["Email"] as JValue).Value.ToString()
 					: null;
 				if (!string.IsNullOrWhiteSpace(value))
-					(json["Email"] as JValue).Value = value.Left(value.Length - value.IndexOf("@"));
+					(json["Email"] as JValue).Value = value.Left(value.IndexOf("@")) + "@...";
 
 				value = json["Mobile"] != null && json["Mobile"] is JValue && (json["Mobile"] as JValue).Value != null
 					? (json["Mobile"] as JValue).Value.ToString()
@@ -1340,7 +1367,7 @@ namespace net.vieapps.Services.Users
 			var id = requestInfo.GetObjectIdentity() ?? requestInfo.Session.User.ID;
 			var gotRights = this.IsAuthenticated(requestInfo) && requestInfo.Session.User.ID.IsEquals(id);
 			if (!gotRights)
-				gotRights = this.IsAuthorized(requestInfo, Components.Security.Action.View);
+				gotRights = await this.IsAuthorizedAsync(requestInfo, Components.Security.Action.View);
 			if (!gotRights)
 				throw new AccessDeniedException();
 
@@ -1361,7 +1388,7 @@ namespace net.vieapps.Services.Users
 			var id = requestInfo.GetObjectIdentity() ?? requestInfo.Session.User.ID;
 			var gotRights = requestInfo.Session.User.IsSystemAdministrator || (this.IsAuthenticated(requestInfo) && requestInfo.Session.User.ID.IsEquals(id));
 			if (!gotRights)
-				gotRights = this.IsAuthorized(requestInfo, Components.Security.Action.Update);
+				gotRights = await this.IsAuthorizedAsync(requestInfo, Components.Security.Action.Update);
 			if (!gotRights)
 				throw new AccessDeniedException();
 
@@ -1392,6 +1419,15 @@ namespace net.vieapps.Services.Users
 					await this.CallRelatedServiceAsync(requestInfo, "profile", "PUT", profile.ID, cancellationToken);
 				}
 				catch { }
+
+			// send update message
+			await this.SendUpdateMessageAsync(new UpdateMessage()
+			{
+				Type = "Users#Profile",
+				DeviceID = "*",
+				ExcludedDeviceID = requestInfo.Session.DeviceID,
+				Data = await this.GetProfileJsonAsync(requestInfo, profile, true, cancellationToken)
+			}, cancellationToken);
 
 			// response
 			return await this.GetProfileJsonAsync(requestInfo, profile, false, cancellationToken);
@@ -1505,19 +1541,6 @@ namespace net.vieapps.Services.Users
 
 				// prepare response
 				var json = account.GetAccountJson();
-
-				// update information of related service
-				if (requestInfo.Query.ContainsKey("related-service"))
-					try
-					{
-						var result = await this.CallRelatedServiceAsync(requestInfo, json.FromJson<User>(), "account", "POST", cancellationToken);
-						foreach (var data in result)
-							if (json[data.Key] != null)
-								json[data.Key] = data.Value;
-							else
-								json.Add(data.Key, data.Value);
-					}
-					catch { }
 
 				// create profile
 				var profile = new Profile()
@@ -1697,6 +1720,50 @@ namespace net.vieapps.Services.Users
 					}
 					catch { }
 				});
+
+			// reupdate sessions when got new access token
+			else if (message.Type.IsEquals("Session"))
+			{
+				var userID = data.Get<string>("UserID");
+				var accessToken = data.Get<string>("AccessToken");
+				Task.Run(async () =>
+				{
+					try
+					{
+						var token = accessToken.Decrypt();
+						var account = await Account.GetAsync<Account>(userID);
+						if (account != null)
+						{
+							if (account.Sessions == null)
+								await account.GetSessionsAsync();
+
+							await account.Sessions.ForEachAsync(async (session, ct) =>
+							{
+								if (session.Online)
+								{
+									session.AccessToken = token;
+									await Session.UpdateAsync(session, ct);
+
+									await this.SendInterCommunicateMessageAsync("apigateway", new BaseMessage()
+									{
+										Type = "Users#Session",
+										Data = new JObject()
+										{
+											{ "Session", session.ID },
+											{ "User", account.GetAccountJson() },
+											{ "Device", session.DeviceID },
+											{ "Token", accessToken }
+										}
+									}, ct);
+								}
+								else
+									await Session.DeleteAsync<Session>(session.ID, ct);
+							});
+						}
+					}
+					catch { }
+				});
+			}
 		}
 		#endregion
 
@@ -1708,8 +1775,7 @@ namespace net.vieapps.Services.Users
 			var code = Captcha.GenerateCode();
 			var uri = UtilityService.GetAppSetting("HttpFilesUri", "https://afs.vieapps.net")
 				+ "/captchas/" + code.Url64Encode() + "/"
-				+ (requestInfo.GetQueryParameter("register") ?? UtilityService.NewUID.Encrypt(CryptoService.DefaultEncryptionKey, true))
-					.Substring(UtilityService.GetRandomNumber(13, 43), 13).Reverse() + ".jpg";
+				+ (requestInfo.GetQueryParameter("register") ?? UtilityService.NewUID.Encrypt(CryptoService.DefaultEncryptionKey, true)).Substring(UtilityService.GetRandomNumber(13, 43), 13).Reverse() + ".jpg";
 
 			return new JObject()
 			{
@@ -1733,8 +1799,8 @@ namespace net.vieapps.Services.Users
 
 		void RegisterTimes()
 		{
-			// timer to request client update state (10 minutes)
-			this.StartTimer(10 * 60, (sender, args) =>
+			// timer to request client update state (5 minutes)
+			this.StartTimer(60 * 5, (sender, args) =>
 			{
 				Task.Run(async () =>
 				{

@@ -52,12 +52,12 @@ namespace net.vieapps.Services.Users
 		BuiltIn,
 
 		/// <summary>
-		/// Presents the OAth account
+		/// Presents the OAth account (Facebook, Google, Microsoft, Twitter, LinkedIn)
 		/// </summary>
 		OAuth,
 
 		/// <summary>
-		/// Presents the Windows LDAP account
+		/// Presents the Windows Active Directory account
 		/// </summary>
 		Windows
 	}
