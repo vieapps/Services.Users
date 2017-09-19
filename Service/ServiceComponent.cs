@@ -635,34 +635,52 @@ namespace net.vieapps.Services.Users
 			// Windows account
 			if (type.Equals(AccountType.Windows))
 			{
-				var username = email.Left(email.PositionOf("@") - 1);
-				var domain = email.Right(email.Length - email.PositionOf("@") - 1);
+				var username = email.Left(email.PositionOf("@"));
+				username = username.IndexOf("\\") > 0
+					? username.Right(username.Length - username.IndexOf("\\") - 1).Trim()
+					: username.Trim();
+				var domain = email.Right(email.Length - email.PositionOf("@") - 1).Trim();
+
 				using (var principalContext = new PrincipalContext(ContextType.Domain, domain))
 				{
 					if (!principalContext.ValidateCredentials(username, password, ContextOptions.Negotiate))
 						throw new WrongAccountException();
 				}
 
-				// create information of account/profile
-				account = await Account.GetByIdentityAsync(email, AccountType.Windows, cancellationToken);
-				if (account == null)
-				{
-					account = new Account()
-					{
-						ID = UtilityService.NewUID,
-						Type = AccountType.Windows,
-						AccessIdentity = email
-					};
-					await Account.CreateAsync(account, cancellationToken);
+				// state to create information of account/profile
+				var needToCreateAccount = true;
+				if (requestInfo.Extra != null && requestInfo.Extra.ContainsKey("x-no-account"))
+					needToCreateAccount = false;
 
-					var profile = new Profile()
+				// create information of account/profile
+				if (needToCreateAccount)
+				{
+					account = await Account.GetByIdentityAsync(email, AccountType.Windows, cancellationToken);
+					if (account == null)
 					{
-						ID = account.ID,
-						Name = body.Get("Name", username),
-						Email = email
-					};
-					await Profile.CreateAsync(profile, cancellationToken);
+						account = new Account()
+						{
+							ID = UtilityService.NewUID,
+							Type = AccountType.Windows,
+							AccessIdentity = email
+						};
+						await Account.CreateAsync(account, cancellationToken);
+
+						var profile = new Profile()
+						{
+							ID = account.ID,
+							Name = body.Get("Name", username),
+							Email = email
+						};
+						await Profile.CreateAsync(profile, cancellationToken);
+					}
 				}
+			}
+
+			// OAuth account
+			else if (type.Equals(AccountType.OAuth))
+			{
+
 			}
 
 			// BuiltIn account
@@ -677,7 +695,9 @@ namespace net.vieapps.Services.Users
 			await Utility.Cache.RemoveAsync<Session>(requestInfo.Session.SessionID);
 
 			// response
-			return account.GetAccountJson();
+			return account != null
+				? account.GetAccountJson()
+				: new JObject();
 		}
 		#endregion
 
