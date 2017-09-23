@@ -929,7 +929,7 @@ namespace net.vieapps.Services.Users
 			// check permissions
 			var gotRights = requestInfo.Session.User.IsSystemAdministrator;
 			if (!gotRights && requestInfo.Query.ContainsKey("related-service"))
-				gotRights = this.IsAuthenticated(requestInfo) && requestInfo.Session.User.IsAuthorized(requestInfo.Query["related-service"], null, Components.Security.Action.Full);
+				gotRights = this.IsAuthenticated(requestInfo) && requestInfo.Session.User.IsAuthorized(requestInfo.Query["related-service"], requestInfo.ObjectName, requestInfo.GetObjectIdentity(), Components.Security.Action.Full);
 			if (!gotRights)
 				throw new AccessDeniedException();
 
@@ -1201,9 +1201,8 @@ namespace net.vieapps.Services.Users
 		#region Search profiles
 		async Task<JObject> SearchProfilesAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
-			// check
-			var gotRights = requestInfo.Session.User.IsSystemAdministrator || (this.IsAuthenticated(requestInfo) && await this.IsAuthorizedAsync(requestInfo, Components.Security.Action.View));
-			if (!gotRights)
+			// check permissions
+			if (!this.IsAuthenticated(requestInfo))
 				throw new AccessDeniedException();
 
 			// prepare

@@ -43,7 +43,7 @@ namespace net.vieapps.Services.Users
 		}
 
 		#region Properties
-		[Property(MaxLength = 250, NotNull = true), Searchable, Sortable(IndexName = "Names")]
+		[Property(MaxLength = 250, NotNull = true), NotEmpty, Searchable, Sortable(IndexName = "Names")]
 		public string Name { get; set; }
 
 		[Property(MaxLength = 250), Searchable, Sortable(IndexName = "Names")]
