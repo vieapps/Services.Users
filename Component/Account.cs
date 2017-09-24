@@ -35,7 +35,7 @@ namespace net.vieapps.Services.Users
 			this.AccessMapIdentity = "";
 			this.AccessIdentity = "";
 			this.AccessKey = "";
-			this.AccessRoles = new List<string>();
+			this.AccessRoles = new Dictionary<string, List<string>>();
 			this.AccessPrivileges = new List<Privilege>();
 		}
 
@@ -92,7 +92,7 @@ namespace net.vieapps.Services.Users
 		/// Gets or sets the working roles (means working roles of business services) of the user account
 		/// </summary>
 		[AsJson]
-		public List<string> AccessRoles { get; set; }
+		public Dictionary<string, List<string>> AccessRoles { get; set; }
 
 		/// <summary>
 		/// Gets or sets the working privileges (means scopes/working privileges of services/services' objects) of the user account
@@ -143,6 +143,16 @@ namespace net.vieapps.Services.Users
 			this.Sessions = await Session.FindAsync(Filters<Session>.Equals("UserID", this.ID), Sorts<Session>.Descending("ExpiredAt"), 0, 1, null, cancellationToken);
 		}
 
+		public List<string> GetRoles(string initialized = null)
+		{
+			var roles = string.IsNullOrWhiteSpace(initialized)
+				? new List<string>()
+				: initialized.ToList();
+			if (this.AccessRoles != null && this.AccessRoles.Count > 0)
+				this.AccessRoles.ForEach(sRoles => roles = roles.Concat(sRoles).ToList());
+			return roles.Distinct().ToList();
+		}
+
 		public JObject GetAccountJson(bool addStatus = false, string idNode = "ID")
 		{
 			var roles = SystemRole.All.ToString() + "," + SystemRole.Authenticated.ToString()
@@ -151,7 +161,7 @@ namespace net.vieapps.Services.Users
 			var json = new JObject()
 			{
 				{ idNode, this.ID },
-				{ "Roles", (this.AccessRoles ?? new List<string>()).Concat(roles.ToList()).Distinct().ToJArray() },
+				{ "Roles", this.GetRoles(roles).ToJArray() },
 				{ "Privileges", (this.AccessPrivileges ?? new List<Privilege>()).ToJArray() }
 			};
 

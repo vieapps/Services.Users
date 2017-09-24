@@ -923,13 +923,29 @@ namespace net.vieapps.Services.Users
 		}
 		#endregion
 
-		#region Update an account
+		#region Update an account (update the privileges of an account)
 		async Task<JObject> UpdateAccountAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
-			// check permissions
+			// prepare
+			var systemID = requestInfo.GetQueryParameter("related-system-id");
+			var serviceName = requestInfo.GetQueryParameter("related-service");
+
+			// system administrator can do
 			var gotRights = requestInfo.Session.User.IsSystemAdministrator;
-			if (!gotRights && requestInfo.Query.ContainsKey("related-service"))
-				gotRights = this.IsAuthenticated(requestInfo) && requestInfo.Session.User.IsAuthorized(requestInfo.Query["related-service"], requestInfo.ObjectName, requestInfo.GetObjectIdentity(), Components.Security.Action.Full);
+
+			// check with related service
+			if (!gotRights && !string.IsNullOrWhiteSpace(serviceName))
+			{
+				var service = await this.GetServiceAsync(serviceName);
+				var objectIdentity = requestInfo.GetQueryParameter("related-object-identity");
+				gotRights = service != null
+					? string.IsNullOrWhiteSpace(systemID)
+						? await service.CanManageAsync(requestInfo.Session.User, requestInfo.GetQueryParameter("related-object"), objectIdentity)
+						: await service.CanManageAsync(requestInfo.Session.User, systemID, requestInfo.GetQueryParameter("related-definition-id"), objectIdentity)
+					: false;
+			}
+
+			// stop if has no right to do
 			if (!gotRights)
 				throw new AccessDeniedException();
 
@@ -938,17 +954,32 @@ namespace net.vieapps.Services.Users
 			if (account == null)
 				throw new InformationNotFoundException();
 
-			// update
+			// prepare to update privileges of the account
 			var data = requestInfo.GetBodyExpando();
 
-			var roles = data.Get<List<string>>("Roles");
-			if (roles != null)
-				account.AccessRoles = roles;
+			// roles of a system
+			if (!string.IsNullOrWhiteSpace(systemID))
+			{
+				var roles = data.Get<List<string>>("Roles");
+				if (roles != null)
+				{
+					if (account.AccessRoles.ContainsKey(systemID))
+						account.AccessRoles[systemID] = roles;
+					else
+						account.AccessRoles.Add(systemID, roles);
+				}
+			}
 
-			var privileges = data.Get<List<Privilege>>("Privileges");
-			if (privileges != null)
-				account.AccessPrivileges = privileges;
+			// privileges of a service
+			if (!string.IsNullOrWhiteSpace(serviceName))
+			{
+				account.AccessPrivileges = account.AccessPrivileges.Where(p => !p.ServiceName.IsEquals(serviceName)).ToList();
+				var privileges = data.Get<List<Privilege>>("Privileges");
+				if (privileges != null)
+					account.AccessPrivileges = account.AccessPrivileges.Concat(privileges).ToList();
+			}
 
+			// update database
 			await Account.UpdateAsync(account, cancellationToken);
 
 			// response
@@ -1281,7 +1312,7 @@ namespace net.vieapps.Services.Users
 #else
 				json = result.ToString(Formatting.None);
 #endif
-				Utility.Cache.SetAbsolute(cacheKey + ":" + pageNumber.ToString() + "-json", json, Utility.CacheTime / 2);
+				await Utility.Cache.SetAbsoluteAsync(cacheKey + ":" + pageNumber.ToString() + "-json", json, Utility.CacheTime / 2);
 			}
 
 			// return the result
