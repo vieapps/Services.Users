@@ -40,9 +40,9 @@ namespace net.vieapps.Services.Users
 			}
 		}
 
-		static CacheManager _Cache = new CacheManager("VIEApps-Services-Users", "Sliding", Utility.CacheTime);
+		static Cache _Cache = new Cache("VIEApps-Services-Users", "Sliding", Utility.CacheTime);
 
-		public static CacheManager Cache { get { return Utility._Cache; } }
+		public static Cache Cache { get { return Utility._Cache; } }
 
 		static string _HttpFilesUri = null;
 
