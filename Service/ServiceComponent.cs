@@ -6,7 +6,6 @@ using System.Threading.Tasks;
 using System.Diagnostics;
 using System.Collections.Generic;
 using System.Dynamic;
-using System.DirectoryServices.AccountManagement;
 
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -511,7 +510,7 @@ namespace net.vieapps.Services.Users
 			if (requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Exist"))
 			{
 				var existed = await Utility.Cache.ExistsAsync<Session>(requestInfo.Session.SessionID);
-				if (!existed && !requestInfo.Session.User.ID.Equals("") && !requestInfo.Session.User.ID.Equals(User.SystemAccountID))
+				if (!existed && !requestInfo.Session.User.ID.Equals("") && !requestInfo.Session.User.IsSystemAccount)
 					existed = (await Session.GetAsync<Session>(requestInfo.Session.SessionID, cancellationToken)) != null;
 
 				return new JObject()
@@ -531,7 +530,7 @@ namespace net.vieapps.Services.Users
 				if (string.IsNullOrWhiteSpace(accessToken))
 					throw new TokenNotFoundException();
 
-				var session = requestInfo.Session.User.ID.Equals("") || requestInfo.Session.User.ID.Equals(User.SystemAccountID)
+				var session = requestInfo.Session.User.ID.Equals("") || requestInfo.Session.User.IsSystemAccount
 					? await Utility.Cache.FetchAsync<Session>(requestInfo.Session.SessionID)
 					: await Session.GetAsync<Session>(requestInfo.Session.SessionID, cancellationToken);
 
@@ -552,7 +551,7 @@ namespace net.vieapps.Services.Users
 			// get session
 			else
 			{
-				var session = requestInfo.Session.User.ID.Equals("") || requestInfo.Session.User.ID.Equals(User.SystemAccountID)
+				var session = requestInfo.Session.User.ID.Equals("") || requestInfo.Session.User.IsSystemAccount
 					? await Utility.Cache.FetchAsync<Session>(requestInfo.Session.SessionID)
 					: await Session.GetAsync<Session>(requestInfo.Session.SessionID, cancellationToken);
 
@@ -577,11 +576,11 @@ namespace net.vieapps.Services.Users
 				throw new InformationRequiredException();
 
 			// register a session of vistor/system account
-			if (requestInfo.Session.User.ID.Equals("") || requestInfo.Session.User.ID.Equals(User.SystemAccountID))
+			if (requestInfo.Session.User.ID.Equals("") || requestInfo.Session.User.IsSystemAccount)
 			{
 				// update cache of session
 				var session = data.Copy<Session>();
-				Utility.Cache.SetAbsolute(session, 180);
+				Utility.Cache.Set(session, 180);
 
 				// response
 				return session.ToJson();
@@ -641,11 +640,13 @@ namespace net.vieapps.Services.Users
 					: username.Trim();
 				var domain = email.Right(email.Length - email.PositionOf("@") - 1).Trim();
 
+				/*
 				using (var principalContext = new PrincipalContext(ContextType.Domain, domain))
 				{
 					if (!principalContext.ValidateCredentials(username, password, ContextOptions.Negotiate))
 						throw new WrongAccountException();
 				}
+				*/
 
 				// state to create information of account/profile
 				var needToCreateAccount = true;
@@ -1175,7 +1176,7 @@ namespace net.vieapps.Services.Users
 		async Task<JObject> GetAccountSessionsAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			var userID = requestInfo.GetObjectIdentity() ?? requestInfo.Session.User.ID;
-			var account = !userID.Equals("") && !userID.Equals(User.SystemAccountID)
+			var account = !userID.Equals("") && !requestInfo.Session.User.IsSystemAccount
 				? await Account.GetAsync<Account>(userID, cancellationToken)
 				: null;
 			if (account != null && account.Sessions == null)
@@ -1312,7 +1313,7 @@ namespace net.vieapps.Services.Users
 #else
 				json = result.ToString(Formatting.None);
 #endif
-				await Utility.Cache.SetAbsoluteAsync(cacheKey + ":" + pageNumber.ToString() + "-json", json, Utility.CacheTime / 2);
+				await Utility.Cache.SetAsync(cacheKey + ":" + pageNumber.ToString() + "-json", json, Utility.CacheTime / 2);
 			}
 
 			// return the result
@@ -1651,7 +1652,7 @@ namespace net.vieapps.Services.Users
 			catch { }
 
 			// update last access
-			if (!requestInfo.Session.User.ID.Equals(User.SystemAccountID) && !requestInfo.Session.User.ID.Equals(""))
+			if (!requestInfo.Session.User.IsSystemAccount && !requestInfo.Session.User.ID.Equals(""))
 			{
 				var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID, cancellationToken);
 				if (account != null)

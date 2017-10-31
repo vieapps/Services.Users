@@ -1,6 +1,5 @@
 ﻿#region Related components
 using System;
-using System.Configuration;
 using System.Collections;
 using System.Collections.Generic;
 using System.Collections.Specialized;
@@ -16,7 +15,6 @@ using System.Xml;
 using System.Linq;
 using System.Web;
 using System.Web.Security;
-using System.Web.Configuration;
 
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -671,7 +669,7 @@ namespace net.vieapps.Services.Users
 				var authTicket = Global.GetAuthenticateTicket(app.Context);
 				if (!string.IsNullOrWhiteSpace(authTicket))
 				{
-					var ticket = User.ParseAuthenticateToken(authTicket, Global.RSA, Global.AESKey);
+					var ticket = AspNetSecurityService.ParseAuthenticateToken(authTicket, Global.RSA, Global.AESKey);
 					var userID = ticket.Item1;
 					var accessToken = ticket.Item2;
 					var sessionID = ticket.Item3;
@@ -927,7 +925,7 @@ namespace net.vieapps.Services.Users
 			var sessionID = token.Item3;
 			var deviceID = token.Item4;
 
-			var ticket = User.ParseAuthenticateToken(accessToken, Global.RSA, Global.AESKey);
+			var ticket = AspNetSecurityService.ParseAuthenticateToken(accessToken, Global.RSA, Global.AESKey);
 			accessToken = ticket.Item2;
 
 			var user = User.ParseAccessToken(accessToken, Global.RSA, Global.AESKey);
@@ -948,7 +946,7 @@ namespace net.vieapps.Services.Users
 			var persistent = "persistent".Encrypt().Url64Encode().Equals(context.Request.QueryString["persistent"]);
 			var cookie = new HttpCookie(FormsAuthentication.FormsCookieName)
 			{
-				Value = User.GetAuthenticateToken(userID, accessToken, sessionID, deviceID, FormsAuthentication.Timeout.Minutes, persistent),
+				Value = AspNetSecurityService.GetAuthenticateToken(userID, accessToken, sessionID, deviceID, FormsAuthentication.Timeout.Minutes, persistent),
 				HttpOnly = true
 			};
 			if (persistent)

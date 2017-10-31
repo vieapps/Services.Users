@@ -40,7 +40,7 @@ namespace net.vieapps.Services.Users
 			}
 		}
 
-		static Cache _Cache = new Cache("VIEApps-Services-Users", "Sliding", Utility.CacheTime);
+		static Cache _Cache = new Cache("VIEApps-Services-Users", Utility.CacheTime);
 
 		public static Cache Cache { get { return Utility._Cache; } }
 
