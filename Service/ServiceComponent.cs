@@ -17,7 +17,7 @@ using net.vieapps.Components.Repository;
 
 namespace net.vieapps.Services.Users
 {
-	public class ServiceComponent : BaseService
+	public class ServiceComponent : ServiceBase
 	{
 
 		#region Attributes
