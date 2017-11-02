@@ -12,7 +12,7 @@
     <OutputType>Library</OutputType>
     <AppDesignerFolder>Properties</AppDesignerFolder>
     <RootNamespace>net.vieapps.Services.Users</RootNamespace>
-    <AssemblyName>VIEApps.Services.Users</AssemblyName>
+    <AssemblyName>VIEApps.Services.Users.Http</AssemblyName>
     <TargetFrameworkVersion>v4.7.1</TargetFrameworkVersion>
     <UseIISExpress>true</UseIISExpress>
     <IISExpressSSLPort />
@@ -47,7 +47,6 @@
     <CodeAnalysisRuleSet>AllRules.ruleset</CodeAnalysisRuleSet>
   </PropertyGroup>
   <ItemGroup>
-    <Reference Include="netstandard" />
     <Reference Include="System.Web" />
   </ItemGroup>
   <ItemGroup>
@@ -65,9 +64,9 @@
       <Project>{c496cef5-9ff8-4364-9860-fcdefed4e277}</Project>
       <Name>VIEApps.Services.Base</Name>
     </ProjectReference>
-    <ProjectReference Include="..\Component\VIEApps.Services.Users.Component.csproj">
-      <Project>{c57f1914-ea25-4f11-910c-d4de6c8969e0}</Project>
-      <Name>VIEApps.Services.Users.Component</Name>
+    <ProjectReference Include="..\Service\VIEApps.Services.Users.csproj">
+      <Project>{0950ce1c-8e96-4ca5-a67f-e09e27ee7788}</Project>
+      <Name>VIEApps.Services.Users</Name>
     </ProjectReference>
   </ItemGroup>
   <ItemGroup>
@@ -77,9 +76,6 @@
     <Content Include="web.config" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="NETStandard.Library">
-      <Version>2.0.1</Version>
-    </PackageReference>
     <PackageReference Include="VIEApps.Components.Caching.AspNet.Memcached">
       <Version>10.1.1.1711</Version>
     </PackageReference>

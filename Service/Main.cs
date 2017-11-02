@@ -20,6 +20,8 @@ namespace net.vieapps.Services.Users
 	public class ServiceComponent : ServiceBase
 	{
 
+		public ServiceComponent() { }
+
 		#region Attributes
 		static string _ActivationKey = null;
 
@@ -37,85 +39,13 @@ namespace net.vieapps.Services.Users
 		#endregion
 
 		#region Start
-		public ServiceComponent() { }
-
-		void WriteInfo(string correlationID, string info, Exception ex = null, bool writeLogs = true)
+		public override void Start(string[] args = null, bool initializeRepository = true, System.Action nextAction = null, Func<Task> nextActionAsync = null)
 		{
-			// prepare
-			var msg = string.IsNullOrWhiteSpace(info)
-				? ex?.Message ?? ""
-				: info;
-
-			// write to logs
-			if (writeLogs)
-				this.WriteLog(correlationID ?? UtilityService.NewUID, this.ServiceName, null, msg, ex);
-
-			// write to console
-			if (!Program.AsService)
-			{
-				Console.WriteLine(msg);
-				if (ex != null)
-					Console.WriteLine("-----------------------\r\n" + "==> [" + ex.GetType().GetTypeName(true) + "]: " + ex.Message + "\r\n" + ex.StackTrace + "\r\n-----------------------");
-				else
-					Console.WriteLine("~~~~~~~~~~~~~~~~~~~~>");
-			}
-		}
-
-		internal void Start(string[] args = null, System.Action nextAction = null, Func<Task> nextActionAsync = null)
-		{
-			// prepare
-			var correlationID = UtilityService.NewUID;
-
-			// initialize repositorites
-			try
-			{
-				this.WriteInfo(correlationID, "Initializing the repository");
-				RepositoryStarter.Initialize();
-			}
-			catch (Exception ex)
-			{
-				this.WriteInfo(correlationID, "Error occurred while initializing the repository", ex);
-			}
-
 			// register timers for working with background workers & schedulers
 			this.RegisterTimes();
 
 			// start the service
-			Task.Run(async () =>
-			{
-				try
-				{
-					await this.StartAsync(
-						service => this.WriteInfo(correlationID, "The service is registered - PID: " + Process.GetCurrentProcess().Id.ToString()),
-						exception => this.WriteInfo(correlationID, "Error occurred while registering the service", exception)
-					);
-				}
-				catch (Exception ex)
-				{
-					this.WriteInfo(correlationID, "Error occurred while starting the service", ex);
-				}
-			})
-			.ContinueWith(async (task) =>
-			{
-				try
-				{
-					nextAction?.Invoke();
-				}
-				catch (Exception ex)
-				{
-					this.WriteInfo(correlationID, "Error occurred while running the next action (sync)", ex);
-				}
-				if (nextActionAsync != null)
-					try
-					{
-						await nextActionAsync().ConfigureAwait(false);
-					}
-					catch (Exception ex)
-					{
-						this.WriteInfo(correlationID, "Error occurred while running the next action (async)", ex);
-					}
-			})
-			.ConfigureAwait(false);
+			base.Start(args, initializeRepository, nextAction, nextActionAsync);
 		}
 		#endregion
 
@@ -124,7 +54,7 @@ namespace net.vieapps.Services.Users
 		public override async Task<JObject> ProcessRequestAsync(RequestInfo requestInfo, CancellationToken cancellationToken = default(CancellationToken))
 		{
 #if DEBUG
-			this.WriteInfo(requestInfo.CorrelationID, "Process the request\r\n==> Request:\r\n" + requestInfo.ToJson().ToString(Formatting.Indented), null, false);
+			this.WriteLog(requestInfo.CorrelationID, "Process the request\r\n==> Request:\r\n" + requestInfo.ToJson().ToString(Formatting.Indented), null, false);
 #endif
 			try
 			{
@@ -157,7 +87,7 @@ namespace net.vieapps.Services.Users
 			}
 			catch (Exception ex)
 			{
-				this.WriteInfo(requestInfo.CorrelationID, "Error occurred while processing\r\n==> Request:\r\n" + requestInfo.ToJson().ToString(Formatting.Indented), ex);
+				this.WriteLog(requestInfo.CorrelationID, "Error occurred while processing\r\n==> Request:\r\n" + requestInfo.ToJson().ToString(Formatting.Indented), ex);
 				throw this.GetRuntimeException(requestInfo, ex);
 			} 
 		}
@@ -1744,13 +1674,13 @@ namespace net.vieapps.Services.Users
 					}
 
 #if DEBUG
-					this.WriteInfo(UtilityService.NewUID, "Update online status successful" + "\r\n" + "=====>" + "\r\n" + message.ToJson().ToString(Formatting.Indented));
+					this.WriteLog(UtilityService.NewUID, "Update online status successful" + "\r\n" + "=====>" + "\r\n" + message.ToJson().ToString(Formatting.Indented));
 #endif
 				}
 #if DEBUG
 				catch (Exception ex)
 				{
-					this.WriteInfo(UtilityService.NewUID, "Error occurred while updating online status", ex);
+					this.WriteLog(UtilityService.NewUID, "Error occurred while updating online status", ex);
 				}
 #else
 				catch { }
@@ -1862,7 +1792,7 @@ namespace net.vieapps.Services.Users
 					});
 
 #if DEBUG
-					this.WriteInfo(UtilityService.NewUID, "Send message to request update online status successful", null, false);
+					this.WriteLog(UtilityService.NewUID, "Send message to request update online status successful", null, false);
 #endif
 				}).ConfigureAwait(false);
 			});
