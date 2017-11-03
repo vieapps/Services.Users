@@ -570,13 +570,17 @@ namespace net.vieapps.Services.Users
 					: username.Trim();
 				var domain = email.Right(email.Length - email.PositionOf("@") - 1).Trim();
 
-				/*
-				using (var principalContext = new PrincipalContext(ContextType.Domain, domain))
+				await this.CallServiceAsync(new RequestInfo(requestInfo.Session, "windowsad", "account")
 				{
-					if (!principalContext.ValidateCredentials(username, password, ContextOptions.Negotiate))
-						throw new WrongAccountException();
-				}
-				*/
+					Verb = "POST",
+					Header = requestInfo.Header,
+					Body = (new JObject()
+					{
+						{ "Domain", domain.Encrypt() },
+						{ "Username", username.Encrypt() },
+						{ "Password", password.Encrypt() }
+					}).ToString(Formatting.None)
+				}, cancellationToken);
 
 				// state to create information of account/profile
 				var needToCreateAccount = true;
