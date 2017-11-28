@@ -23,14 +23,14 @@ namespace net.vieapps.Services.Users
 
 		static int _CacheTime = 0;
 
-		public static int CacheTime
+		public static int CacheExpirationTime
 		{
 			get
 			{
 				if (Utility._CacheTime < 1)
 					try
 					{
-						Utility._CacheTime = UtilityService.GetAppSetting("CacheTime", "30").CastAs<int>();
+						Utility._CacheTime = UtilityService.GetAppSetting("CacheExpirationTime", "30").CastAs<int>();
 					}
 					catch
 					{
@@ -40,7 +40,7 @@ namespace net.vieapps.Services.Users
 			}
 		}
 
-		static Cache _Cache = new Cache("VIEApps-Services-Users", Utility.CacheTime);
+		static Cache _Cache = new Cache("VIEApps-Services-Users", Utility.CacheExpirationTime, UtilityService.GetAppSetting("CacheProvider"));
 
 		public static Cache Cache { get { return Utility._Cache; } }
 

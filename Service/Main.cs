@@ -19,8 +19,7 @@ namespace net.vieapps.Services.Users
 {
 	public class ServiceComponent : ServiceBase
 	{
-
-		public ServiceComponent() { }
+		public ServiceComponent() : base() { }
 
 		#region Attributes
 		static string _ActivationKey = null;
@@ -61,19 +60,19 @@ namespace net.vieapps.Services.Users
 				switch (requestInfo.ObjectName.ToLower())
 				{
 					case "session":
-						return await this.ProcessSessionAsync(requestInfo, cancellationToken);
+						return await this.ProcessSessionAsync(requestInfo, cancellationToken).ConfigureAwait(false);
 
 					case "account":
-						return await this.ProcessAccountAsync(requestInfo, cancellationToken);
+						return await this.ProcessAccountAsync(requestInfo, cancellationToken).ConfigureAwait(false);
 
 					case "profile":
-						return await this.ProcessProfileAsync(requestInfo, cancellationToken);
+						return await this.ProcessProfileAsync(requestInfo, cancellationToken).ConfigureAwait(false);
 
 					case "activate":
-						return await this.ProcessActivationAsync(requestInfo, cancellationToken);
+						return await this.ProcessActivationAsync(requestInfo, cancellationToken).ConfigureAwait(false);
 
 					case "status":
-						return await this.UpdateOnlineStatusAsync(requestInfo, cancellationToken);
+						return await this.UpdateOnlineStatusAsync(requestInfo, cancellationToken).ConfigureAwait(false);
 
 					case "captcha":
 						return this.RegisterSessionCaptcha(requestInfo);
@@ -111,7 +110,7 @@ namespace net.vieapps.Services.Users
 				},
 				CorrelationID = requestInfo.CorrelationID
 			};
-			var data = (await this.CallServiceAsync(request, cancellationToken)).ToExpandoObject();
+			var data = (await this.CallServiceAsync(request, cancellationToken).ConfigureAwait(false)).ToExpandoObject();
 
 			var subject = data.Get<string>("Subject");
 			var body = data.Get<string>("Body");
@@ -136,7 +135,7 @@ namespace net.vieapps.Services.Users
 			if (requestInfo.Query.ContainsKey("related-service"))
 				try
 				{
-					var data = await this.GetInstructionsOfRelatedServiceAsync(requestInfo, mode, cancellationToken);
+					var data = await this.GetInstructionsOfRelatedServiceAsync(requestInfo, mode, cancellationToken).ConfigureAwait(false);
 
 					subject = data.Item1;
 					body = data.Item2;
@@ -297,7 +296,7 @@ namespace net.vieapps.Services.Users
 			if (requestInfo.Query.ContainsKey("related-service"))
 				try
 				{
-					var data = await this.GetInstructionsOfRelatedServiceAsync(requestInfo, mode, cancellationToken);
+					var data = await this.GetInstructionsOfRelatedServiceAsync(requestInfo, mode, cancellationToken).ConfigureAwait(false);
 
 					subject = data.Item1;
 					body = data.Item2;
@@ -390,7 +389,7 @@ namespace net.vieapps.Services.Users
 				else
 					request.Query.Add("object-identity", objectIdentity);
 			}
-			return await this.CallServiceAsync(request, cancellationToken);
+			return await this.CallServiceAsync(request, cancellationToken).ConfigureAwait(false);
 		}
 
 		async Task<JObject> CallRelatedServiceAsync(RequestInfo requestInfo, User user, string objectName, string verb, CancellationToken cancellationToken = default(CancellationToken))
@@ -405,7 +404,7 @@ namespace net.vieapps.Services.Users
 				requestInfo.Body, 
 				requestInfo.Extra, 
 				requestInfo.CorrelationID
-			), cancellationToken);
+			), cancellationToken).ConfigureAwait(false);
 		}
 		#endregion
 
@@ -439,9 +438,9 @@ namespace net.vieapps.Services.Users
 			// check existed
 			if (requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Exist"))
 			{
-				var existed = await Utility.Cache.ExistsAsync<Session>(requestInfo.Session.SessionID);
+				var existed = await Utility.Cache.ExistsAsync<Session>(requestInfo.Session.SessionID).ConfigureAwait(false);
 				if (!existed && !requestInfo.Session.User.ID.Equals("") && !requestInfo.Session.User.IsSystemAccount)
-					existed = (await Session.GetAsync<Session>(requestInfo.Session.SessionID, cancellationToken)) != null;
+					existed = await Session.GetAsync<Session>(requestInfo.Session.SessionID, cancellationToken).ConfigureAwait(false) != null;
 
 				return new JObject()
 				{
@@ -461,8 +460,8 @@ namespace net.vieapps.Services.Users
 					throw new TokenNotFoundException();
 
 				var session = requestInfo.Session.User.ID.Equals("") || requestInfo.Session.User.IsSystemAccount
-					? await Utility.Cache.FetchAsync<Session>(requestInfo.Session.SessionID)
-					: await Session.GetAsync<Session>(requestInfo.Session.SessionID, cancellationToken);
+					? await Utility.Cache.FetchAsync<Session>(requestInfo.Session.SessionID).ConfigureAwait(false)
+					: await Session.GetAsync<Session>(requestInfo.Session.SessionID, cancellationToken).ConfigureAwait(false);
 
 				if (session == null)
 					throw new SessionNotFoundException();
@@ -482,8 +481,8 @@ namespace net.vieapps.Services.Users
 			else
 			{
 				var session = requestInfo.Session.User.ID.Equals("") || requestInfo.Session.User.IsSystemAccount
-					? await Utility.Cache.FetchAsync<Session>(requestInfo.Session.SessionID)
-					: await Session.GetAsync<Session>(requestInfo.Session.SessionID, cancellationToken);
+					? await Utility.Cache.FetchAsync<Session>(requestInfo.Session.SessionID).ConfigureAwait(false)
+					: await Session.GetAsync<Session>(requestInfo.Session.SessionID, cancellationToken).ConfigureAwait(false);
 
 				var result = session?.ToJson();
 				if (result != null)
@@ -519,31 +518,31 @@ namespace net.vieapps.Services.Users
 			// register a session of authenticated account
 			else
 			{
-				var session = await Session.GetAsync<Session>(requestInfo.Session.SessionID, cancellationToken);
+				var session = await Session.GetAsync<Session>(requestInfo.Session.SessionID, cancellationToken).ConfigureAwait(false);
 				if (session == null)
 				{
 					session = data.Copy<Session>();
-					await Session.CreateAsync(session, cancellationToken);
+					await Session.CreateAsync(session, cancellationToken).ConfigureAwait(false);
 				}
 				else
 				{
 					if (!requestInfo.Session.SessionID.IsEquals(data.Get<string>("ID")) || !requestInfo.Session.User.ID.IsEquals(data.Get<string>("UserID")))
 						throw new InvalidSessionException();
 					session.CopyFrom(data);
-					await Session.UpdateAsync(session, cancellationToken);
+					await Session.UpdateAsync(session, cancellationToken).ConfigureAwait(false);
 				}
 
 				// remove duplicated sessions
 				await Session.DeleteManyAsync(Filters<Session>.And(
 						Filters<Session>.Equals("DeviceID", session.DeviceID),
 						Filters<Session>.NotEquals("ID", session.ID)
-					), null, cancellationToken);
+					), null, cancellationToken).ConfigureAwait(false);
 
 				// update account information
-				var account = await Account.GetAsync<Account>(session.UserID, cancellationToken);
+				var account = await Account.GetAsync<Account>(session.UserID, cancellationToken).ConfigureAwait(false);
 				account.LastAccess = DateTime.Now;
-				await account.GetSessionsAsync(cancellationToken);
-				await Account.UpdateAsync(account, cancellationToken);
+				await account.GetSessionsAsync(cancellationToken).ConfigureAwait(false);
+				await Account.UpdateAsync(account, cancellationToken).ConfigureAwait(false);
 
 				// response
 				return session.ToJson();
@@ -580,7 +579,7 @@ namespace net.vieapps.Services.Users
 						{ "Username", username.Encrypt() },
 						{ "Password", password.Encrypt() }
 					}).ToString(Formatting.None)
-				}, cancellationToken);
+				}, cancellationToken).ConfigureAwait(false);
 
 				// state to create information of account/profile
 				var needToCreateAccount = true;
@@ -590,7 +589,7 @@ namespace net.vieapps.Services.Users
 				// create information of account/profile
 				if (needToCreateAccount)
 				{
-					account = await Account.GetByIdentityAsync(email, AccountType.Windows, cancellationToken);
+					account = await Account.GetByIdentityAsync(email, AccountType.Windows, cancellationToken).ConfigureAwait(false);
 					if (account == null)
 					{
 						account = new Account()
@@ -599,7 +598,7 @@ namespace net.vieapps.Services.Users
 							Type = AccountType.Windows,
 							AccessIdentity = email
 						};
-						await Account.CreateAsync(account, cancellationToken);
+						await Account.CreateAsync(account, cancellationToken).ConfigureAwait(false);
 
 						var profile = new Profile()
 						{
@@ -607,7 +606,7 @@ namespace net.vieapps.Services.Users
 							Name = body.Get("Name", username),
 							Email = email
 						};
-						await Profile.CreateAsync(profile, cancellationToken);
+						await Profile.CreateAsync(profile, cancellationToken).ConfigureAwait(false);
 					}
 				}
 			}
@@ -621,13 +620,13 @@ namespace net.vieapps.Services.Users
 			// BuiltIn account
 			else
 			{
-				account = await Account.GetByIdentityAsync(email, AccountType.BuiltIn, cancellationToken);
+				account = await Account.GetByIdentityAsync(email, AccountType.BuiltIn, cancellationToken).ConfigureAwait(false);
 				if (account == null || !Account.HashPassword(account.ID, password).Equals(account.AccessKey))
 					throw new WrongAccountException();
 			}
 
 			// clear cached of current session
-			await Utility.Cache.RemoveAsync<Session>(requestInfo.Session.SessionID);
+			await Utility.Cache.RemoveAsync<Session>(requestInfo.Session.SessionID).ConfigureAwait(false);
 
 			// response
 			return account != null
@@ -640,17 +639,17 @@ namespace net.vieapps.Services.Users
 		async Task<JObject> SignSessionOutAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// remove session
-			await Session.DeleteAsync<Session>(requestInfo.Session.SessionID, cancellationToken);
+			await Session.DeleteAsync<Session>(requestInfo.Session.SessionID, cancellationToken).ConfigureAwait(false);
 
 			// update account
-			var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID, cancellationToken);
+			var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID, cancellationToken).ConfigureAwait(false);
 			if (account != null)
 			{
 				if (account.Sessions == null)
-					await account.GetSessionsAsync(cancellationToken);
+					await account.GetSessionsAsync(cancellationToken).ConfigureAwait(false);
 				account.Sessions = account.Sessions.Where(s => !s.ID.Equals(requestInfo.Session.SessionID)).ToList();
 				account.LastAccess = DateTime.Now;
-				await Account.UpdateAsync(account, cancellationToken);
+				await Account.UpdateAsync(account, cancellationToken).ConfigureAwait(false);
 			}
 
 			// response
@@ -708,7 +707,7 @@ namespace net.vieapps.Services.Users
 				throw new AccessDeniedException();
 
 			// get account information
-			var account = await Account.GetAsync<Account>(requestInfo.GetObjectIdentity() ?? requestInfo.Session.User.ID, cancellationToken);
+			var account = await Account.GetAsync<Account>(requestInfo.GetObjectIdentity() ?? requestInfo.Session.User.ID, cancellationToken).ConfigureAwait(false);
 			if (account == null)
 				throw new InformationNotFoundException();
 
@@ -731,7 +730,7 @@ namespace net.vieapps.Services.Users
 				var account = requestBody.Copy<Account>();
 				account.AccessKey = requestBody.Get<string>("AccessKey") ?? this.GenerateRandomPassword(account.AccessIdentity);
 
-				await Account.CreateAsync(account, cancellationToken);
+				await Account.CreateAsync(account, cancellationToken).ConfigureAwait(false);
 				return account.ToJson();
 			}
 
@@ -758,7 +757,7 @@ namespace net.vieapps.Services.Users
 					password = this.GenerateRandomPassword(email);
 
 				// check existing account
-				if ((await Account.GetByIdentityAsync(email, AccountType.BuiltIn, cancellationToken)) != null)
+				if (await Account.GetByIdentityAsync(email, AccountType.BuiltIn, cancellationToken).ConfigureAwait(false) != null)
 					throw new InformationExistedException("The email address (" + email + ") has been used for another account");
 
 				// create new account & profile
@@ -775,7 +774,7 @@ namespace net.vieapps.Services.Users
 						AccessKey = password,
 					};
 
-					await Account.CreateAsync(account, cancellationToken);
+					await Account.CreateAsync(account, cancellationToken).ConfigureAwait(false);
 					json = account.GetAccountJson();
 
 					// create profile
@@ -784,11 +783,11 @@ namespace net.vieapps.Services.Users
 					profile.Name = name;
 					profile.Email = email;
 
-					await Profile.CreateAsync(profile, cancellationToken);
+					await Profile.CreateAsync(profile, cancellationToken).ConfigureAwait(false);
 					if (requestInfo.Query.ContainsKey("related-service"))
 						try
 						{
-							await this.CallRelatedServiceAsync(requestInfo, json.FromJson<User>(), "profile", "POST", cancellationToken);
+							await this.CallRelatedServiceAsync(requestInfo, json.FromJson<User>(), "profile", "POST", cancellationToken).ConfigureAwait(false);
 						}
 						catch { }
 				}
@@ -818,12 +817,12 @@ namespace net.vieapps.Services.Users
 				string inviter = "", inviterEmail = "";
 				if (mode.Equals("invite"))
 				{
-					var profile = await Profile.GetAsync<Profile>(requestInfo.Session.User.ID, cancellationToken);
+					var profile = await Profile.GetAsync<Profile>(requestInfo.Session.User.ID, cancellationToken).ConfigureAwait(false);
 					inviter = profile.Name;
 					inviterEmail = profile.Email;
 				}
 
-				var instructions = await this.GetActivateInstructionsAsync(requestInfo, mode, cancellationToken);
+				var instructions = await this.GetActivateInstructionsAsync(requestInfo, mode, cancellationToken).ConfigureAwait(false);
 				var data = new Dictionary<string, string>()
 				{
 					{ "Host", requestInfo.GetQueryParameter("host") ?? "unknown" },
@@ -850,7 +849,7 @@ namespace net.vieapps.Services.Users
 				});
 
 				var smtp = instructions.Item5;
-				await this.SendEmailAsync(instructions.Item4, name + " <" + email + ">", subject, body, smtp.Item1, smtp.Item2, smtp.Item3, smtp.Item4, smtp.Item5, cancellationToken);
+				await this.SendEmailAsync(instructions.Item4, name + " <" + email + ">", subject, body, smtp.Item1, smtp.Item2, smtp.Item3, smtp.Item4, smtp.Item5, cancellationToken).ConfigureAwait(false);
 
 				// result
 				return json;
@@ -871,12 +870,12 @@ namespace net.vieapps.Services.Users
 			// check with related service
 			if (!gotRights && !string.IsNullOrWhiteSpace(serviceName))
 			{
-				var service = await this.GetServiceAsync(serviceName);
+				var service = await this.GetServiceAsync(serviceName).ConfigureAwait(false);
 				var objectIdentity = requestInfo.GetQueryParameter("related-object-identity");
 				gotRights = service != null
 					? string.IsNullOrWhiteSpace(systemID)
-						? await service.CanManageAsync(requestInfo.Session.User, requestInfo.GetQueryParameter("related-object"), objectIdentity)
-						: await service.CanManageAsync(requestInfo.Session.User, systemID, requestInfo.GetQueryParameter("related-definition-id"), objectIdentity)
+						? await service.CanManageAsync(requestInfo.Session.User, requestInfo.GetQueryParameter("related-object"), objectIdentity).ConfigureAwait(false)
+						: await service.CanManageAsync(requestInfo.Session.User, systemID, requestInfo.GetQueryParameter("related-definition-id"), objectIdentity).ConfigureAwait(false)
 					: false;
 			}
 
@@ -885,7 +884,7 @@ namespace net.vieapps.Services.Users
 				throw new AccessDeniedException();
 
 			// get account
-			var account = await Account.GetAsync<Account>(requestInfo.GetObjectIdentity(), cancellationToken);
+			var account = await Account.GetAsync<Account>(requestInfo.GetObjectIdentity(), cancellationToken).ConfigureAwait(false);
 			if (account == null)
 				throw new InformationNotFoundException();
 
@@ -915,7 +914,7 @@ namespace net.vieapps.Services.Users
 			}
 
 			// update database
-			await Account.UpdateAsync(account, cancellationToken);
+			await Account.UpdateAsync(account, cancellationToken).ConfigureAwait(false);
 
 			// response
 			return account.GetAccountJson();
@@ -943,7 +942,7 @@ namespace net.vieapps.Services.Users
 		{
 			// get account
 			var email = requestInfo.Extra["Email"].Decrypt();
-			var account = await Account.GetByIdentityAsync(email, AccountType.BuiltIn, cancellationToken);
+			var account = await Account.GetByIdentityAsync(email, AccountType.BuiltIn, cancellationToken).ConfigureAwait(false);
 			if (account == null)
 				return new JObject()
 				{
@@ -966,7 +965,7 @@ namespace net.vieapps.Services.Users
 			uri = uri.Replace(StringComparison.OrdinalIgnoreCase, "{code}", code);
 
 			// prepare activation email
-			var instructions = await this.GetActivateInstructionsAsync(requestInfo, "reset", cancellationToken);
+			var instructions = await this.GetActivateInstructionsAsync(requestInfo, "reset", cancellationToken).ConfigureAwait(false);
 			var data = new Dictionary<string, string>()
 			{
 				{ "Host", requestInfo.GetQueryParameter("host") ?? "unknown" },
@@ -991,7 +990,7 @@ namespace net.vieapps.Services.Users
 			});
 
 			var smtp = instructions.Item5;
-			await this.SendEmailAsync(instructions.Item4, account.Profile.Name + " <" + account.AccessIdentity + ">", subject, body, smtp.Item1, smtp.Item2, smtp.Item3, smtp.Item4, smtp.Item5, cancellationToken);
+			await this.SendEmailAsync(instructions.Item4, account.Profile.Name + " <" + account.AccessIdentity + ">", subject, body, smtp.Item1, smtp.Item2, smtp.Item3, smtp.Item4, smtp.Item5, cancellationToken).ConfigureAwait(false);
 
 			// response
 			return new JObject()
@@ -1006,7 +1005,7 @@ namespace net.vieapps.Services.Users
 		{
 			// get account and check
 			var oldPassword = requestInfo.Extra["OldPassword"].Decrypt();
-			var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID, cancellationToken);
+			var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID, cancellationToken).ConfigureAwait(false);
 			if (account == null || !Account.HashPassword(account.ID, oldPassword).Equals(account.AccessKey))
 				throw new WrongAccountException();
 
@@ -1017,7 +1016,7 @@ namespace net.vieapps.Services.Users
 			await Account.UpdateAsync(account, cancellationToken);
 
 			// send alert email
-			var instructions = await this.GetUpdateInstructionsAsync(requestInfo, "password", cancellationToken);
+			var instructions = await this.GetUpdateInstructionsAsync(requestInfo, "password", cancellationToken).ConfigureAwait(false);
 			var data = new Dictionary<string, string>()
 			{
 				{ "Host", requestInfo.GetQueryParameter("host") ?? "unknown" },
@@ -1040,7 +1039,7 @@ namespace net.vieapps.Services.Users
 			});
 
 			var smtp = instructions.Item5;
-			await this.SendEmailAsync(instructions.Item4, account.Profile.Name + " <" + account.AccessIdentity + ">", subject, body, smtp.Item1, smtp.Item2, smtp.Item3, smtp.Item4, smtp.Item5, cancellationToken);
+			await this.SendEmailAsync(instructions.Item4, account.Profile.Name + " <" + account.AccessIdentity + ">", subject, body, smtp.Item1, smtp.Item2, smtp.Item3, smtp.Item4, smtp.Item5, cancellationToken).ConfigureAwait(false);
 
 			// response
 			return account.Profile.ToJson();
@@ -1052,13 +1051,13 @@ namespace net.vieapps.Services.Users
 		{
 			// get account and check
 			var oldPassword = requestInfo.Extra["OldPassword"].Decrypt();
-			var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID, cancellationToken);
+			var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID, cancellationToken).ConfigureAwait(false);
 			if (account == null || !Account.HashPassword(account.ID, oldPassword).Equals(account.AccessKey))
 				throw new WrongAccountException();
 
 			// check existing
 			var email = requestInfo.Extra["Email"].Decrypt();
-			var otherAccount = await Account.GetByIdentityAsync(email, AccountType.BuiltIn, cancellationToken);
+			var otherAccount = await Account.GetByIdentityAsync(email, AccountType.BuiltIn, cancellationToken).ConfigureAwait(false);
 			if (otherAccount != null)
 				throw new InformationExistedException("The email '" + email + "' is used by other account");
 
@@ -1071,12 +1070,12 @@ namespace net.vieapps.Services.Users
 			account.Profile.LastUpdated = DateTime.Now;
 
 			await Task.WhenAll(
-					Account.UpdateAsync(account, cancellationToken),
-					Profile.UpdateAsync(account.Profile, cancellationToken)
-				);
+				Account.UpdateAsync(account, cancellationToken),
+				Profile.UpdateAsync(account.Profile, cancellationToken)
+			).ConfigureAwait(false);
 
 			// send alert email
-			var instructions = await this.GetUpdateInstructionsAsync(requestInfo, "email", cancellationToken);
+			var instructions = await this.GetUpdateInstructionsAsync(requestInfo, "email", cancellationToken).ConfigureAwait(false);
 			var data = new Dictionary<string, string>()
 			{
 				{ "Host", requestInfo.GetQueryParameter("host") ?? "unknown" },
@@ -1099,7 +1098,7 @@ namespace net.vieapps.Services.Users
 			});
 
 			var smtp = instructions.Item5;
-			await this.SendEmailAsync(instructions.Item4, account.Profile.Name + " <" + account.AccessIdentity + ">", subject, body, smtp.Item1, smtp.Item2, smtp.Item3, smtp.Item4, smtp.Item5, cancellationToken);
+			await this.SendEmailAsync(instructions.Item4, account.Profile.Name + " <" + account.AccessIdentity + ">", subject, body, smtp.Item1, smtp.Item2, smtp.Item3, smtp.Item4, smtp.Item5, cancellationToken).ConfigureAwait(false);
 
 			// response
 			return account.Profile.ToJson();
@@ -1111,10 +1110,10 @@ namespace net.vieapps.Services.Users
 		{
 			var userID = requestInfo.GetObjectIdentity() ?? requestInfo.Session.User.ID;
 			var account = !userID.Equals("") && !requestInfo.Session.User.IsSystemAccount
-				? await Account.GetAsync<Account>(userID, cancellationToken)
+				? await Account.GetAsync<Account>(userID, cancellationToken).ConfigureAwait(false)
 				: null;
 			if (account != null && account.Sessions == null)
-				await account.GetSessionsAsync(cancellationToken);
+				await account.GetSessionsAsync(cancellationToken).ConfigureAwait(false);
 
 			return new JObject()
 			{
@@ -1194,7 +1193,7 @@ namespace net.vieapps.Services.Users
 				: "";
 
 			var json = !cacheKey.Equals("")
-				? await Utility.Cache.GetAsync<string>(cacheKey + ":" + pageNumber.ToString() + "-json")
+				? await Utility.Cache.GetAsync<string>(cacheKey + ":" + pageNumber.ToString() + "-json").ConfigureAwait(false)
 				: "";
 
 			if (!string.IsNullOrWhiteSpace(json))
@@ -1207,8 +1206,8 @@ namespace net.vieapps.Services.Users
 
 			if (totalRecords < 0)
 				totalRecords = string.IsNullOrWhiteSpace(query)
-					? await Profile.CountAsync(filter, cacheKey + "-total", cancellationToken)
-					: await Profile.CountByQueryAsync(query, filter, cancellationToken);
+					? await Profile.CountAsync(filter, cacheKey + "-total", cancellationToken).ConfigureAwait(false)
+					: await Profile.CountByQueryAsync(query, filter, cancellationToken).ConfigureAwait(false);
 
 			var pageSize = pagination.Item3;
 
@@ -1219,16 +1218,16 @@ namespace net.vieapps.Services.Users
 			// search
 			var objects = totalRecords > 0
 				? string.IsNullOrWhiteSpace(query)
-					? await Profile.FindAsync(filter, sort, pageSize, pageNumber, cacheKey + ":" + pageNumber.ToString(), cancellationToken)
-					: await Profile.SearchAsync(query, filter, pageSize, pageNumber, cancellationToken)
+					? await Profile.FindAsync(filter, sort, pageSize, pageNumber, cacheKey + ":" + pageNumber.ToString(), cancellationToken).ConfigureAwait(false)
+					: await Profile.SearchAsync(query, filter, pageSize, pageNumber, cancellationToken).ConfigureAwait(false)
 				: new List<Profile>();
 
 			// build result
 			var profiles = new JArray();
-			await objects.ForEachAsync(async (profile, ct) =>
+			await objects.ForEachAsync(async (profile, token) =>
 			{
-				profiles.Add(await this.GetProfileJsonAsync(requestInfo, profile, !requestInfo.Session.User.IsSystemAdministrator, ct));
-			}, cancellationToken);
+				profiles.Add(await this.GetProfileJsonAsync(requestInfo, profile, !requestInfo.Session.User.IsSystemAdministrator, token).ConfigureAwait(false));
+			}, cancellationToken).ConfigureAwait(false);
 
 			pagination = new Tuple<long, int, int, int>(totalRecords, totalPages, pageSize, pageNumber);
 			var result = new JObject()
@@ -1247,7 +1246,7 @@ namespace net.vieapps.Services.Users
 #else
 				json = result.ToString(Formatting.None);
 #endif
-				await Utility.Cache.SetAsync(cacheKey + ":" + pageNumber.ToString() + "-json", json, Utility.CacheTime / 2);
+				await Utility.Cache.SetAsync(cacheKey + ":" + pageNumber.ToString() + "-json", json, Utility.CacheExpirationTime / 2).ConfigureAwait(false);
 			}
 
 			// return the result
@@ -1261,7 +1260,7 @@ namespace net.vieapps.Services.Users
 			// prepare
 			if (!this.IsAuthenticated(requestInfo))
 				throw new AccessDeniedException();
-			else if (!await this.IsAuthorizedAsync(requestInfo, Components.Security.Action.View))
+			else if (!await this.IsAuthorizedAsync(requestInfo, Components.Security.Action.View).ConfigureAwait(false))
 				throw new AccessDeniedException();
 
 			// fetch
@@ -1271,10 +1270,10 @@ namespace net.vieapps.Services.Users
 
 			// build result
 			var profiles = new JArray();
-			await objects.ForEachAsync(async (profile, ct) =>
+			await objects.ForEachAsync(async (profile, token) =>
 			{
-				profiles.Add(await this.GetProfileJsonAsync(requestInfo, profile, !requestInfo.Session.User.IsSystemAdministrator, ct));
-			}, cancellationToken);
+				profiles.Add(await this.GetProfileJsonAsync(requestInfo, profile, !requestInfo.Session.User.IsSystemAdministrator, token).ConfigureAwait(false));
+			}, cancellationToken).ConfigureAwait(false);
 
 			// return
 			return new JObject()
@@ -1293,9 +1292,9 @@ namespace net.vieapps.Services.Users
 					throw new AccessDeniedException();
 
 				var profile = requestInfo.GetBodyJson().Copy<Profile>();
-				await Profile.CreateAsync(profile, cancellationToken);
+				await Profile.CreateAsync(profile, cancellationToken).ConfigureAwait(false);
 
-				return await this.GetProfileJsonAsync(requestInfo, profile, false, cancellationToken);
+				return await this.GetProfileJsonAsync(requestInfo, profile, false, cancellationToken).ConfigureAwait(false);
 			}
 
 			throw new InvalidRequestException();
@@ -1306,7 +1305,7 @@ namespace net.vieapps.Services.Users
 		async Task<JObject> GetProfileJsonAsync(RequestInfo requestInfo, Profile profile, bool doNormalize, CancellationToken cancellationToken)
 		{
 			// serialize JSON with some additional information
-			var account = await Account.GetAsync<Account>(profile.ID, cancellationToken);
+			var account = await Account.GetAsync<Account>(profile.ID, cancellationToken).ConfigureAwait(false);
 			var json = profile.ToJson(false, (obj) =>
 			{
 				obj.Add(new JProperty("LastAccess", account.LastAccess));
@@ -1317,12 +1316,9 @@ namespace net.vieapps.Services.Users
 			if (requestInfo.Query.ContainsKey("related-service"))
 				try
 				{
-					var data = await this.CallRelatedServiceAsync(requestInfo, "profile", "GET", profile.ID, cancellationToken);
+					var data = await this.CallRelatedServiceAsync(requestInfo, "profile", "GET", profile.ID, cancellationToken).ConfigureAwait(false);
 					foreach (var info in data)
-						if (json[info.Key] != null)
-							json[info.Key] = info.Value;
-						else
-							json.Add(info.Key, info.Value);
+						json[info.Key] = info.Value;
 				}
 				catch { }
 
@@ -1352,17 +1348,17 @@ namespace net.vieapps.Services.Users
 			var id = requestInfo.GetObjectIdentity() ?? requestInfo.Session.User.ID;
 			var gotRights = this.IsAuthenticated(requestInfo) && requestInfo.Session.User.ID.IsEquals(id);
 			if (!gotRights)
-				gotRights = await this.IsAuthorizedAsync(requestInfo, Components.Security.Action.View);
+				gotRights = await this.IsAuthorizedAsync(requestInfo, Components.Security.Action.View).ConfigureAwait(false);
 			if (!gotRights)
 				throw new AccessDeniedException();
 
 			// get information
-			var profile = await Profile.GetAsync<Profile>(id);
+			var profile = await Profile.GetAsync<Profile>(id).ConfigureAwait(false);
 			if (profile == null)
 				throw new InformationNotFoundException();
 
 			// response
-			return await this.GetProfileJsonAsync(requestInfo, profile, !requestInfo.Session.User.ID.Equals(profile.ID), cancellationToken);
+			return await this.GetProfileJsonAsync(requestInfo, profile, !requestInfo.Session.User.ID.Equals(profile.ID), cancellationToken).ConfigureAwait(false);
 		}
 		#endregion
 
@@ -1373,13 +1369,13 @@ namespace net.vieapps.Services.Users
 			var id = requestInfo.GetObjectIdentity() ?? requestInfo.Session.User.ID;
 			var gotRights = requestInfo.Session.User.IsSystemAdministrator || (this.IsAuthenticated(requestInfo) && requestInfo.Session.User.ID.IsEquals(id));
 			if (!gotRights)
-				gotRights = await this.IsAuthorizedAsync(requestInfo, Components.Security.Action.Update);
+				gotRights = await this.IsAuthorizedAsync(requestInfo, Components.Security.Action.Update).ConfigureAwait(false);
 			if (!gotRights)
 				throw new AccessDeniedException();
 
 			// get information
-			var profile = await Profile.GetAsync<Profile>(id, cancellationToken);
-			var account = await Account.GetAsync<Account>(id, cancellationToken);
+			var profile = await Profile.GetAsync<Profile>(id, cancellationToken).ConfigureAwait(false);
+			var account = await Account.GetAsync<Account>(id, cancellationToken).ConfigureAwait(false);
 			if (profile == null || account == null)
 				throw new InformationNotFoundException();
 
@@ -1395,13 +1391,13 @@ namespace net.vieapps.Services.Users
 				profile.Alias = "";
 
 			// update
-			await Profile.UpdateAsync(profile, cancellationToken);
+			await Profile.UpdateAsync(profile, cancellationToken).ConfigureAwait(false);
 
 			// update information of the related service
 			if (requestInfo.Query.ContainsKey("related-service"))
 				try
 				{
-					await this.CallRelatedServiceAsync(requestInfo, "profile", "PUT", profile.ID, cancellationToken);
+					await this.CallRelatedServiceAsync(requestInfo, "profile", "PUT", profile.ID, cancellationToken).ConfigureAwait(false);
 				}
 				catch { }
 
@@ -1411,8 +1407,8 @@ namespace net.vieapps.Services.Users
 				Type = "Users#Profile",
 				DeviceID = "*",
 				ExcludedDeviceID = requestInfo.Session.DeviceID,
-				Data = await this.GetProfileJsonAsync(requestInfo, profile, true, cancellationToken)
-			}, cancellationToken);
+				Data = await this.GetProfileJsonAsync(requestInfo, profile, true, cancellationToken).ConfigureAwait(false)
+			}, cancellationToken).ConfigureAwait(false);
 
 			// response
 			return await this.GetProfileJsonAsync(requestInfo, profile, false, cancellationToken);
@@ -1469,11 +1465,11 @@ namespace net.vieapps.Services.Users
 
 			// activate account
 			if (mode.IsEquals("account"))
-				return await this.ActivateAccountAsync(requestInfo, info, cancellationToken);
+				return await this.ActivateAccountAsync(requestInfo, info, cancellationToken).ConfigureAwait(false);
 
 			// activate password
 			else if (mode.IsEquals("password"))
-				return await this.ActivatePasswordAsync(requestInfo, info, cancellationToken);
+				return await this.ActivatePasswordAsync(requestInfo, info, cancellationToken).ConfigureAwait(false);
 
 			throw new InvalidRequestException();
 		}
@@ -1489,7 +1485,7 @@ namespace net.vieapps.Services.Users
 			if (mode.IsEquals("Status"))
 			{
 				// check
-				var account = await Account.GetAsync<Account>(id, cancellationToken);
+				var account = await Account.GetAsync<Account>(id, cancellationToken).ConfigureAwait(false);
 				if (account == null)
 					throw new InformationNotFoundException();
 
@@ -1498,7 +1494,7 @@ namespace net.vieapps.Services.Users
 				{
 					account.Status = AccountStatus.Activated;
 					account.LastAccess = DateTime.Now;
-					await Account.UpdateAsync(account, cancellationToken);
+					await Account.UpdateAsync(account, cancellationToken).ConfigureAwait(false);
 				}
 
 				// response
@@ -1522,7 +1518,7 @@ namespace net.vieapps.Services.Users
 					AccessIdentity = email,
 					AccessKey = Account.HashPassword(id, info.Get<string>("Password"))
 				};
-				await Account.CreateAsync(account, cancellationToken);
+				await Account.CreateAsync(account, cancellationToken).ConfigureAwait(false);
 
 				// prepare response
 				var json = account.GetAccountJson();
@@ -1534,13 +1530,13 @@ namespace net.vieapps.Services.Users
 					Name = name,
 					Email = email
 				};
-				await  Profile.CreateAsync(profile, cancellationToken);
+				await  Profile.CreateAsync(profile, cancellationToken).ConfigureAwait(false);
 
 				// update information of related service
 				if (requestInfo.Query.ContainsKey("related-service"))
 					try
 					{
-						await this.CallRelatedServiceAsync(requestInfo, json.FromJson<User>(), "profile", "POST", cancellationToken);
+						await this.CallRelatedServiceAsync(requestInfo, json.FromJson<User>(), "profile", "POST", cancellationToken).ConfigureAwait(false);
 					}
 					catch { }
 
@@ -1558,7 +1554,7 @@ namespace net.vieapps.Services.Users
 			var password = info.Get<string>("Password");
 
 			// load account
-			var account = await Account.GetAsync<Account>(id, cancellationToken);
+			var account = await Account.GetAsync<Account>(id, cancellationToken).ConfigureAwait(false);
 			if (account == null)
 				throw new InvalidActivateInformationException();
 
@@ -1566,7 +1562,7 @@ namespace net.vieapps.Services.Users
 			account.AccessKey = Account.HashPassword(account.ID, password);
 			account.LastAccess = DateTime.Now;
 			account.Sessions = null;
-			await Account.UpdateAsync(account);
+			await Account.UpdateAsync(account).ConfigureAwait(false);
 
 			// response
 			return account.GetAccountJson();
@@ -1588,11 +1584,11 @@ namespace net.vieapps.Services.Users
 			// update last access
 			if (!requestInfo.Session.User.IsSystemAccount && !requestInfo.Session.User.ID.Equals(""))
 			{
-				var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID, cancellationToken);
+				var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID, cancellationToken).ConfigureAwait(false);
 				if (account != null)
 				{
 					account.LastAccess = DateTime.Now;
-					await Account.UpdateAsync(account, cancellationToken);
+					await Account.UpdateAsync(account, cancellationToken).ConfigureAwait(false);
 				}
 			}
 
@@ -1614,7 +1610,7 @@ namespace net.vieapps.Services.Users
 				DeviceID = "*",
 				ExcludedDeviceID = requestInfo.Session.DeviceID,
 				Data = info
-			});
+			}, cancellationToken).ConfigureAwait(false);
 
 			return info;
 		}
