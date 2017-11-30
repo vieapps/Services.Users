@@ -177,9 +177,9 @@ namespace net.vieapps.Services.Users
 		/// <param name="identity"></param>
 		/// <param name="cancellationToken"></param>
 		/// <returns></returns>
-		public static async Task<Account> GetByIdentityAsync(string identity, AccountType type = AccountType.BuiltIn, CancellationToken cancellationToken = default(CancellationToken))
+		public static Task<Account> GetByIdentityAsync(string identity, AccountType type = AccountType.BuiltIn, CancellationToken cancellationToken = default(CancellationToken))
 		{
-			return await Account.GetAsync<Account>(Filters<Account>.And(
+			return Account.GetAsync<Account>(Filters<Account>.And(
 					Filters<Account>.Equals("AccessIdentity", identity),
 					Filters<Account>.Equals("Type", type.ToString())
 				), null, null, cancellationToken);

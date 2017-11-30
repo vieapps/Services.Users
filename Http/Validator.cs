@@ -24,7 +24,7 @@ namespace net.vieapps.Services.Users
 				try
 				{
 					remoteIsAuthenticated = context.Request.QueryString["aut"] != null 
-						? context.Request.QueryString["aut"].ToBase64(false, true).Decrypt(Global.AESKey).IsEndsWith("-ON")
+						? context.Request.QueryString["aut"].ToBase64(false, true).Decrypt(Base.AspNet.Global.AESKey).IsEndsWith("-ON")
 						: false;
 				}
 				catch { }
@@ -33,7 +33,7 @@ namespace net.vieapps.Services.Users
 				try
 				{
 					remoteUserID = context.Request.QueryString["uid"] != null
-						? context.Request.QueryString["uid"].ToBase64(false, true).Decrypt(Global.AESKey)
+						? context.Request.QueryString["uid"].ToBase64(false, true).Decrypt(Base.AspNet.Global.AESKey)
 						: "";
 				}
 				catch { }
@@ -44,7 +44,7 @@ namespace net.vieapps.Services.Users
 				try
 				{
 					remoteUri = context.Request.QueryString["uri"] != null
-						? context.Request.QueryString["uri"].ToBase64(false, true).Decrypt(Global.AESKey)
+						? context.Request.QueryString["uri"].ToBase64(false, true).Decrypt(Base.AspNet.Global.AESKey)
 						: context.Request.UrlReferrer != null
 							? context.Request.UrlReferrer.AbsoluteUri
 							: "";
@@ -56,7 +56,7 @@ namespace net.vieapps.Services.Users
 
 				remoteUri += (remoteUri.IndexOf("?") > 0 ? "&" : "?") + "x-passport-token=";
 				if ((!remoteIsAuthenticated && context.Request.IsAuthenticated) || (remoteIsAuthenticated && !context.Request.IsAuthenticated))
-					User.GetPassportToken((context.User as User).ID, context.Request.IsAuthenticated ? Global.GetAuthenticateTicket(context) : "", Global.GetSessionID(context), Global.GetDeviceID(context), Global.AESKey, Global.GenerateJWTKey());
+					User.GetPassportToken((context.User as User).ID, context.Request.IsAuthenticated ? Global.GetAuthenticateTicket(context) : "", Global.GetSessionID(context), Global.GetDeviceID(context), Base.AspNet.Global.AESKey, Base.AspNet.Global.GenerateJWTKey());
 
 				// register session if already authenticated
 				if (context.Request.IsAuthenticated)
@@ -75,7 +75,7 @@ namespace net.vieapps.Services.Users
 					if (context.Request.QueryString["fnc"] != null)
 						try
 						{
-							func = context.Request.QueryString["fnc"].ToBase64(false, true).Decrypt(Global.AESKey);
+							func = context.Request.QueryString["fnc"].ToBase64(false, true).Decrypt(Base.AspNet.Global.AESKey);
 						}
 						catch { }
 					context.Response.ContentType = "application/javascript";

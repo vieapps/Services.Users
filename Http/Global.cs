@@ -1,17 +1,13 @@
 ﻿#region Related components
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.Collections.Specialized;
-using System.Security.Cryptography;
-using System.Threading;
 using System.Threading.Tasks;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Net;
 using System.Text;
-using System.Xml;
 using System.Linq;
 using System.Web;
 using System.Web.Security;
@@ -19,497 +15,22 @@ using System.Web.Security;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
-using WampSharp.Core.Listener;
-using WampSharp.V2;
-using WampSharp.V2.Realm;
-using WampSharp.V2.Core.Contracts;
-
 using net.vieapps.Components.Utility;
 using net.vieapps.Components.Security;
+
+using net.vieapps.Services.Base.AspNet;
 #endregion
 
 namespace net.vieapps.Services.Users
 {
-	internal static class Global
+	public static partial class Global
 	{
 
 		#region Attributes
-		internal static CancellationTokenSource CancellationTokenSource = new CancellationTokenSource();
 		internal static HashSet<string> HiddenSegments = null, BypassSegments = null, StaticSegments = null;
 
-		internal static IWampChannel IncommingChannel = null, OutgoingChannel = null;
-		internal static long IncommingChannelSessionID = 0, OutgoingChannelSessionID = 0;
-		internal static bool ChannelsAreClosedBySystem = false;
-
 		internal static Dictionary<string, IService> Services = new Dictionary<string, IService>();
-		internal static IManagementService ManagementService = null;
 		internal static IDisposable InterCommunicationMessageUpdater = null;
-		internal static IRTUService RTUService = null;
-
-		static Queue<Tuple<string, List<string>, string, string>> Logs = new Queue<Tuple<string, List<string>, string, string>>();
-
-		static string _AESKey = null, _JWTKey = null, _PublicJWTKey = null, _RSAKey = null, _RSAExponent = null, _RSAModulus = null;
-		static RSACryptoServiceProvider _RSA = null;
-		#endregion
-
-		#region Get the app info
-		internal static Tuple<string, string, string> GetAppInfo(NameValueCollection header, NameValueCollection query, string agentString, string ipAddress, Uri urlReferrer = null)
-		{
-			var name = UtilityService.GetAppParameter("x-app-name", header, query, "Generic App");
-
-			var platform = UtilityService.GetAppParameter("x-app-platform", header, query);
-			if (string.IsNullOrWhiteSpace(platform))
-				platform = string.IsNullOrWhiteSpace(agentString)
-					? "N/A"
-					: agentString.IsContains("iPhone") || agentString.IsContains("iPad") || agentString.IsContains("iPod")
-						? "iOS PWA"
-						: agentString.IsContains("Android")
-							? "Android PWA"
-							: agentString.IsContains("Windows Phone")
-								? "Windows Phone PWA"
-								: agentString.IsContains("BlackBerry") || agentString.IsContains("BB10")
-									? "BlackBerry PWA"
-									: agentString.IsContains("IEMobile") || agentString.IsContains("Opera Mini")
-										? "Mobile PWA"
-										: "Desktop PWA";
-
-			var origin = header?["origin"];
-			if (string.IsNullOrWhiteSpace(origin))
-				origin = urlReferrer?.AbsoluteUri;
-			if (string.IsNullOrWhiteSpace(origin) || origin.IsStartsWith("file://") || origin.IsStartsWith("http://localhost"))
-				origin = ipAddress;
-
-			return new Tuple<string, string, string>(name, platform, origin);
-		}
-
-		internal static Tuple<string, string, string> GetAppInfo(this HttpContext context)
-		{
-			return Global.GetAppInfo(context.Request.Headers, context.Request.QueryString, context.Request.UserAgent, context.Request.UserHostAddress, context.Request.UrlReferrer);
-		}
-		#endregion
-
-		#region Encryption keys
-		/// <summary>
-		/// Geths the key for working with AES
-		/// </summary>
-		internal static string AESKey
-		{
-			get
-			{
-				if (Global._AESKey == null)
-					Global._AESKey = UtilityService.GetAppSetting("AESKey", "VIEApps-c98c6942-Default-0ad9-AES-40ed-Encryption-9e53-Key-65c501fcf7b3");
-				return Global._AESKey;
-			}
-		}
-
-		internal static byte[] GenerateEncryptionKey(string additional = null)
-		{
-			return (Global.AESKey + (string.IsNullOrWhiteSpace(additional) ? "" : ":" + additional)).GenerateEncryptionKey(false, false, 256);
-		}
-
-		internal static byte[] GenerateEncryptionIV(string additional = null)
-		{
-			return (Global.AESKey + (string.IsNullOrWhiteSpace(additional) ? "" : ":" + additional)).GenerateEncryptionKey(true, true, 128);
-		}
-
-		/// <summary>
-		/// Geths the key for working with JSON Web Token
-		/// </summary>
-		internal static string JWTKey
-		{
-			get
-			{
-				if (Global._JWTKey == null)
-					Global._JWTKey = UtilityService.GetAppSetting("JWTKey", "VIEApps-49d8bd8c-Default-babc-JWT-43f4-Sign-bc30-Key-355b0891dc0f");
-				return Global._JWTKey;
-			}
-		}
-
-		internal static string GenerateJWTKey()
-		{
-			if (Global._PublicJWTKey == null)
-				Global._PublicJWTKey = Global.JWTKey.GetHMACSHA512(Global.AESKey).ToBase64Url(false, true);
-			return Global._PublicJWTKey;
-		}
-
-		/// <summary>
-		/// Geths the key for working with RSA
-		/// </summary>
-		internal static string RSAKey
-		{
-			get
-			{
-				if (Global._RSAKey == null)
-					Global._RSAKey = UtilityService.GetAppSetting("RSAKey", "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");
-				return Global._RSAKey;
-			}
-		}
-
-		internal static RSACryptoServiceProvider RSA
-		{
-			get
-			{
-				if (Global._RSA == null)
-					try
-					{
-						Global._RSA = CryptoService.CreateRSAInstance(Global.RSAKey.Decrypt());
-					}
-					catch (Exception)
-					{
-						throw;
-					}
-				return Global._RSA;
-			}
-		}
-
-		internal static string RSAExponent
-		{
-			get
-			{
-				if (Global._RSAExponent == null)
-				{
-					var xmlDoc = new XmlDocument();
-					xmlDoc.LoadXml(Global.RSA.ToXmlString(false));
-					Global._RSAExponent = xmlDoc.DocumentElement.ChildNodes[1].InnerText.ToHexa(true);
-				}
-				return Global._RSAExponent;
-			}
-		}
-
-		internal static string RSAModulus
-		{
-			get
-			{
-				if (Global._RSAModulus == null)
-				{
-					var xmlDoc = new XmlDocument();
-					xmlDoc.LoadXml(Global.RSA.ToXmlString(false));
-					Global._RSAModulus = xmlDoc.DocumentElement.ChildNodes[0].InnerText.ToHexa(true);
-				}
-				return Global._RSAModulus;
-			}
-		}
-		#endregion
-
-		#region WAMP channels
-		static Tuple<string, string, bool> GetLocationInfo()
-		{
-			var address = UtilityService.GetAppSetting("RouterAddress", "ws://127.0.0.1:26429/");
-			var realm = UtilityService.GetAppSetting("RouterRealm", "VIEAppsRealm");
-			var mode = UtilityService.GetAppSetting("RouterChannelsMode", "MsgPack");
-			return new Tuple<string, string, bool>(address, realm, mode.IsEquals("json"));
-		}
-
-		internal static async Task OpenIncomingChannelAsync(Action<object, WampSessionCreatedEventArgs> onConnectionEstablished = null, Action<object, WampSessionCloseEventArgs> onConnectionBroken = null, Action<object, WampConnectionErrorEventArgs> onConnectionError = null)
-		{
-			if (Global.IncommingChannel != null)
-				return;
-
-			var info = Global.GetLocationInfo();
-			var address = info.Item1;
-			var realm = info.Item2;
-			var useJsonChannel = info.Item3;
-
-			Global.IncommingChannel = useJsonChannel
-				? (new DefaultWampChannelFactory()).CreateJsonChannel(address, realm)
-				: (new DefaultWampChannelFactory()).CreateMsgpackChannel(address, realm);
-
-			Global.IncommingChannel.RealmProxy.Monitor.ConnectionEstablished += (sender, arguments) =>
-			{
-				Global.IncommingChannelSessionID = arguments.SessionId;
-				Global.IncommingChannel.RealmProxy.Services
-					.GetSubject<CommunicateMessage>("net.vieapps.rtu.communicate.messages.users")
-					.Subscribe(
-						message => Global.ProcessInterCommunicateMessage(message),
-						exception => Global.WriteLogs(UtilityService.BlankUID, "Error occurred while fetching inter-communicate message", exception)
-					);
-			};
-
-			if (onConnectionEstablished != null)
-				Global.IncommingChannel.RealmProxy.Monitor.ConnectionEstablished += new EventHandler<WampSessionCreatedEventArgs>(onConnectionEstablished);
-
-			if (onConnectionBroken != null)
-				Global.IncommingChannel.RealmProxy.Monitor.ConnectionBroken += new EventHandler<WampSessionCloseEventArgs>(onConnectionBroken);
-
-			if (onConnectionError != null)
-				Global.IncommingChannel.RealmProxy.Monitor.ConnectionError += new EventHandler<WampConnectionErrorEventArgs>(onConnectionError);
-
-			await Global.IncommingChannel.Open();
-		}
-
-		internal static void CloseIncomingChannel()
-		{
-			if (Global.IncommingChannel != null)
-			{
-				Global.IncommingChannel.Close("The incoming channel is closed when stop the User HTTP Service", new GoodbyeDetails());
-				Global.IncommingChannel = null;
-			}
-		}
-
-		internal static void ReOpenIncomingChannel(int delay = 123, System.Action onSuccess = null, Action<Exception> onError = null)
-		{
-			if (Global.IncommingChannel != null)
-				(new WampChannelReconnector(Global.IncommingChannel, async () =>
-				{
-					await Task.Delay(delay > 0 ? delay : 0);
-					try
-					{
-						await Global.IncommingChannel.Open();
-						onSuccess?.Invoke();
-					}
-					catch (Exception ex)
-					{
-						onError?.Invoke(ex);
-					}
-				})).Start();
-		}
-
-		internal static async Task OpenOutgoingChannelAsync(Action<object, WampSessionCreatedEventArgs> onConnectionEstablished = null, Action<object, WampSessionCloseEventArgs> onConnectionBroken = null, Action<object, WampConnectionErrorEventArgs> onConnectionError = null)
-		{
-			if (Global.OutgoingChannel != null)
-				return;
-
-			var info = Global.GetLocationInfo();
-			var address = info.Item1;
-			var realm = info.Item2;
-			var useJsonChannel = info.Item3;
-
-			Global.OutgoingChannel = useJsonChannel
-				? (new DefaultWampChannelFactory()).CreateJsonChannel(address, realm)
-				: (new DefaultWampChannelFactory()).CreateMsgpackChannel(address, realm);
-
-			Global.OutgoingChannel.RealmProxy.Monitor.ConnectionEstablished += (sender, arguments) =>
-			{
-				Global.OutgoingChannelSessionID = arguments.SessionId;
-				Task.Run(async () =>
-				{
-					try
-					{
-						await Global.InitializeManagementServiceAsync();
-						await Global.InitializeRTUServiceAsync();
-					}
-					catch { }
-				}).ConfigureAwait(false);
-			};
-
-			if (onConnectionEstablished != null)
-				Global.OutgoingChannel.RealmProxy.Monitor.ConnectionEstablished += new EventHandler<WampSessionCreatedEventArgs>(onConnectionEstablished);
-
-			if (onConnectionBroken != null)
-				Global.OutgoingChannel.RealmProxy.Monitor.ConnectionBroken += new EventHandler<WampSessionCloseEventArgs>(onConnectionBroken);
-
-			if (onConnectionError != null)
-				Global.OutgoingChannel.RealmProxy.Monitor.ConnectionError += new EventHandler<WampConnectionErrorEventArgs>(onConnectionError);
-
-			await Global.OutgoingChannel.Open();
-		}
-
-		internal static void CloseOutgoingChannel()
-		{
-			if (Global.OutgoingChannel != null)
-			{
-				Global.OutgoingChannel.Close("The outgoing channel is closed when stop the User HTTP Service", new GoodbyeDetails());
-				Global.OutgoingChannel = null;
-			}
-		}
-
-		internal static void ReOpenOutgoingChannel(int delay = 123, System.Action onSuccess = null, Action<Exception> onError = null)
-		{
-			if (Global.OutgoingChannel != null)
-				(new WampChannelReconnector(Global.OutgoingChannel, async () =>
-				{
-					await Task.Delay(delay > 0 ? delay : 0);
-					try
-					{
-						await Global.OutgoingChannel.Open();
-						onSuccess?.Invoke();
-					}
-					catch (Exception ex)
-					{
-						onError?.Invoke(ex);
-					}
-				})).Start();
-		}
-
-		internal static async Task OpenChannelsAsync()
-		{
-			await Global.OpenIncomingChannelAsync(
-				(sender, arguments) => {
-					Global.WriteLogs("The incoming connection is established - Session ID: " + arguments.SessionId);
-				},
-				(sender, arguments) => {
-					if (arguments.CloseType.Equals(SessionCloseType.Disconnection))
-						Global.WriteLogs("The incoming connection is broken because the router is not found or the router is refused - Session ID: " + arguments.SessionId + "\r\n" + "- Reason: " + (string.IsNullOrWhiteSpace(arguments.Reason) ? "Unknown" : arguments.Reason) + " - " + arguments.CloseType.ToString());
-					else
-					{
-						if (Global.ChannelsAreClosedBySystem)
-							Global.WriteLogs("The incoming connection is closed - Session ID: " + arguments.SessionId + "\r\n" + "- Reason: " + (string.IsNullOrWhiteSpace(arguments.Reason) ? "Unknown" : arguments.Reason) + " - " + arguments.CloseType.ToString());
-						else
-							Global.ReOpenIncomingChannel(
-								123,
-								() => {
-									Global.WriteLogs("Re-connect the incoming connection successful");
-								},
-								(ex) => {
-									Global.WriteLogs("Error occurred while re-connecting the incoming connection", ex);
-								}
-							);
-					}
-				},
-				(sender, arguments) => {
-					Global.WriteLogs("Got an error of incoming connection: " + (arguments.Exception != null ? arguments.Exception.Message : "None"), arguments.Exception);
-				}
-			);
-
-			await Global.OpenOutgoingChannelAsync(
-				(sender, arguments) => {
-					Global.Logs.Enqueue(new Tuple<string, List<string>, string, string>(UtilityService.NewUID, new List<string>() { "The outgoing connection is established - Session ID: " + arguments.SessionId }, null, null));
-				},
-				(sender, arguments) => {
-					if (arguments.CloseType.Equals(SessionCloseType.Disconnection))
-						Global.WriteLogs("The outgoing connection is broken because the router is not found or the router is refused - Session ID: " + arguments.SessionId + "\r\n" + "- Reason: " + (string.IsNullOrWhiteSpace(arguments.Reason) ? "Unknown" : arguments.Reason) + " - " + arguments.CloseType.ToString());
-					else
-					{
-						if (Global.ChannelsAreClosedBySystem)
-							Global.WriteLogs("The outgoing connection is closed - Session ID: " + arguments.SessionId + "\r\n" + "- Reason: " + (string.IsNullOrWhiteSpace(arguments.Reason) ? "Unknown" : arguments.Reason) + " - " + arguments.CloseType.ToString());
-						else
-							Global.ReOpenOutgoingChannel(
-								123,
-								() => {
-									Global.WriteLogs("Re-connect the outgoing connection successful");
-								},
-								(ex) => {
-									Global.WriteLogs("Error occurred while re-connecting the outgoing connection", ex);
-								}
-							);
-					}
-				},
-				(sender, arguments) => {
-					Global.WriteLogs("Got an error of outgoing connection: " + (arguments.Exception != null ? arguments.Exception.Message : "None"), arguments.Exception);
-				}
-			);
-		}
-		#endregion
-
-		#region Working with logs
-		internal static string GetCorrelationID(IDictionary items)
-		{
-			if (items == null)
-				return UtilityService.GetUUID();
-
-			var id = items.Contains("Correlation-ID")
-				? items["Correlation-ID"] as string
-				: null;
-
-			if (string.IsNullOrWhiteSpace(id))
-			{
-				id = UtilityService.GetUUID();
-				items.Add("Correlation-ID", id);
-			}
-
-			return id;
-		}
-
-		internal static string GetCorrelationID()
-		{
-			return Global.GetCorrelationID(HttpContext.Current?.Items);
-		}
-
-		internal static async Task InitializeManagementServiceAsync()
-		{
-			if (Global.ManagementService == null)
-			{
-				await Global.OpenOutgoingChannelAsync();
-				Global.ManagementService = Global.OutgoingChannel.RealmProxy.Services.GetCalleeProxy<IManagementService>();
-			}
-		}
-
-		internal static async Task WriteLogsAsync(string correlationID, List<string> logs, Exception exception = null)
-		{
-			// prepare
-			var simpleStack = exception != null
-				? exception.StackTrace
-				: "";
-
-			var fullStack = "";
-			if (exception != null)
-			{
-				fullStack = exception.StackTrace;
-				var inner = exception.InnerException;
-				var counter = 0;
-				while (inner != null)
-				{
-					counter++;
-					fullStack += "\r\n" + "-> Inner (" + counter.ToString() + "): ---->>>>" + "\r\n" + inner.StackTrace;
-					inner = inner.InnerException;
-				}
-				fullStack += "\r\n" + "-------------------------------------" + "\r\n";
-			}
-
-			// write logs
-			try
-			{
-				await Global.InitializeManagementServiceAsync();
-				while (Global.Logs.Count > 0)
-				{
-					var log = Global.Logs.Dequeue();
-					await Global.ManagementService.WriteLogsAsync(log.Item1, "users", "http", log.Item2, log.Item3, log.Item4, Global.CancellationTokenSource.Token);
-				}
-				await Global.ManagementService.WriteLogsAsync(correlationID, "users", "http", logs, simpleStack, fullStack, Global.CancellationTokenSource.Token);
-			}
-			catch
-			{
-				Global.Logs.Enqueue(new Tuple<string, List<string>, string, string>(correlationID, logs, simpleStack, fullStack));
-			}
-		}
-
-		internal static Task WriteLogsAsync(string correlationID, string log, Exception exception = null)
-		{
-			var logs = !string.IsNullOrEmpty(log)
-				? new List<string>() { log }
-				: exception != null
-					? new List<string>() { exception.Message + " [" + exception.GetType().ToString() + "]" }
-					: new List<string>();
-			return Global.WriteLogsAsync(correlationID, logs, exception);
-		}
-
-		internal static Task WriteLogsAsync(List<string> logs, Exception exception = null)
-		{
-			return Global.WriteLogsAsync(Global.GetCorrelationID(), logs, exception);
-		}
-
-		internal static Task WriteLogsAsync(string log, Exception exception = null)
-		{
-			return Global.WriteLogsAsync(Global.GetCorrelationID(), log, exception);
-		}
-
-		internal static void WriteLogs(string correlationID, List<string> logs, Exception exception = null)
-		{
-			Task.Run(async () =>
-			{
-				await Global.WriteLogsAsync(correlationID, logs, exception);
-			}).ConfigureAwait(false);
-		}
-
-		internal static void WriteLogs(string correlationID, string log, Exception exception = null)
-		{
-			var logs = !string.IsNullOrEmpty(log)
-				? new List<string>() { log }
-				: exception != null
-					? new List<string>() { exception.Message + " [" + exception.GetType().ToString() + "]" }
-					: new List<string>();
-			Global.WriteLogs(correlationID, logs, exception);
-		}
-
-		internal static void WriteLogs(List<string> logs, Exception exception = null)
-		{
-			Global.WriteLogs(Global.GetCorrelationID(), logs, exception);
-		}
-
-		internal static void WriteLogs(string log, Exception exception = null)
-		{
-			Global.WriteLogs(Global.GetCorrelationID(), log, exception);
-		}
 		#endregion
 
 		#region Start/End the app
@@ -526,10 +47,31 @@ namespace net.vieapps.Services.Users
 				DateTimeZoneHandling = DateTimeZoneHandling.Local
 			};
 
+			// default service name
+			Base.AspNet.Global.ServiceName = "Users";
+
 			// open WAMP channels
 			Task.Run(async () =>
 			{
-				await Global.OpenChannelsAsync();
+				await Base.AspNet.Global.OpenChannelsAsync(
+					(sender, args) =>
+					{
+						Base.AspNet.Global.IncommingChannel.RealmProxy.Services
+							.GetSubject<CommunicateMessage>("net.vieapps.rtu.communicate.messages.users")
+							.Subscribe(
+								message => Global.ProcessInterCommunicateMessage(message),
+								exception => Base.AspNet.Global.WriteLogs("Error occurred while fetching inter-communicate message", exception)
+							);
+					},
+					(sender, args) =>
+					{
+						Task.Run(async () =>
+						{
+							await Base.AspNet.Global.InitializeLoggingServiceAsync().ConfigureAwait(false);
+							await Base.AspNet.Global.InitializeRTUServiceAsync().ConfigureAwait(false);
+						}).ConfigureAwait(false);
+					}
+				).ConfigureAwait(false);
 			}).ConfigureAwait(false);
 
 			// special segments
@@ -540,22 +82,19 @@ namespace net.vieapps.Services.Users
 			// handling unhandled exception
 			AppDomain.CurrentDomain.UnhandledException += (sender, arguments) =>
 			{
-				Global.WriteLogs("An unhandled exception is thrown", arguments.ExceptionObject as Exception);
+				Base.AspNet.Global.WriteLogs("An unhandled exception is thrown", arguments.ExceptionObject as Exception);
 			};
 
 			stopwatch.Stop();
-			Global.WriteLogs("*** The User HTTP Service is ready for serving. The app is initialized in " + stopwatch.GetElapsedTimes());
+			Base.AspNet.Global.WriteLogs("*** The User HTTP Service is ready for serving. The app is initialized in " + stopwatch.GetElapsedTimes());
 		}
 
 		internal static void OnAppEnd()
 		{
-			Global.CancellationTokenSource.Cancel();
-			Global.CancellationTokenSource.Dispose();
 			Global.InterCommunicationMessageUpdater?.Dispose();
-
-			Global.ChannelsAreClosedBySystem = true;
-			Global.CloseIncomingChannel();
-			Global.CloseOutgoingChannel();
+			Base.AspNet.Global.CancellationTokenSource.Cancel();
+			Base.AspNet.Global.CancellationTokenSource.Dispose();
+			Base.AspNet.Global.CloseChannels();
 		}
 		#endregion
 
@@ -565,7 +104,7 @@ namespace net.vieapps.Services.Users
 			// update default headers to allow access from everywhere
 			app.Context.Response.HeaderEncoding = Encoding.UTF8;
 			app.Context.Response.Headers.Add("access-control-allow-origin", "*");
-			app.Context.Response.Headers.Add("x-correlation-id", Global.GetCorrelationID(app.Context.Items));
+			app.Context.Response.Headers.Add("x-correlation-id", Base.AspNet.Global.GetCorrelationID(app.Context.Items));
 
 			// update special headers on OPTIONS request
 			if (app.Context.Request.HttpMethod.Equals("OPTIONS"))
@@ -622,7 +161,7 @@ namespace net.vieapps.Services.Users
 
 #if DEBUG || REQUESTLOGS
 			var appInfo = app.Context.GetAppInfo();
-			Global.WriteLogs(new List<string>() {
+			Base.AspNet.Global.WriteLogs(new List<string>() {
 					"Begin process [" + app.Context.Request.HttpMethod + "]: " + app.Context.Request.Url.Scheme + "://" + app.Context.Request.Url.Host + app.Context.Request.RawUrl,
 					"- Origin: " + appInfo.Item1 + " / " + appInfo.Item2 + " - " + appInfo.Item3,
 					"- IP: " + app.Context.Request.UserHostAddress,
@@ -650,7 +189,7 @@ namespace net.vieapps.Services.Users
 			{
 				(app.Context.Items["StopWatch"] as Stopwatch).Stop();
 				var executionTimes = (app.Context.Items["StopWatch"] as Stopwatch).GetElapsedTimes();
-				Global.WriteLogs("End process - Execution times: " + executionTimes);
+				Base.AspNet.Global.WriteLogs("End process - Execution times: " + executionTimes);
 				try
 				{
 					app.Response.Headers.Add("x-execution-times", executionTimes);
@@ -669,13 +208,13 @@ namespace net.vieapps.Services.Users
 				var authTicket = Global.GetAuthenticateTicket(app.Context);
 				if (!string.IsNullOrWhiteSpace(authTicket))
 				{
-					var ticket = AspNetSecurityService.ParseAuthenticateToken(authTicket, Global.RSA, Global.AESKey);
+					var ticket = AspNetSecurityService.ParseAuthenticateToken(authTicket, Base.AspNet.Global.RSA, Base.AspNet.Global.AESKey);
 					var userID = ticket.Item1;
 					var accessToken = ticket.Item2;
 					var sessionID = ticket.Item3;
 					var deviceID = ticket.Item4;
 
-					app.Context.User = new UserPrincipal(User.ParseAccessToken(accessToken, Global.RSA, Global.AESKey));
+					app.Context.User = new UserPrincipal(User.ParseAccessToken(accessToken, Base.AspNet.Global.RSA, Base.AspNet.Global.AESKey));
 					app.Context.Items["Session-ID"] = sessionID;
 					app.Context.Items["Device-ID"] = deviceID;
 				}
@@ -694,7 +233,7 @@ namespace net.vieapps.Services.Users
 			context.Items["Session-ID"] = sessionID;
 			var cookie = new HttpCookie(".VIEApps-Authenticated-Session-ID")
 			{
-				Value = "VIEApps|" + sessionID.Encrypt(Global.AESKey),
+				Value = "VIEApps|" + sessionID.Encrypt(Base.AspNet.Global.AESKey),
 				HttpOnly = true,
 				Expires = DateTime.Now.AddDays(180)
 			};
@@ -710,7 +249,7 @@ namespace net.vieapps.Services.Users
 				if (cookie != null && cookie.Value.StartsWith("VIEApps|"))
 					try
 					{
-						context.Items["Session-ID"] = cookie.Value.ToArray('|').Last().Decrypt(Global.AESKey);
+						context.Items["Session-ID"] = cookie.Value.ToArray('|').Last().Decrypt(Base.AspNet.Global.AESKey);
 					}
 					catch { }
 			}
@@ -723,7 +262,7 @@ namespace net.vieapps.Services.Users
 			context.Items["Device-ID"] = sessionID;
 			var cookie = new HttpCookie(".VIEApps-Authenticated-Device-ID")
 			{
-				Value = "VIEApps|" + sessionID.Encrypt(Global.AESKey),
+				Value = "VIEApps|" + sessionID.Encrypt(Base.AspNet.Global.AESKey),
 				HttpOnly = true,
 				Expires = DateTime.Now.AddDays(180)
 			};
@@ -739,7 +278,7 @@ namespace net.vieapps.Services.Users
 				if (cookie != null && cookie.Value.StartsWith("VIEApps|"))
 					try
 					{
-						context.Items["Device-ID"] = cookie.Value.ToArray('|').Last().Decrypt(Global.AESKey);
+						context.Items["Device-ID"] = cookie.Value.ToArray('|').Last().Decrypt(Base.AspNet.Global.AESKey);
 					}
 					catch { }
 			}
@@ -811,7 +350,7 @@ namespace net.vieapps.Services.Users
 
 		internal static void ShowError(this HttpContext context, int code, string message, string type, string stack)
 		{
-			context.ShowHttpError(code, message, type, Global.GetCorrelationID(context.Items), stack, Global.IsShowErrorStacks);
+			context.ShowHttpError(code, message, type, Base.AspNet.Global.GetCorrelationID(context.Items), stack, Global.IsShowErrorStacks);
 		}
 
 		internal static void ShowError(this HttpContext context, Exception exception)
@@ -824,7 +363,7 @@ namespace net.vieapps.Services.Users
 			var exception = app.Server.GetLastError();
 			app.Server.ClearError();
 
-			Global.WriteLogs("", exception);
+			Base.AspNet.Global.WriteLogs("", exception);
 			app.Context.ShowError(exception);
 		}
 		#endregion
@@ -836,17 +375,17 @@ namespace net.vieapps.Services.Users
 			var name = requestInfo.ServiceName.Trim().ToLower();
 
 #if DEBUG
-			Global.WriteLogs(requestInfo.CorrelationID, "Call the service [net.vieapps.services." + name + "]" + "\r\n" + requestInfo.ToJson().ToString(Newtonsoft.Json.Formatting.Indented));
+			Base.AspNet.Global.WriteLogs(requestInfo.CorrelationID, "HTTP", "Call the service [net.vieapps.services." + name + "]" + "\r\n" + requestInfo.ToJson().ToString(Newtonsoft.Json.Formatting.Indented));
 #endif
 
 			if (!Global.Services.TryGetValue(name, out IService service))
 			{
-				await Global.OpenOutgoingChannelAsync();
+				await Base.AspNet.Global.OpenOutgoingChannelAsync();
 				lock (Global.Services)
 				{
 					if (!Global.Services.TryGetValue(name, out service))
 					{
-						service = Global.OutgoingChannel.RealmProxy.Services.GetCalleeProxy<IService>(new CachedCalleeProxyInterceptor(new ProxyInterceptor(name)));
+						service = Base.AspNet.Global.OutgoingChannel.RealmProxy.Services.GetCalleeProxy<IService>(ProxyInterceptor.Create(name));
 						Global.Services.Add(name, service);
 					}
 				}
@@ -855,7 +394,7 @@ namespace net.vieapps.Services.Users
 			JObject json = null;
 			try
 			{
-				json = await service.ProcessRequestAsync(requestInfo, Global.CancellationTokenSource.Token);
+				json = await service.ProcessRequestAsync(requestInfo, Base.AspNet.Global.CancellationTokenSource.Token);
 			}
 			catch (Exception)
 			{
@@ -863,7 +402,7 @@ namespace net.vieapps.Services.Users
 			}
 
 #if DEBUG
-			Global.WriteLogs(requestInfo.CorrelationID, "Result of the service [net.vieapps.services." + name + "]" + "\r\n" + json.ToString(Newtonsoft.Json.Formatting.Indented));
+			Base.AspNet.Global.WriteLogs(requestInfo.CorrelationID, "HTTP", "Result of the service [net.vieapps.services." + name + "]" + "\r\n" + json.ToString(Formatting.Indented));
 #endif
 
 			return json;
@@ -871,20 +410,20 @@ namespace net.vieapps.Services.Users
 
 		internal static Task<JObject> CallServiceAsync(Services.Session session, string serviceName, string objectName, string verb = "GET", Dictionary<string, string> query = null, Dictionary<string, string> header = null, string body = null, Dictionary<string, string> extra = null, string correlationID = null)
 		{
-			return Global.CallServiceAsync(new RequestInfo(session ?? Global.GetSession(), serviceName, objectName, verb, query, header, body, extra, correlationID ?? Global.GetCorrelationID()));
+			return Global.CallServiceAsync(new RequestInfo(session ?? Global.GetSession(), serviceName, objectName, verb, query, header, body, extra, correlationID ?? Base.AspNet.Global.GetCorrelationID()));
 		}
 
 		internal static Task<JObject> CallServiceAsync(HttpContext context, string serviceName, string objectName, string verb = "GET", Dictionary<string, string> query = null, Dictionary<string, string> header = null, string body = null, Dictionary<string, string> extra = null)
 		{
 			context = context ?? HttpContext.Current;
-			return Global.CallServiceAsync(Global.GetSession(context), serviceName, objectName, verb, query, header, body, extra, Global.GetCorrelationID(context.Items));
+			return Global.CallServiceAsync(Global.GetSession(context), serviceName, objectName, verb, query, header, body, extra, Base.AspNet.Global.GetCorrelationID(context.Items));
 		}
 		#endregion
 
 		#region Session & Authentication
 		internal static Services.Session GetSession(NameValueCollection header, NameValueCollection query, string agentString, string ipAddress, Uri urlReferrer = null)
 		{
-			var appInfo = Global.GetAppInfo(header, query, agentString, ipAddress, urlReferrer);
+			var appInfo = Base.AspNet.Global.GetAppInfo(header, query, agentString, ipAddress, urlReferrer);
 			return new Services.Session()
 			{
 				IP = ipAddress,
@@ -919,16 +458,16 @@ namespace net.vieapps.Services.Users
 		{
 			// parse
 			context = context ?? HttpContext.Current;
-			var token = User.ParsePassportToken(context.Request.QueryString["x-passport-token"], Global.AESKey, Global.GenerateJWTKey());
+			var token = User.ParsePassportToken(context.Request.QueryString["x-passport-token"], Base.AspNet.Global.AESKey, Base.AspNet.Global.GenerateJWTKey());
 			var userID = token.Item1;
 			var accessToken = token.Item2;
 			var sessionID = token.Item3;
 			var deviceID = token.Item4;
 
-			var ticket = AspNetSecurityService.ParseAuthenticateToken(accessToken, Global.RSA, Global.AESKey);
+			var ticket = AspNetSecurityService.ParseAuthenticateToken(accessToken, Base.AspNet.Global.RSA, Base.AspNet.Global.AESKey);
 			accessToken = ticket.Item2;
 
-			var user = User.ParseAccessToken(accessToken, Global.RSA, Global.AESKey);
+			var user = User.ParseAccessToken(accessToken, Base.AspNet.Global.RSA, Base.AspNet.Global.AESKey);
 			if (!user.ID.Equals(ticket.Item1) || !user.ID.Equals(userID))
 				throw new InvalidTokenException("Token is invalid (User identity is invalid)");
 
@@ -966,7 +505,7 @@ namespace net.vieapps.Services.Users
 
 			// parse
 			context = context ?? HttpContext.Current;
-			var token = User.ParsePassportToken(context.Request.QueryString["x-passport-token"], Global.AESKey, Global.GenerateJWTKey());
+			var token = User.ParsePassportToken(context.Request.QueryString["x-passport-token"], Base.AspNet.Global.AESKey, Base.AspNet.Global.GenerateJWTKey());
 			var userID = token.Item1;
 			var accessToken = token.Item2;
 			var sessionID = token.Item3;
@@ -988,21 +527,11 @@ namespace net.vieapps.Services.Users
 		#endregion
 
 		#region Send & process inter-communicate message
-		static async Task InitializeRTUServiceAsync()
-		{
-			if (Global.RTUService == null)
-			{
-				await Global.OpenOutgoingChannelAsync();
-				Global.RTUService = Global.OutgoingChannel.RealmProxy.Services.GetCalleeProxy<IRTUService>();
-			}
-		}
-
 		internal static async Task SendInterCommunicateMessageAsync(CommunicateMessage message)
 		{
 			try
 			{
-				await Global.InitializeRTUServiceAsync();
-				await Global.RTUService.SendInterCommunicateMessageAsync(message, Global.CancellationTokenSource.Token);
+				await Base.AspNet.Global.RTUService.SendInterCommunicateMessageAsync(message, Base.AspNet.Global.CancellationTokenSource.Token);
 			}
 			catch { }
 		}
