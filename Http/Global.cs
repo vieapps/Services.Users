@@ -602,18 +602,17 @@ namespace net.vieapps.Services.Users
 					context.Response.Cache.SetLastModified(fileInfo.LastWriteTime);
 					context.Response.Cache.SetETag(eTag);
 
+					// prepare content
+					var staticMimeType = MimeMapping.GetMimeMapping(fileInfo.Name);
+					if (string.IsNullOrWhiteSpace(staticMimeType))
+						staticMimeType = "text/plain";
+					var staticContent = await UtilityService.ReadTextFileAsync(fileInfo).ConfigureAwait(false);
+					if (staticMimeType.IsEndsWith("json"))
+						staticContent = JObject.Parse(staticContent).ToString(Formatting.Indented);
+
 					// write content
-					var contentType = path.IsEndsWith(".json") || path.IsEndsWith(".js")
-						? "application/" + (path.IsEndsWith(".js") ? "javascript" : "json")
-						: "text/"
-							+ (path.IsEndsWith(".css")
-								? "css"
-								: path.IsEndsWith(".html") || path.IsEndsWith(".htm")
-									? "html"
-									: "plain");
-					var staticContent = await UtilityService.ReadTextFileAsync(fileInfo.FullName);
-					context.Response.ContentType = contentType;
-					await context.Response.Output.WriteAsync(contentType.IsEquals("application/json") ? JObject.Parse(staticContent).ToString(Newtonsoft.Json.Formatting.Indented) : staticContent);
+					context.Response.ContentType = staticMimeType;
+					await context.Response.Output.WriteAsync(staticContent).ConfigureAwait(false);
 				}
 				catch (FileNotFoundException ex)
 				{

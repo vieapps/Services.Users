@@ -117,7 +117,7 @@ namespace net.vieapps.Services.Users
 		{
 			return base.ToJson(addTypeOfExtendedProperties, (obj) =>
 			{
-				obj.Add(new JProperty("Gravatar", string.IsNullOrWhiteSpace(this.Email) ? Utility.HttpFilesUri + "/avatars/default.png" : "https://secure.gravatar.com/avatar/" + this.Email.ToLower().Trim().GetMD5() + "?s=300&d=" + (Utility.HttpFilesUri + "/avatars/default.png").UrlEncode()));
+				obj.Add(new JProperty("Gravatar", string.IsNullOrWhiteSpace(this.Email) ? Utility.FilesHttpUri + "/avatars/default.png" : "https://secure.gravatar.com/avatar/" + this.Email.ToLower().Trim().GetMD5() + "?s=300&d=" + (Utility.FilesHttpUri + "/avatars/default.png").UrlEncode()));
 				onPreCompleted?.Invoke(obj);
 			});
 		}

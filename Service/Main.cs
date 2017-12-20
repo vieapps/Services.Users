@@ -37,23 +37,24 @@ namespace net.vieapps.Services.Users
 		internal List<System.Timers.Timer> _timers = new List<System.Timers.Timer>();
 		#endregion
 
-		#region Start
-		public override void Start(string[] args = null, bool initializeRepository = true, System.Action nextAction = null, Func<Task> nextActionAsync = null)
+		public override void Start(string[] args = null, bool initializeRepository = true, Func<IService, Task> next = null)
 		{
-			// register timers for working with background workers & schedulers
-			this.RegisterTimes();
-
-			// start the service
-			base.Start(args, initializeRepository, nextAction, nextActionAsync);
+			base.Start(args, initializeRepository, async (service) =>
+			{
+				if (next != null)
+					await next(service).ConfigureAwait(false);
+				this.RegisterTimes();
+			});
 		}
-		#endregion
 
 		public override string ServiceName { get { return "users"; } }
 
 		public override async Task<JObject> ProcessRequestAsync(RequestInfo requestInfo, CancellationToken cancellationToken = default(CancellationToken))
 		{
 #if DEBUG
-			this.WriteLog(requestInfo.CorrelationID, "Process the request\r\n==> Request:\r\n" + requestInfo.ToJson().ToString(Formatting.Indented));
+			var stopwatch = new Stopwatch();
+			stopwatch.Start();
+			await this.WriteLogAsync(requestInfo.CorrelationID, $"Process the request\r\n{requestInfo.ToJson().ToString(Formatting.Indented)}").ConfigureAwait(false);
 #endif
 			try
 			{
@@ -86,9 +87,16 @@ namespace net.vieapps.Services.Users
 			}
 			catch (Exception ex)
 			{
-				this.WriteLog(requestInfo.CorrelationID, "Error occurred while processing\r\n==> Request:\r\n" + requestInfo.ToJson().ToString(Formatting.Indented), ex);
+				await this.WriteLogAsync(requestInfo.CorrelationID, "Error occurred while processing", ex).ConfigureAwait(false);
 				throw this.GetRuntimeException(requestInfo, ex);
-			} 
+			}
+#if DEBUG
+			finally
+			{
+				stopwatch.Stop();
+				await this.WriteLogAsync(requestInfo.CorrelationID, $"The request is completed - Execution times: {stopwatch.GetElapsedTimes()}").ConfigureAwait(false);
+			}
+#endif
 		}
 
 		#region Working with related services
@@ -1754,7 +1762,7 @@ namespace net.vieapps.Services.Users
 				throw new MethodNotAllowedException(requestInfo.Verb);
 
 			var code = Captcha.GenerateCode();
-			var uri = UtilityService.GetAppSetting("HttpFilesUri", "https://afs.vieapps.net")
+			var uri = UtilityService.GetAppSetting("FilesHttpUri", "https://afs.vieapps.net")
 				+ "/captchas/" + code.Url64Encode() + "/"
 				+ (requestInfo.GetQueryParameter("register") ?? UtilityService.NewUID.Encrypt(CryptoService.DefaultEncryptionKey, true)).Substring(UtilityService.GetRandomNumber(13, 43), 13).Reverse() + ".jpg";
 
