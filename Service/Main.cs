@@ -41,9 +41,19 @@ namespace net.vieapps.Services.Users
 		{
 			base.Start(args, initializeRepository, async (service) =>
 			{
+				// register timers
+				this.RegisterTimers(args);
+
+				// last action
 				if (next != null)
-					await next(service).ConfigureAwait(false);
-				this.RegisterTimes();
+					try
+					{
+						await next(service).ConfigureAwait(false);
+					}
+					catch (Exception ex)
+					{
+						await this.WriteLogAsync(UtilityService.NewUID, "Error occurred while running the next action", ex).ConfigureAwait(false);
+					}
 			});
 		}
 
@@ -682,11 +692,12 @@ namespace net.vieapps.Services.Users
 
 				// update an account
 				case "PUT":
-					if ("reset".IsEquals(requestInfo.GetObjectIdentity()))
+					var identity = requestInfo.GetObjectIdentity();
+					if ("reset".IsEquals(identity))
 						return this.ResetPasswordAsync(requestInfo, cancellationToken);
-					else if ("password".IsEquals(requestInfo.GetObjectIdentity()))
+					else if ("password".IsEquals(identity))
 						return this.UpdatePasswordAsync(requestInfo, cancellationToken);
-					else if ("email".IsEquals(requestInfo.GetObjectIdentity()))
+					else if ("email".IsEquals(identity))
 						return this.UpdateEmailAsync(requestInfo, cancellationToken);
 					else
 						return this.UpdateAccountAsync(requestInfo, cancellationToken);
@@ -1147,12 +1158,14 @@ namespace net.vieapps.Services.Users
 			switch (requestInfo.Verb)
 			{
 				case "GET":
+					var identity = requestInfo.GetObjectIdentity();
+
 					// search
-					if ("search".IsEquals(requestInfo.GetObjectIdentity()))
+					if ("search".IsEquals(identity))
 						return this.SearchProfilesAsync(requestInfo, cancellationToken);
 
 					// fetch
-					else if ("fetch".IsEquals(requestInfo.GetObjectIdentity()))
+					else if ("fetch".IsEquals(identity))
 						return this.FetchProfilesAsync(requestInfo, cancellationToken);
 
 					// get details of a profile
@@ -1774,36 +1787,28 @@ namespace net.vieapps.Services.Users
 		}
 
 		#region Timers for working with background workers & schedulers
-		void StartTimer(int interval, Action<object, System.Timers.ElapsedEventArgs> action, bool autoReset = true)
-		{
-			var timer = new System.Timers.Timer()
-			{
-				Interval = interval * 1000,
-				AutoReset = autoReset
-			};
-			timer.Elapsed += new System.Timers.ElapsedEventHandler(action);
-			timer.Start();
-			this._timers.Add(timer);
-		}
-
-		void RegisterTimes()
+		void RegisterTimers(string[] args = null)
 		{
 			// timer to request client update state (5 minutes)
-			this.StartTimer(60 * 5, (sender, args) =>
+			this.StartTimer(async () =>
 			{
-				Task.Run(async () =>
+				await this.SendUpdateMessageAsync(new UpdateMessage()
 				{
-					await this.SendUpdateMessageAsync(new UpdateMessage()
-					{
-						Type = "OnlineStatus",
-						DeviceID = "*",
-					});
-
+					Type = "OnlineStatus",
+					DeviceID = "*",
+				}, this.CancellationTokenSource.Token).ConfigureAwait(false);
 #if DEBUG
-					this.WriteLog(UtilityService.NewUID, "Send message to request update online status successful", null, false);
+				await this.WriteLogAsync(UtilityService.NewUID, "Send message to request update online status successful", null, false).ConfigureAwait(false);
 #endif
-				}).ConfigureAwait(false);
-			});
+			}, 5 * 60);
+
+			// timer to clean expired sessions (13 hours)
+			this.StartTimer(async () =>
+			{
+				await (await Session.FindAsync(Filters<Session>.LessThan("ExpiredAt", DateTime.Now), null, 0, 1, null, this.CancellationTokenSource.Token).ConfigureAwait(false))
+					.ForEachAsync((session, token) => Session.DeleteAsync<Session>(session.ID, token), this.CancellationTokenSource.Token, true, false)
+					.ConfigureAwait(false);
+			}, 13 * 60 * 60);
 		}
 		#endregion
 

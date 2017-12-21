@@ -30,7 +30,7 @@ namespace net.vieapps.Services.Users
 		internal static HashSet<string> HiddenSegments = null, BypassSegments = null, StaticSegments = null;
 
 		internal static Dictionary<string, IService> Services = new Dictionary<string, IService>();
-		internal static IDisposable InterCommunicationMessageUpdater = null;
+		internal static IDisposable InterCommunicateMessageUpdater = null;
 		#endregion
 
 		#region Start/End the app
@@ -56,7 +56,7 @@ namespace net.vieapps.Services.Users
 				await Base.AspNet.Global.OpenChannelsAsync(
 					(sender, args) =>
 					{
-						Base.AspNet.Global.IncommingChannel.RealmProxy.Services
+						Global.InterCommunicateMessageUpdater = Base.AspNet.Global.IncommingChannel.RealmProxy.Services
 							.GetSubject<CommunicateMessage>("net.vieapps.rtu.communicate.messages.users")
 							.Subscribe(
 								message => Global.ProcessInterCommunicateMessage(message),
@@ -67,8 +67,10 @@ namespace net.vieapps.Services.Users
 					{
 						Task.Run(async () =>
 						{
-							await Base.AspNet.Global.InitializeLoggingServiceAsync().ConfigureAwait(false);
-							await Base.AspNet.Global.InitializeRTUServiceAsync().ConfigureAwait(false);
+							await Task.WhenAll(
+								Base.AspNet.Global.InitializeLoggingServiceAsync(),
+								Base.AspNet.Global.InitializeRTUServiceAsync()
+							).ConfigureAwait(false);
 						}).ConfigureAwait(false);
 					}
 				).ConfigureAwait(false);
@@ -91,7 +93,7 @@ namespace net.vieapps.Services.Users
 
 		internal static void OnAppEnd()
 		{
-			Global.InterCommunicationMessageUpdater?.Dispose();
+			Global.InterCommunicateMessageUpdater?.Dispose();
 			Base.AspNet.Global.CancellationTokenSource.Cancel();
 			Base.AspNet.Global.CancellationTokenSource.Dispose();
 			Base.AspNet.Global.CloseChannels();
