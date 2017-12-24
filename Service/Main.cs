@@ -61,11 +61,19 @@ namespace net.vieapps.Services.Users
 
 		public override async Task<JObject> ProcessRequestAsync(RequestInfo requestInfo, CancellationToken cancellationToken = default(CancellationToken))
 		{
-#if DEBUG
+			// track
 			var stopwatch = new Stopwatch();
 			stopwatch.Start();
-			await this.WriteLogAsync(requestInfo.CorrelationID, $"Process the request\r\n{requestInfo.ToJson().ToString(Formatting.Indented)}").ConfigureAwait(false);
+			var uri = $"[{requestInfo.Verb}]: /{this.ServiceName}";
+			if (!string.IsNullOrWhiteSpace(requestInfo.ObjectName))
+				uri += requestInfo.ObjectName + "/" + (requestInfo.GetObjectIdentity() ?? "");
+			var logs = new List<string>() { $"Process the request {uri}" };
+#if DEBUG || REQUESTLOGS
+			logs.Add($"Request ==> {requestInfo.ToJson().ToString(Formatting.Indented)}");
 #endif
+			await this.WriteLogsAsync(requestInfo.CorrelationID, logs).ConfigureAwait(false);
+
+			// process
 			try
 			{
 				switch (requestInfo.ObjectName.ToLower())
@@ -88,25 +96,18 @@ namespace net.vieapps.Services.Users
 					case "captcha":
 						return this.RegisterSessionCaptcha(requestInfo);
 				}
-
-				// unknown
-				var msg = "The request is invalid [" + this.ServiceURI + "]: " + requestInfo.Verb + " /";
-				if (!string.IsNullOrWhiteSpace(requestInfo.ObjectName))
-					msg +=  requestInfo.ObjectName + (!string.IsNullOrWhiteSpace(requestInfo.GetObjectIdentity()) ? "/" + requestInfo.GetObjectIdentity() : "");
-				throw new InvalidRequestException(msg);
+				throw new InvalidRequestException("The request is invalid [" + this.ServiceURI + "]: " + uri);
 			}
 			catch (Exception ex)
 			{
 				await this.WriteLogAsync(requestInfo.CorrelationID, "Error occurred while processing", ex).ConfigureAwait(false);
 				throw this.GetRuntimeException(requestInfo, ex);
 			}
-#if DEBUG
 			finally
 			{
 				stopwatch.Stop();
 				await this.WriteLogAsync(requestInfo.CorrelationID, $"The request is completed - Execution times: {stopwatch.GetElapsedTimes()}").ConfigureAwait(false);
 			}
-#endif
 		}
 
 		#region Working with related services
