@@ -28,13 +28,9 @@ namespace net.vieapps.Services.Users
 		{
 			get
 			{
-				if (ServiceComponent._ActivationKey == null)
-					ServiceComponent._ActivationKey = UtilityService.GetAppSetting("ActivationKey", "VIEApps-56BA2999-Services-A2E4-Users-4B54-Activation-83EB-Key-693C250DC95D");
-				return ServiceComponent._ActivationKey;
+				return ServiceComponent._ActivationKey ?? (ServiceComponent._ActivationKey = UtilityService.GetAppSetting("Users:ActivationKey", "VIEApps-56BA2999-Services-A2E4-Users-4B54-Activation-83EB-Key-693C250DC95D"));
 			}
 		}
-
-		internal List<System.Timers.Timer> _timers = new List<System.Timers.Timer>();
 		#endregion
 
 		public override void Start(string[] args = null, bool initializeRepository = true, Func<IService, Task> next = null)
@@ -1773,7 +1769,7 @@ namespace net.vieapps.Services.Users
 				throw new MethodNotAllowedException(requestInfo.Verb);
 
 			var code = Captcha.GenerateCode();
-			var uri = UtilityService.GetAppSetting("FilesHttpUri", "https://afs.vieapps.net")
+			var uri = UtilityService.GetAppSetting("HttpUri:Files", "https://afs.vieapps.net")
 				+ "/captchas/" + code.Url64Encode() + "/"
 				+ (requestInfo.GetQueryParameter("register") ?? UtilityService.NewUID.Encrypt(CryptoService.DefaultEncryptionKey, true)).Substring(UtilityService.GetRandomNumber(13, 43), 13).Reverse() + ".jpg";
 

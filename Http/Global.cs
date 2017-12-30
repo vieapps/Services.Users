@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Specialized;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Diagnostics;
 using System.IO;
@@ -26,12 +27,7 @@ namespace net.vieapps.Services.Users
 	public static partial class Global
 	{
 
-		#region Attributes
-		internal static HashSet<string> HiddenSegments = null, BypassSegments = null, StaticSegments = null;
-
-		internal static Dictionary<string, IService> Services = new Dictionary<string, IService>();
 		internal static IDisposable InterCommunicateMessageUpdater = null;
-		#endregion
 
 		#region Start/End the app
 		internal static void OnAppStart(HttpContext context)
@@ -76,11 +72,6 @@ namespace net.vieapps.Services.Users
 				).ConfigureAwait(false);
 			}).ConfigureAwait(false);
 
-			// special segments
-			Global.BypassSegments = UtilityService.GetAppSetting("BypassSegments")?.Trim().ToLower().ToHashSet('|', true) ?? new HashSet<string>();
-			Global.HiddenSegments = UtilityService.GetAppSetting("HiddenSegments")?.Trim().ToLower().ToHashSet('|', true) ?? new HashSet<string>();
-			Global.StaticSegments = UtilityService.GetAppSetting("StaticSegments")?.Trim().ToLower().ToHashSet('|', true) ?? new HashSet<string>();
-
 			// handling unhandled exception
 			AppDomain.CurrentDomain.UnhandledException += (sender, arguments) =>
 			{
@@ -93,9 +84,13 @@ namespace net.vieapps.Services.Users
 
 		internal static void OnAppEnd()
 		{
-			Global.InterCommunicateMessageUpdater?.Dispose();
-			Base.AspNet.Global.CancellationTokenSource.Cancel();
+			try
+			{
+				Base.AspNet.Global.CancellationTokenSource.Cancel();
+			}
+			catch { }
 			Base.AspNet.Global.CancellationTokenSource.Dispose();
+			Global.InterCommunicateMessageUpdater?.Dispose();
 			Base.AspNet.Global.CloseChannels();
 			Base.AspNet.Global.RSA.Dispose();
 		}
@@ -130,11 +125,11 @@ namespace net.vieapps.Services.Users
 				: requestTo.ToLower().ToArray('/', true).First();
 
 			// by-pass segments
-			if (Global.BypassSegments.Count > 0 && Global.BypassSegments.Contains(requestTo))
+			if (Base.AspNet.Global.BypassSegments.Count > 0 && Base.AspNet.Global.BypassSegments.Contains(requestTo))
 				return;
 
 			// hidden segments
-			else if (Global.HiddenSegments.Count > 0 && Global.HiddenSegments.Contains(requestTo))
+			else if (Base.AspNet.Global.HiddenSegments.Count > 0 && Base.AspNet.Global.HiddenSegments.Contains(requestTo))
 			{
 				Global.ShowError(app.Context, 403, "Forbidden", "AccessDeniedException", null);
 				app.Context.Response.End();
@@ -371,44 +366,29 @@ namespace net.vieapps.Services.Users
 		}
 		#endregion
 
-		#region Get & call services
-		internal static async Task<JObject> CallServiceAsync(RequestInfo requestInfo, string correlationID = null)
+		#region Call services
+		internal static Task<JObject> CallServiceAsync(RequestInfo requestInfo, CancellationToken cancellationToken = default(CancellationToken))
 		{
-			requestInfo.CorrelationID = correlationID ?? requestInfo.CorrelationID;
-			var name = requestInfo.ServiceName.Trim().ToLower();
-
-#if DEBUG
-			Base.AspNet.Global.WriteLogs(requestInfo.CorrelationID, "HTTP", "Call the service [net.vieapps.services." + name + "]" + "\r\n" + requestInfo.ToJson().ToString(Newtonsoft.Json.Formatting.Indented));
-#endif
-
-			if (!Global.Services.TryGetValue(name, out IService service))
-			{
-				await Base.AspNet.Global.OpenOutgoingChannelAsync();
-				lock (Global.Services)
+			return Base.AspNet.Global.CallServiceAsync(requestInfo, cancellationToken,
+				(info) =>
 				{
-					if (!Global.Services.TryGetValue(name, out service))
-					{
-						service = Base.AspNet.Global.OutgoingChannel.RealmProxy.Services.GetCalleeProxy<IService>(ProxyInterceptor.Create(name));
-						Global.Services.Add(name, service);
-					}
-				}
-			}
-
-			JObject json = null;
-			try
-			{
-				json = await service.ProcessRequestAsync(requestInfo, Base.AspNet.Global.CancellationTokenSource.Token);
-			}
-			catch (Exception)
-			{
-				throw;
-			}
-
-#if DEBUG
-			Base.AspNet.Global.WriteLogs(requestInfo.CorrelationID, "HTTP", "Result of the service [net.vieapps.services." + name + "]" + "\r\n" + json.ToString(Formatting.Indented));
+#if DEBUG || PROCESSLOGS
+					Base.AspNet.Global.WriteLogs(info.CorrelationID, null, $"Call the service [net.vieapps.services.{info.ServiceName}]\r\n{info.ToJson().ToString(Newtonsoft.Json.Formatting.Indented)}");
 #endif
-
-			return json;
+				},
+				(info, json) =>
+				{
+#if DEBUG || PROCESSLOGS
+					Base.AspNet.Global.WriteLogs(info.CorrelationID, null, $"Results from the service [net.vieapps.services.{info.ServiceName}]\r\n{json.ToString(Newtonsoft.Json.Formatting.Indented)}");
+#endif
+				},
+				(info, ex) =>
+				{
+#if DEBUG || PROCESSLOGS
+					Base.AspNet.Global.WriteLogs(info.CorrelationID, null, $"Error occurred while calling the service [net.vieapps.services.{info.ServiceName}]", ex);
+#endif
+				}
+			);
 		}
 
 		internal static Task<JObject> CallServiceAsync(Services.Session session, string serviceName, string objectName, string verb = "GET", Dictionary<string, string> query = null, Dictionary<string, string> header = null, string body = null, Dictionary<string, string> extra = null, string correlationID = null)
@@ -571,7 +551,7 @@ namespace net.vieapps.Services.Users
 				: requestTo.ToLower().ToArray('/', true).First();
 
 			// static resources
-			if (Global.StaticSegments.Contains(requestTo))
+			if (Base.AspNet.Global.StaticSegments.Contains(requestTo))
 			{
 				// check "If-Modified-Since" request to reduce traffict
 				var eTag = "StaticResource#" + context.Request.RawUrl.ToLower().GetMD5();
