@@ -33,6 +33,7 @@ namespace net.vieapps.Services.Users
 		}
 		#endregion
 
+		#region Start
 		public override void Start(string[] args = null, bool initializeRepository = true, Func<IService, Task> next = null)
 		{
 			base.Start(args, initializeRepository, async (service) =>
@@ -54,6 +55,7 @@ namespace net.vieapps.Services.Users
 		}
 
 		public override string ServiceName { get { return "users"; } }
+		#endregion
 
 		public override async Task<JObject> ProcessRequestAsync(RequestInfo requestInfo, CancellationToken cancellationToken = default(CancellationToken))
 		{
@@ -62,7 +64,7 @@ namespace net.vieapps.Services.Users
 			stopwatch.Start();
 			var logs = new List<string>() { $"Begin process ({requestInfo.Verb}): {requestInfo.URI}" };
 #if DEBUG || REQUESTLOGS
-			logs.Add($"Request ==> {requestInfo.ToJson().ToString(Formatting.Indented)}");
+			logs.Add($"Request:\r\n{requestInfo.ToJson().ToString(Formatting.Indented)}");
 #endif
 			await this.WriteLogsAsync(requestInfo.CorrelationID, logs).ConfigureAwait(false);
 
@@ -73,6 +75,9 @@ namespace net.vieapps.Services.Users
 				{
 					case "session":
 						return await this.ProcessSessionAsync(requestInfo, cancellationToken).ConfigureAwait(false);
+
+					case "otp":
+						return await this.ProcessOTPAsync(requestInfo, cancellationToken).ConfigureAwait(false);
 
 					case "account":
 						return await this.ProcessAccountAsync(requestInfo, cancellationToken).ConfigureAwait(false);
@@ -88,8 +93,10 @@ namespace net.vieapps.Services.Users
 
 					case "captcha":
 						return this.RegisterSessionCaptcha(requestInfo);
+
+					default:
+						throw new InvalidRequestException($"The request is invalid [({requestInfo.Verb}): {requestInfo.URI}]");
 				}
-				throw new InvalidRequestException($"The request is invalid [({requestInfo.Verb}): {requestInfo.URI}]");
 			}
 			catch (Exception ex)
 			{
@@ -110,7 +117,7 @@ namespace net.vieapps.Services.Users
 			{
 				Session = requestInfo.Session,
 				ServiceName = requestInfo.Query["related-service"],
-				ObjectName = "instruction",
+				ObjectName = "Instruction",
 				Query = new Dictionary<string, string>(requestInfo.Query ?? new Dictionary<string, string>())
 				{
 					{ "object-identity", "account" }
@@ -439,9 +446,11 @@ namespace net.vieapps.Services.Users
 				// sign a session out
 				case "DELETE":
 					return this.SignSessionOutAsync(requestInfo, cancellationToken);
+
+				// unknown
+				default:
+					throw new MethodNotAllowedException(requestInfo.Verb);
 			}
-			
-			return Task.FromException<JObject>(new MethodNotAllowedException(requestInfo.Verb));
 		}
 
 		#region Get a session
@@ -449,45 +458,11 @@ namespace net.vieapps.Services.Users
 		{
 			// check existed
 			if (requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Exist"))
-			{
-				var existed = await Utility.Cache.ExistsAsync<Session>(requestInfo.Session.SessionID).ConfigureAwait(false);
-				if (!existed && !requestInfo.Session.User.ID.Equals("") && !requestInfo.Session.User.IsSystemAccount)
-					existed = await Session.GetAsync<Session>(requestInfo.Session.SessionID, cancellationToken).ConfigureAwait(false) != null;
-
-				return new JObject()
-				{
-					{ "ID", requestInfo.Session.SessionID },
-					{ "Existed", existed }
-				};
-			}
+				return await this.CheckSessionExistsAsync(requestInfo, cancellationToken).ConfigureAwait(false);
 
 			// verify integrity
 			else if (requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Verify"))
-			{
-				if (string.IsNullOrWhiteSpace(requestInfo.Session.SessionID))
-					throw new SessionNotFoundException();
-
-				var accessToken = requestInfo.Extra["AccessToken"].Decrypt();
-				if (string.IsNullOrWhiteSpace(accessToken))
-					throw new TokenNotFoundException();
-
-				var session = requestInfo.Session.User.ID.Equals("") || requestInfo.Session.User.IsSystemAccount
-					? await Utility.Cache.FetchAsync<Session>(requestInfo.Session.SessionID).ConfigureAwait(false)
-					: await Session.GetAsync<Session>(requestInfo.Session.SessionID, cancellationToken).ConfigureAwait(false);
-
-				if (session == null)
-					throw new SessionNotFoundException();
-				else if (session.ExpiredAt < DateTime.Now)
-					throw new SessionExpiredException();
-				else if (!accessToken.Equals(session.AccessToken))
-					throw new TokenRevokedException();
-
-				return new JObject()
-				{
-					{ "ID", session.ID },
-					{ "Integrity", "Good" }
-				};
-			}
+				return await this.VerifySessionIntegrityAsync(requestInfo, cancellationToken).ConfigureAwait(false);
 
 			// get session
 			else
@@ -502,6 +477,53 @@ namespace net.vieapps.Services.Users
 
 				return result;
 			}
+		}
+		#endregion
+
+		#region Check exists of a session
+		async Task<JObject> CheckSessionExistsAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		{
+			// got cached
+			var existed = await Utility.Cache.ExistsAsync<Session>(requestInfo.Session.SessionID).ConfigureAwait(false);
+
+			// no cached
+			if (!existed && !requestInfo.Session.User.ID.Equals("") && !requestInfo.Session.User.IsSystemAccount)
+				existed = await Session.GetAsync<Session>(requestInfo.Session.SessionID, cancellationToken).ConfigureAwait(false) != null;
+
+			return new JObject()
+			{
+				{ "ID", requestInfo.Session.SessionID },
+				{ "Existed", existed }
+			};
+		}
+		#endregion
+
+		#region Verify integrity of a session
+		async Task<JObject> VerifySessionIntegrityAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		{
+			if (string.IsNullOrWhiteSpace(requestInfo.Session.SessionID))
+				throw new SessionNotFoundException();
+
+			var accessToken = requestInfo.Extra["AccessToken"].Decrypt();
+			if (string.IsNullOrWhiteSpace(accessToken))
+				throw new TokenNotFoundException();
+
+			var session = requestInfo.Session.User.ID.Equals("") || requestInfo.Session.User.IsSystemAccount
+				? await Utility.Cache.FetchAsync<Session>(requestInfo.Session.SessionID).ConfigureAwait(false)
+				: await Session.GetAsync<Session>(requestInfo.Session.SessionID, cancellationToken).ConfigureAwait(false);
+
+			if (session == null)
+				throw new SessionNotFoundException();
+			else if (session.ExpiredAt < DateTime.Now)
+				throw new SessionExpiredException();
+			else if (!accessToken.Equals(session.AccessToken))
+				throw new TokenRevokedException();
+
+			return new JObject()
+			{
+				{ "ID", session.ID },
+				{ "Integrity", "Good" }
+			};
 		}
 		#endregion
 
@@ -576,12 +598,12 @@ namespace net.vieapps.Services.Users
 			if (type.Equals(AccountType.Windows))
 			{
 				var username = email.Left(email.PositionOf("@"));
-				username = username.IndexOf("\\") > 0
-					? username.Right(username.Length - username.IndexOf("\\") - 1).Trim()
+				username = username.PositionOf(@"\") > 0
+					? username.Right(username.Length - username.PositionOf(@"\") - 1).Trim()
 					: username.Trim();
 				var domain = email.Right(email.Length - email.PositionOf("@") - 1).Trim();
 
-				await this.CallServiceAsync(new RequestInfo(requestInfo.Session, "windowsad", "account")
+				await this.CallServiceAsync(new RequestInfo(requestInfo.Session, "WindowsAD", "Account")
 				{
 					Verb = "POST",
 					Header = requestInfo.Header,
@@ -637,13 +659,22 @@ namespace net.vieapps.Services.Users
 					throw new WrongAccountException();
 			}
 
-			// clear cached of current session
-			await Utility.Cache.RemoveAsync<Session>(requestInfo.Session.SessionID).ConfigureAwait(false);
+			// prepare results
+			var results = account.GetAccountJson();
+
+			// two-factors authentication is required
+			if (account.TwoFactorsAuthentication.Required)
+			{
+				results.Add(new JProperty("Require2FA", true));
+				results.Add(new JProperty("Providers", account.TwoFactorsAuthentication.GetProvidersJson()));
+			}
+
+			// clear cached of current session when 2FA is not required
+			else
+				await Utility.Cache.RemoveAsync<Session>(requestInfo.Session.SessionID).ConfigureAwait(false);
 
 			// response
-			return account != null
-				? account.GetAccountJson()
-				: new JObject();
+			return results;
 		}
 		#endregion
 
@@ -665,10 +696,210 @@ namespace net.vieapps.Services.Users
 			}
 
 			// response
-			return new JObject()
+			return new JObject();
+		}
+		#endregion
+
+		Task<JObject> ProcessOTPAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		{
+			switch (requestInfo.Verb)
 			{
-				{ "Status", "OK" }
-			};
+				// provisioning
+				case "GET":
+					return this.GetProvisioningOTPAsync(requestInfo, cancellationToken);
+
+				// validate
+				case "POST":
+					return this.ValidateOTPAsync(requestInfo, cancellationToken);
+
+				// update
+				case "PUT":
+					return this.UpdateOTPAsync(requestInfo, cancellationToken);
+
+				// delete
+				case "DELETE":
+					return this.DeleteOTPAsync(requestInfo, cancellationToken);
+
+				// unknown
+				default:
+					throw new MethodNotAllowedException(requestInfo.Verb);
+			}
+		}
+
+		#region Get an OTP for provisioning
+		async Task<JObject> GetProvisioningOTPAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		{
+			var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID, cancellationToken);
+			if (account == null)
+				throw new InformationNotFoundException();
+
+			var body = requestInfo.GetRequestExpando();
+			if (!Enum.TryParse(body.Get("Type", ""), out TwoFactorsAuthenticationType type))
+				type = TwoFactorsAuthenticationType.App;
+
+			var stamp = type.Equals(TwoFactorsAuthenticationType.App)
+				? DateTime.Now.ToIsoString().GetSHA256()
+				: body.Get("Number", "");
+			if (string.IsNullOrWhiteSpace(stamp))
+				throw new InformationRequiredException();
+
+			var json = await this.CallServiceAsync(new RequestInfo(requestInfo.Session, "OTPs", "Authenticator")
+			{
+				Verb = "GET",
+				Extra = new Dictionary<string, string>()
+				{
+					{ "Account", account.AccessIdentity },
+					{ "ID", account.ID },
+					{ "Stamp", stamp },
+					{ "Setup", "" }
+				}
+			}, cancellationToken).ConfigureAwait(false);
+
+			json.Add(new JProperty("Provisioning", new JObject()
+			{
+				{ "Account", account.AccessIdentity },
+				{ "ID", account.ID },
+				{ "Type", type.ToString() },
+				{ "Stamp", stamp },
+			}.ToString(Formatting.None).Encrypt()));
+
+			return json;
+		}
+		#endregion
+
+		#region Validate an OTP
+		async Task<JObject> ValidateOTPAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		{
+			// prepare
+			var body = requestInfo.GetBodyExpando();
+			var id = body.Get("ID", "");
+			var account = await Account.GetAsync<Account>(id, cancellationToken);
+			if (account == null)
+				throw new InformationNotFoundException();
+
+			var otp = body.Get("OTP", "");
+			var info = body.Get("Info", "");
+			if (string.IsNullOrWhiteSpace(otp) || string.IsNullOrWhiteSpace(otp))
+				throw new InformationRequiredException();
+
+			var type = TwoFactorsAuthenticationType.App;
+			var stamp = "";
+			try
+			{
+				var data = info.Decrypt().ToArray('|');
+				type = data[0].ToEnum<TwoFactorsAuthenticationType>();
+				stamp = type.Equals(TwoFactorsAuthenticationType.App)
+					? account.TwoFactorsAuthentication.Settings.Where(s => s.Type.Equals(TwoFactorsAuthenticationType.App)).FirstOrDefault()?.Stamp
+					: account.TwoFactorsAuthentication.Settings.Where(s => s.Type.Equals(TwoFactorsAuthenticationType.SMS) && s.Stamp.Equals(data[1])).FirstOrDefault()?.Stamp;
+			}
+			catch (Exception ex)
+			{
+				throw new InformationInvalidException(ex);
+			}
+
+			if (string.IsNullOrWhiteSpace(stamp))
+				throw new InformationInvalidException();
+
+			// validate
+			await this.CallServiceAsync(new RequestInfo(requestInfo.Session, "OTPs", "Authenticator")
+			{
+				Verb = "GET",
+				Extra = new Dictionary<string, string>()
+				{
+					{ "Account", account.AccessIdentity },
+					{ "ID", account.ID },
+					{ "Stamp", stamp },
+					{ "Password", otp }
+				}
+			}, cancellationToken).ConfigureAwait(false);
+
+			// update
+			account.TwoFactorsAuthentication.State = true;
+			await Task.WhenAll(
+				Utility.Cache.SetAsync<Account>(account),
+				Utility.Cache.RemoveAsync<Session>(requestInfo.Session.SessionID)
+			).ConfigureAwait(false);
+
+			return account.GetAccountJson();
+		}
+		#endregion
+
+		#region Update an OTP
+		async Task<JObject> UpdateOTPAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		{
+			var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID, cancellationToken);
+			if (account == null)
+				throw new InformationNotFoundException();
+
+			var body = requestInfo.GetBodyExpando();
+			var json = JObject.Parse(body.Get("Provisioning", "").Decrypt());
+			if (!account.ID.IsEquals((json["ID"] as JValue).Value.ToString()) || !account.AccessIdentity.IsEquals((json["Account"] as JValue).Value.ToString()))
+				throw new InformationInvalidException();
+
+			var otp = body.Get("OTP", "");
+			if (!Enum.TryParse((json["Type"] as JValue).Value.ToString(), out TwoFactorsAuthenticationType type))
+				type = TwoFactorsAuthenticationType.App;
+			var stamp = (json["Stamp"] as JValue).Value.ToString();
+
+			json = await this.CallServiceAsync(new RequestInfo(requestInfo.Session, "OTPs", "Authenticator")
+			{
+				Verb = "GET",
+				Extra = new Dictionary<string, string>()
+				{
+					{ "Account", account.AccessIdentity },
+					{ "ID", account.ID },
+					{ "Stamp", stamp },
+					{ "Password", otp }
+				}
+			}, cancellationToken).ConfigureAwait(false);
+
+			account.TwoFactorsAuthentication.Required = true;
+			account.TwoFactorsAuthentication.Settings.Add(new TwoFactorsAuthenticationSetting()
+			{
+				Type = type,
+				Stamp = stamp
+			});
+
+			json = account.GetAccountJson(true);
+			await Task.WhenAll(
+				Account.UpdateAsync(account),
+				Utility.Cache.SetAsync<Account>(account),
+				this.SendUpdateMessageAsync(new UpdateMessage()
+				{
+					Type = "Users#Account",
+					DeviceID = requestInfo.Session.DeviceID,
+					Data = json
+				})
+			).ConfigureAwait(false);
+			return json;
+		}
+		#endregion
+
+		#region Delete an OTP
+		async Task<JObject> DeleteOTPAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		{
+			var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID, cancellationToken);
+			if (account == null)
+				throw new InformationNotFoundException();
+
+			if (!Enum.TryParse(requestInfo.Query.ContainsKey("Type") ? requestInfo.Query["Type"] : "", out TwoFactorsAuthenticationType type))
+				type = TwoFactorsAuthenticationType.App;
+
+			account.TwoFactorsAuthentication.Settings = account.TwoFactorsAuthentication.Settings.Where(s => !s.Type.Equals(type)).ToList();
+			account.TwoFactorsAuthentication.Required = account.TwoFactorsAuthentication.Settings.Count > 0;
+
+			var json = account.GetAccountJson(true);
+			await Task.WhenAll(
+				Account.UpdateAsync(account),
+				Utility.Cache.SetAsync<Account>(account),
+				this.SendUpdateMessageAsync(new UpdateMessage()
+				{
+					Type = "Users#Account",
+					DeviceID = requestInfo.Session.DeviceID,
+					Data = json
+				})
+			).ConfigureAwait(false);
+			return json;
 		}
 		#endregion
 
@@ -699,9 +930,11 @@ namespace net.vieapps.Services.Users
 				// get sessions of an account
 				case "HEAD":
 					return this.GetAccountSessionsAsync(requestInfo, cancellationToken);
-			}
 
-			return Task.FromException<JObject>(new MethodNotAllowedException(requestInfo.Verb));
+				// unknown
+				default:
+					throw new MethodNotAllowedException(requestInfo.Verb);
+			}
 		}
 
 		#region Get an account
@@ -1173,9 +1406,11 @@ namespace net.vieapps.Services.Users
 				// update a profile
 				case "PUT":
 					return this.UpdateProfileAsync(requestInfo, cancellationToken);
-			}
 
-			return Task.FromException<JObject>(new MethodNotAllowedException(requestInfo.Verb));
+				// unknown
+				default:
+					throw new MethodNotAllowedException(requestInfo.Verb);
+			}
 		}
 
 		#region Search profiles

@@ -29,6 +29,7 @@ namespace net.vieapps.Services.Users
 			this.ID = "";
 			this.Status = AccountStatus.Activated;
 			this.Type = AccountType.BuiltIn;
+			this.TwoFactorsAuthentication = new TwoFactorsAuthentication();
 			this.Joined = DateTime.Now;
 			this.LastAccess = DateTime.Now;
 			this.OAuthType = "";
@@ -51,6 +52,12 @@ namespace net.vieapps.Services.Users
 		/// </summary>
 		[JsonConverter(typeof(StringEnumConverter)), BsonRepresentation(BsonType.String), Property(NotNull = true), Sortable]
 		public AccountType Type { get; set; }
+
+		/// <summary>
+		/// Gets or sets the state that require two-factors authentication
+		/// </summary>
+		[AsJson]
+		public TwoFactorsAuthentication TwoFactorsAuthentication { get; set; }
 
 		/// <summary>
 		/// Gets or sets the joined time of the user account
@@ -114,9 +121,7 @@ namespace net.vieapps.Services.Users
 		{
 			get
 			{
-				if (this._profile == null)
-					this._profile = Profile.Get<Profile>(this.ID);
-				return this._profile;
+				return this._profile ?? (this._profile = Profile.Get<Profile>(this.ID));
 			}
 		}
 		#endregion
@@ -140,33 +145,30 @@ namespace net.vieapps.Services.Users
 
 		public async Task GetSessionsAsync(CancellationToken cancellationToken = default(CancellationToken))
 		{
-			this.Sessions = await Session.FindAsync(Filters<Session>.Equals("UserID", this.ID), Sorts<Session>.Descending("ExpiredAt"), 0, 1, null, cancellationToken);
-		}
-
-		public List<string> GetRoles(string initialized = null)
-		{
-			var roles = string.IsNullOrWhiteSpace(initialized)
-				? new List<string>()
-				: initialized.ToList();
-			if (this.AccessRoles != null && this.AccessRoles.Count > 0)
-				this.AccessRoles.ForEach(sRoles => roles = roles.Concat(sRoles).ToList());
-			return roles.Distinct().ToList();
+			this.Sessions = await Session.FindAsync(Filters<Session>.Equals("UserID", this.ID), Sorts<Session>.Descending("ExpiredAt"), 0, 1, null, cancellationToken).ConfigureAwait(false);
 		}
 
 		public JObject GetAccountJson(bool addStatus = false, string idNode = "ID")
 		{
-			var roles = SystemRole.All.ToString() + "," + SystemRole.Authenticated.ToString()
-				+ (User.SystemAdministrators.Contains(this.ID) ? "," + SystemRole.SystemAdministrator.ToString() : "");
+			var roles = (SystemRole.All.ToString()
+				+ "," + SystemRole.Authenticated.ToString()
+				+ (User.SystemAdministrators.Contains(this.ID) ? "," + SystemRole.SystemAdministrator.ToString() : "")
+			).ToList();
+			this.AccessRoles?.ForEach(accessRoles => roles = roles.Concat(accessRoles).ToList());
+			roles = roles.Distinct().ToList();
 
 			var json = new JObject()
 			{
-				{ idNode, this.ID },
-				{ "Roles", this.GetRoles(roles).ToJArray() },
-				{ "Privileges", (this.AccessPrivileges ?? new List<Privilege>()).ToJArray() }
+				{ idNode ?? "ID", this.ID },
+				{ "Roles", roles.ToJArray() },
+				{ "Privileges", (this.AccessPrivileges ?? new List<Privilege>()).ToJArray() },
 			};
 
 			if (addStatus)
+			{
 				json.Add(new JProperty("Status", this.Status.ToString()));
+				json.Add(new JProperty("TwoFactorsAuthentication", this.TwoFactorsAuthentication.ToJson()));
+			}
 
 			return json;
 		}
@@ -179,10 +181,7 @@ namespace net.vieapps.Services.Users
 		/// <returns></returns>
 		public static Task<Account> GetByIdentityAsync(string identity, AccountType type = AccountType.BuiltIn, CancellationToken cancellationToken = default(CancellationToken))
 		{
-			return Account.GetAsync<Account>(Filters<Account>.And(
-					Filters<Account>.Equals("AccessIdentity", identity),
-					Filters<Account>.Equals("Type", type.ToString())
-				), null, null, cancellationToken);
+			return Account.GetAsync<Account>(Filters<Account>.And(Filters<Account>.Equals("AccessIdentity", identity), Filters<Account>.Equals("Type", type.ToString())), null, null, cancellationToken);
 		}
 
 		/// <summary>
@@ -193,10 +192,73 @@ namespace net.vieapps.Services.Users
 		/// <returns></returns>
 		public static string HashPassword(string id, string password)
 		{
-			if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(password) || !id.IsValidUUID())
-				throw new InformationInvalidException();
-			return (id.Trim().ToLower().Left(13) + ":" + password).GetHMACSHA512(id.Trim().ToLower(), false).ToBase64Url(true);
+			return string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(password) || !id.IsValidUUID()
+				? throw new InformationInvalidException()
+				: (id.Trim().ToLower().Left(13) + ":" + password).GetHMACSHA512(id.Trim().ToLower(), false).ToBase64Url(true);
+		}
+	}
+
+	#region Two-Factors Authentication
+	[Serializable]
+	public class TwoFactorsAuthentication
+	{
+		public TwoFactorsAuthentication()
+		{
+			this.Required = false;
+			this.Settings = new List<TwoFactorsAuthenticationSetting>();
+			this.State = false;
 		}
 
+		public JArray GetProvidersJson()
+		{
+			return this.Settings?.ToJArray(s => s.ToJson()) ?? new JArray();
+		}
+
+		public JObject ToJson(Action<JObject> onPreCompleted = null)
+		{
+			var json = new JObject()
+			{
+				{ "Required",  this.Required },
+				{ "Providers", this.GetProvidersJson() }
+			};
+			onPreCompleted?.Invoke(json);
+			return json;
+		}
+
+		public bool Required { get; set; }
+		public List<TwoFactorsAuthenticationSetting> Settings { get; set; }
+		[JsonIgnore, BsonIgnore]
+		public bool State { get; set; }
 	}
+
+	[Serializable]
+	public class TwoFactorsAuthenticationSetting
+	{
+		public TwoFactorsAuthenticationSetting()
+		{
+			this.Type = TwoFactorsAuthenticationType.App;
+			this.Time = DateTime.Now;
+			this.Stamp = DateTime.Now.ToIsoString().GetSHA256();
+		}
+
+		[JsonConverter(typeof(StringEnumConverter)), BsonRepresentation(BsonType.String)]
+		public TwoFactorsAuthenticationType Type { get; set; }
+		public string Stamp { get; set; }
+		public DateTime Time { get; set; }
+
+		public JObject ToJson(Action<JObject> onPreCompleted = null)
+		{
+			var json = new JObject()
+			{
+				{ "Label", this.Type.Equals(TwoFactorsAuthenticationType.SMS) ? $"SMS (******{this.Stamp.Right(4)})" : "Authenticator" },
+				{ "Type", this.Type.ToString() },
+				{ "Time", this.Time },
+				{ "Info", $"{this.Type}|{this.Stamp}".Encrypt() }
+			};
+			onPreCompleted?.Invoke(json);
+			return json;
+		}
+	}
+	#endregion
+
 }

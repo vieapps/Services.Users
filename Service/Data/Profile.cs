@@ -35,6 +35,7 @@ namespace net.vieapps.Services.Users
 			this.PostalCode = "";
 			this.Email = "";
 			this.Mobile = "";
+			this.Language = "vi-VN";
 			this.Avatar = "";
 			this.Alias = "";
 			this.Bio = "";
@@ -78,6 +79,9 @@ namespace net.vieapps.Services.Users
 
 		[Property(MaxLength = 250), Searchable, Sortable(IndexName = "ContactInfo")]
 		public string Email { get; set; }
+
+		[Property(MaxLength = 5)]
+		public string Language { get; set; }
 
 		[Property(MaxLength = 1000)]
 		public string Avatar { get; set; }

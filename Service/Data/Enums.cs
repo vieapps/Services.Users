@@ -124,4 +124,23 @@ namespace net.vieapps.Services.Users
 		/// </summary>
 		LinkedIn
 	}
+
+	//  --------------------------------------------------------------------------------------------
+
+	/// <summary>
+	/// Available type of two-factors authentication
+	/// </summary>
+	[Serializable]
+	public enum TwoFactorsAuthenticationType
+	{
+		/// <summary>
+		/// Presents the authenticator app
+		/// </summary>
+		App,
+
+		/// <summary>
+		/// Presents the SMS
+		/// </summary>
+		SMS,
+	}
 }
