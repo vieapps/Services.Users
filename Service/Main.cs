@@ -811,6 +811,7 @@ namespace net.vieapps.Services.Users
 					{ "ID", account.ID },
 					{ "Type", type.ToString() },
 					{ "Stamp", stamp },
+					{ "Issuer", body.Get<string>("Issuer") },
 					{ "Setup", "" }
 				}
 			}, cancellationToken).ConfigureAwait(false);
