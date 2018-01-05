@@ -704,13 +704,13 @@ namespace net.vieapps.Services.Users
 		{
 			switch (requestInfo.Verb)
 			{
-				// provisioning
-				case "GET":
-					return this.GetProvisioningOTPAsync(requestInfo, cancellationToken);
-
 				// validate
 				case "POST":
 					return this.ValidateOTPAsync(requestInfo, cancellationToken);
+
+				// provisioning
+				case "GET":
+					return this.GetProvisioningOTPAsync(requestInfo, cancellationToken);
 
 				// update
 				case "PUT":
@@ -725,47 +725,6 @@ namespace net.vieapps.Services.Users
 					throw new MethodNotAllowedException(requestInfo.Verb);
 			}
 		}
-
-		#region Get an OTP for provisioning
-		async Task<JObject> GetProvisioningOTPAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
-		{
-			var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID, cancellationToken);
-			if (account == null)
-				throw new InformationNotFoundException();
-
-			var body = requestInfo.GetRequestExpando();
-			if (!Enum.TryParse(body.Get("Type", ""), out TwoFactorsAuthenticationType type))
-				type = TwoFactorsAuthenticationType.App;
-
-			var stamp = type.Equals(TwoFactorsAuthenticationType.App)
-				? DateTime.Now.ToIsoString().GetSHA256()
-				: body.Get("Number", "");
-			if (string.IsNullOrWhiteSpace(stamp))
-				throw new InformationRequiredException();
-
-			var json = await this.CallServiceAsync(new RequestInfo(requestInfo.Session, "OTPs", "Authenticator")
-			{
-				Verb = "GET",
-				Extra = new Dictionary<string, string>()
-				{
-					{ "Account", account.AccessIdentity },
-					{ "ID", account.ID },
-					{ "Stamp", stamp },
-					{ "Setup", "" }
-				}
-			}, cancellationToken).ConfigureAwait(false);
-
-			json.Add(new JProperty("Provisioning", new JObject()
-			{
-				{ "Account", account.AccessIdentity },
-				{ "ID", account.ID },
-				{ "Type", type.ToString() },
-				{ "Stamp", stamp },
-			}.ToString(Formatting.None).Encrypt()));
-
-			return json;
-		}
-		#endregion
 
 		#region Validate an OTP
 		async Task<JObject> ValidateOTPAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
@@ -786,11 +745,11 @@ namespace net.vieapps.Services.Users
 			var stamp = "";
 			try
 			{
-				var data = info.Decrypt().ToArray('|');
+				var data = info.Decrypt(null, true).ToArray('|');
 				type = data[0].ToEnum<TwoFactorsAuthenticationType>();
-				stamp = type.Equals(TwoFactorsAuthenticationType.App)
-					? account.TwoFactorsAuthentication.Settings.Where(s => s.Type.Equals(TwoFactorsAuthenticationType.App)).FirstOrDefault()?.Stamp
-					: account.TwoFactorsAuthentication.Settings.Where(s => s.Type.Equals(TwoFactorsAuthenticationType.SMS) && s.Stamp.Equals(data[1])).FirstOrDefault()?.Stamp;
+				var time = Convert.ToInt64(data[2]);
+				if (account.TwoFactorsAuthentication.Settings.Where(s => s.Type.Equals(type) && s.Stamp.Equals(data[1]) && s.Time.Equals(time)).Count() > 0)
+					stamp = $"{data[1]}|{time}";
 			}
 			catch (Exception ex)
 			{
@@ -808,6 +767,7 @@ namespace net.vieapps.Services.Users
 				{
 					{ "Account", account.AccessIdentity },
 					{ "ID", account.ID },
+					{ "Type", type.ToString() },
 					{ "Stamp", stamp },
 					{ "Password", otp }
 				}
@@ -824,6 +784,49 @@ namespace net.vieapps.Services.Users
 		}
 		#endregion
 
+		#region Get an OTP for provisioning
+		async Task<JObject> GetProvisioningOTPAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		{
+			// check
+			var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID, cancellationToken);
+			if (account == null)
+				throw new InformationNotFoundException();
+
+			var body = requestInfo.GetRequestExpando();
+			if (!Enum.TryParse(body.Get("Type", ""), out TwoFactorsAuthenticationType type))
+				type = TwoFactorsAuthenticationType.App;
+
+			var stamp = type.Equals(TwoFactorsAuthenticationType.App) ? UtilityService.NewUID : body.Get("Number", "");
+			if (string.IsNullOrWhiteSpace(stamp))
+				throw new InformationRequiredException();
+
+			// get provisioning info
+			stamp += "|" + DateTime.Now.ToUnixTimestamp().ToString();
+			var json = await this.CallServiceAsync(new RequestInfo(requestInfo.Session, "OTPs", "Authenticator")
+			{
+				Verb = "GET",
+				Extra = new Dictionary<string, string>()
+				{
+					{ "Account", account.AccessIdentity },
+					{ "ID", account.ID },
+					{ "Type", type.ToString() },
+					{ "Stamp", stamp },
+					{ "Setup", "" }
+				}
+			}, cancellationToken).ConfigureAwait(false);
+
+			// response
+			json.Add(new JProperty("Provisioning", new JObject()
+			{
+				{ "Account", account.AccessIdentity },
+				{ "ID", account.ID },
+				{ "Type", type.ToString() },
+				{ "Stamp", stamp },
+			}.ToString(Formatting.None).Encrypt()));
+			return json;
+		}
+		#endregion
+
 		#region Update an OTP
 		async Task<JObject> UpdateOTPAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
@@ -836,11 +839,9 @@ namespace net.vieapps.Services.Users
 			if (!account.ID.IsEquals((json["ID"] as JValue).Value.ToString()) || !account.AccessIdentity.IsEquals((json["Account"] as JValue).Value.ToString()))
 				throw new InformationInvalidException();
 
-			var otp = body.Get("OTP", "");
 			if (!Enum.TryParse((json["Type"] as JValue).Value.ToString(), out TwoFactorsAuthenticationType type))
 				type = TwoFactorsAuthenticationType.App;
 			var stamp = (json["Stamp"] as JValue).Value.ToString();
-
 			json = await this.CallServiceAsync(new RequestInfo(requestInfo.Session, "OTPs", "Authenticator")
 			{
 				Verb = "GET",
@@ -848,8 +849,9 @@ namespace net.vieapps.Services.Users
 				{
 					{ "Account", account.AccessIdentity },
 					{ "ID", account.ID },
+					{ "Type", type.ToString() },
 					{ "Stamp", stamp },
-					{ "Password", otp }
+					{ "Password", body.Get("OTP", "") }
 				}
 			}, cancellationToken).ConfigureAwait(false);
 
@@ -857,7 +859,8 @@ namespace net.vieapps.Services.Users
 			account.TwoFactorsAuthentication.Settings.Add(new TwoFactorsAuthenticationSetting()
 			{
 				Type = type,
-				Stamp = stamp
+				Stamp = stamp.ToArray('|').First(),
+				Time = Convert.ToInt64(stamp.ToArray('|').Last())
 			});
 
 			json = account.GetAccountJson(true);
@@ -882,10 +885,12 @@ namespace net.vieapps.Services.Users
 			if (account == null)
 				throw new InformationNotFoundException();
 
-			if (!Enum.TryParse(requestInfo.Query.ContainsKey("Type") ? requestInfo.Query["Type"] : "", out TwoFactorsAuthenticationType type))
-				type = TwoFactorsAuthenticationType.App;
+			var info = (requestInfo.Query.ContainsKey("Info") ? requestInfo.Query["Info"].Decrypt(null, true) : "").ToArray('|');
+			var type = info[0].ToEnum<TwoFactorsAuthenticationType>();
+			var stamp = info[1];
+			var time = Convert.ToInt64(info[2]);
 
-			account.TwoFactorsAuthentication.Settings = account.TwoFactorsAuthentication.Settings.Where(s => !s.Type.Equals(type)).ToList();
+			account.TwoFactorsAuthentication.Settings = account.TwoFactorsAuthentication.Settings.Where(s => !s.Type.Equals(type) && !s.Stamp.Equals(stamp) && !s.Time.Equals(time)).ToList();
 			account.TwoFactorsAuthentication.Required = account.TwoFactorsAuthentication.Settings.Count > 0;
 
 			var json = account.GetAccountJson(true);

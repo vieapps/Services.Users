@@ -237,14 +237,14 @@ namespace net.vieapps.Services.Users
 		public TwoFactorsAuthenticationSetting()
 		{
 			this.Type = TwoFactorsAuthenticationType.App;
-			this.Time = DateTime.Now;
-			this.Stamp = DateTime.Now.ToIsoString().GetSHA256();
+			this.Stamp = "";
+			this.Time = DateTime.Now.ToUnixTimestamp();
 		}
 
 		[JsonConverter(typeof(StringEnumConverter)), BsonRepresentation(BsonType.String)]
 		public TwoFactorsAuthenticationType Type { get; set; }
 		public string Stamp { get; set; }
-		public DateTime Time { get; set; }
+		public long Time { get; set; }
 
 		public JObject ToJson(Action<JObject> onPreCompleted = null)
 		{
@@ -252,8 +252,8 @@ namespace net.vieapps.Services.Users
 			{
 				{ "Label", this.Type.Equals(TwoFactorsAuthenticationType.SMS) ? $"SMS (******{this.Stamp.Right(4)})" : "Authenticator" },
 				{ "Type", this.Type.ToString() },
-				{ "Time", this.Time },
-				{ "Info", $"{this.Type}|{this.Stamp}".Encrypt() }
+				{ "Time", this.Time.FromUnixTimestamp() },
+				{ "Info", $"{this.Type}|{this.Stamp}|{this.Time}".Encrypt(null, true) }
 			};
 			onPreCompleted?.Invoke(json);
 			return json;
