@@ -21,14 +21,20 @@ namespace net.vieapps.Services.Users
 	{
 		public ServiceComponent() : base() { }
 
-		#region Attributes
-		static string _ActivationKey = null;
-
-		internal static string ActivationKey
+		#region Keys
+		internal string ActivationKey
 		{
 			get
 			{
-				return ServiceComponent._ActivationKey ?? (ServiceComponent._ActivationKey = UtilityService.GetAppSetting("Users:ActivationKey", "VIEApps-56BA2999-Services-A2E4-Users-4B54-Activation-83EB-Key-693C250DC95D"));
+				return this.GetKey("Activation", "VIEApps-56BA2999-NGX-A2E4-Services-4B54-Activation-83EB-Key-693C250DC95D");
+			}
+		}
+
+		internal string AuthenticationKey
+		{
+			get
+			{
+				return this.GetKey("Authentication", "VIEApps-65E47754-NGX-50C0-Services-4565-Authentication-BA55-Key-A8CC23879C5D");
 			}
 		}
 		#endregion
@@ -54,7 +60,7 @@ namespace net.vieapps.Services.Users
 			});
 		}
 
-		public override string ServiceName { get { return "users"; } }
+		public override string ServiceName { get { return "Users"; } }
 		#endregion
 
 		public override async Task<JObject> ProcessRequestAsync(RequestInfo requestInfo, CancellationToken cancellationToken = default(CancellationToken))
@@ -589,8 +595,14 @@ namespace net.vieapps.Services.Users
 		{
 			// prepare
 			var body = requestInfo.GetBodyExpando();
-			var email = body.Get<string>("Email").Decrypt().Trim().ToLower();
-			var password = body.Get<string>("Password").Decrypt();
+
+			var email = body.Get<string>("Email").Decrypt(this.EncryptionKey).Trim().ToLower();
+			var password = body.Get<string>("Password").Decrypt(this.EncryptionKey);
+
+			var signature = (email + password).GetHMACSHA256(this.ValidationKey);
+			if (!signature.IsEquals(body.Get<string>("Signature")))
+				throw new InvalidTokenSignatureException();
+
 			var type = body.Get("Type", "BuiltIn").ToEnum<AccountType>();
 			Account account = null;
 
@@ -609,9 +621,10 @@ namespace net.vieapps.Services.Users
 					Header = requestInfo.Header,
 					Body = (new JObject()
 					{
-						{ "Domain", domain.Encrypt() },
-						{ "Username", username.Encrypt() },
-						{ "Password", password.Encrypt() }
+						{ "Domain", domain.Encrypt(this.EncryptionKey) },
+						{ "Username", username.Encrypt(this.EncryptionKey) },
+						{ "Password", password.Encrypt(this.EncryptionKey) },
+						{ "Signature", (domain + username + password).GetHMACSHA256(this.ValidationKey) }
 					}).ToString(Formatting.None)
 				}, cancellationToken).ConfigureAwait(false);
 
@@ -643,6 +656,10 @@ namespace net.vieapps.Services.Users
 						await Profile.CreateAsync(profile, cancellationToken).ConfigureAwait(false);
 					}
 				}
+
+				// no need to create account, then response with success state
+				else
+					return new JObject();
 			}
 
 			// OAuth account
@@ -666,7 +683,7 @@ namespace net.vieapps.Services.Users
 			if (account.TwoFactorsAuthentication.Required)
 			{
 				results.Add(new JProperty("Require2FA", true));
-				results.Add(new JProperty("Providers", account.TwoFactorsAuthentication.GetProvidersJson()));
+				results.Add(new JProperty("Providers", account.TwoFactorsAuthentication.GetProvidersJson(this.AuthenticationKey)));
 			}
 
 			// clear cached of current session when 2FA is not required
@@ -731,21 +748,33 @@ namespace net.vieapps.Services.Users
 		{
 			// prepare
 			var body = requestInfo.GetBodyExpando();
+
 			var id = body.Get("ID", "");
+			var otp = body.Get("OTP", "");
+			var info = body.Get("Info", "");
+			if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(otp) || string.IsNullOrWhiteSpace(info))
+				throw new InformationRequiredException();
+
+			try
+			{
+				id = id.Decrypt(this.EncryptionKey);
+				otp = otp.Decrypt(this.EncryptionKey);
+				info = info.Decrypt(this.EncryptionKey);
+			}
+			catch (Exception ex)
+			{
+				throw new InformationInvalidException(ex);
+			}
+
 			var account = await Account.GetAsync<Account>(id, cancellationToken);
 			if (account == null)
 				throw new InformationNotFoundException();
-
-			var otp = body.Get("OTP", "");
-			var info = body.Get("Info", "");
-			if (string.IsNullOrWhiteSpace(otp) || string.IsNullOrWhiteSpace(otp))
-				throw new InformationRequiredException();
 
 			var type = TwoFactorsAuthenticationType.App;
 			var stamp = "";
 			try
 			{
-				var data = info.Decrypt(null, true).ToArray('|');
+				var data = info.Decrypt(this.AuthenticationKey, true).ToArray('|');
 				type = data[0].ToEnum<TwoFactorsAuthenticationType>();
 				var time = Convert.ToInt64(data[2]);
 				if (account.TwoFactorsAuthentication.Settings.Where(s => s.Type.Equals(type) && s.Stamp.Equals(data[1]) && s.Time.Equals(time)).Count() > 0)
@@ -765,11 +794,11 @@ namespace net.vieapps.Services.Users
 				Verb = "GET",
 				Extra = new Dictionary<string, string>()
 				{
-					{ "Account", account.AccessIdentity },
-					{ "ID", account.ID },
+					{ "Account", account.AccessIdentity.Encrypt(this.EncryptionKey) },
+					{ "ID", account.ID.Encrypt(this.EncryptionKey) },
 					{ "Type", type.ToString() },
-					{ "Stamp", stamp },
-					{ "Password", otp }
+					{ "Stamp", stamp.Encrypt(this.EncryptionKey) },
+					{ "Password", otp.Encrypt(this.EncryptionKey) }
 				}
 			}, cancellationToken).ConfigureAwait(false);
 
@@ -807,11 +836,11 @@ namespace net.vieapps.Services.Users
 				Verb = "GET",
 				Extra = new Dictionary<string, string>()
 				{
-					{ "Account", account.AccessIdentity },
-					{ "ID", account.ID },
+					{ "Account", account.AccessIdentity.Encrypt(this.EncryptionKey) },
+					{ "ID", account.ID.Encrypt(this.EncryptionKey) },
 					{ "Type", type.ToString() },
-					{ "Stamp", stamp },
-					{ "Issuer", body.Get<string>("Issuer") },
+					{ "Stamp", stamp.Encrypt(this.EncryptionKey) },
+					{ "Issuer", body.Get("Issuer", "").Encrypt(this.EncryptionKey) },
 					{ "Setup", "" }
 				}
 			}, cancellationToken).ConfigureAwait(false);
@@ -823,7 +852,7 @@ namespace net.vieapps.Services.Users
 				{ "ID", account.ID },
 				{ "Type", type.ToString() },
 				{ "Stamp", stamp },
-			}.ToString(Formatting.None).Encrypt()));
+			}.ToString(Formatting.None).Encrypt(this.AuthenticationKey)));
 			return json;
 		}
 		#endregion
@@ -836,7 +865,7 @@ namespace net.vieapps.Services.Users
 				throw new InformationNotFoundException();
 
 			var body = requestInfo.GetBodyExpando();
-			var json = JObject.Parse(body.Get("Provisioning", "").Decrypt());
+			var json = JObject.Parse(body.Get("Provisioning", "").Decrypt(this.AuthenticationKey));
 			if (!account.ID.IsEquals((json["ID"] as JValue).Value.ToString()) || !account.AccessIdentity.IsEquals((json["Account"] as JValue).Value.ToString()))
 				throw new InformationInvalidException();
 
@@ -848,11 +877,11 @@ namespace net.vieapps.Services.Users
 				Verb = "GET",
 				Extra = new Dictionary<string, string>()
 				{
-					{ "Account", account.AccessIdentity },
-					{ "ID", account.ID },
+					{ "Account", account.AccessIdentity.Encrypt(this.EncryptionKey) },
+					{ "ID", account.ID.Encrypt(this.EncryptionKey) },
 					{ "Type", type.ToString() },
-					{ "Stamp", stamp },
-					{ "Password", body.Get("OTP", "") }
+					{ "Stamp", stamp.Encrypt(this.EncryptionKey) },
+					{ "Password", body.Get("OTP", "").Encrypt(this.EncryptionKey) }
 				}
 			}, cancellationToken).ConfigureAwait(false);
 
@@ -864,7 +893,7 @@ namespace net.vieapps.Services.Users
 				Time = Convert.ToInt64(stamp.ToArray('|').Last())
 			});
 
-			json = account.GetAccountJson(true);
+			json = account.GetAccountJson(true, this.AuthenticationKey);
 			await Task.WhenAll(
 				Account.UpdateAsync(account),
 				Utility.Cache.SetAsync<Account>(account),
@@ -886,7 +915,7 @@ namespace net.vieapps.Services.Users
 			if (account == null)
 				throw new InformationNotFoundException();
 
-			var info = (requestInfo.Query.ContainsKey("Info") ? requestInfo.Query["Info"].Decrypt(null, true) : "").ToArray('|');
+			var info = (requestInfo.Query.ContainsKey("Info") ? requestInfo.Query["Info"].Decrypt(this.AuthenticationKey, true) : "").ToArray('|');
 			var type = info[0].ToEnum<TwoFactorsAuthenticationType>();
 			var stamp = info[1];
 			var time = Convert.ToInt64(info[2]);
@@ -894,7 +923,7 @@ namespace net.vieapps.Services.Users
 			account.TwoFactorsAuthentication.Settings = account.TwoFactorsAuthentication.Settings.Where(s => !s.Type.Equals(type) && !s.Stamp.Equals(stamp) && !s.Time.Equals(time)).ToList();
 			account.TwoFactorsAuthentication.Required = account.TwoFactorsAuthentication.Settings.Count > 0;
 
-			var json = account.GetAccountJson(true);
+			var json = account.GetAccountJson(true, this.AuthenticationKey);
 			await Task.WhenAll(
 				Account.UpdateAsync(account),
 				Utility.Cache.SetAsync<Account>(account),
@@ -964,7 +993,7 @@ namespace net.vieapps.Services.Users
 				throw new InformationNotFoundException();
 
 			// response
-			return account.GetAccountJson(requestInfo.Extra != null && requestInfo.Extra.ContainsKey("x-status"));
+			return account.GetAccountJson(requestInfo.Extra != null && requestInfo.Extra.ContainsKey("x-status"), this.AuthenticationKey);
 		}
 		#endregion
 
@@ -980,7 +1009,7 @@ namespace net.vieapps.Services.Users
 				var requestBody = requestInfo.GetBodyExpando();
 
 				var account = requestBody.Copy<Account>();
-				account.AccessKey = requestBody.Get<string>("AccessKey") ?? this.GenerateRandomPassword(account.AccessIdentity);
+				account.AccessKey = requestBody.Get<string>("AccessKey") ?? Account.GeneratePassword(account.AccessIdentity);
 
 				await Account.CreateAsync(account, cancellationToken).ConfigureAwait(false);
 				return account.ToJson();
@@ -1006,7 +1035,7 @@ namespace net.vieapps.Services.Users
 					? requestInfo.Extra["Password"].Decrypt()
 					: null;
 				if (string.IsNullOrWhiteSpace(password) && !string.IsNullOrWhiteSpace(email))
-					password = this.GenerateRandomPassword(email);
+					password = Account.GeneratePassword(email);
 
 				// check existing account
 				if (await Account.GetByIdentityAsync(email, AccountType.BuiltIn, cancellationToken).ConfigureAwait(false) != null)
@@ -1057,7 +1086,7 @@ namespace net.vieapps.Services.Users
 					{ "Password", password },
 					{ "Time", DateTime.Now },
 					{ "Mode", isCreateNew ? "Status" : "Create"  }
-				}).ToString(Formatting.None).Encrypt(ServiceComponent.ActivationKey).ToBase64Url(true);
+				}).ToString(Formatting.None).Encrypt(this.ActivationKey).ToBase64Url(true);
 
 				var uri = requestInfo.Query.ContainsKey("uri")
 					? requestInfo.Query["uri"].Url64Decode()
@@ -1174,22 +1203,6 @@ namespace net.vieapps.Services.Users
 		#endregion
 
 		#region Renew password of an account
-		string GenerateRandomPassword(string email)
-		{
-			var password = email.IndexOf("-") > 0
-				? email.Substring(email.IndexOf("-"), 1)
-				: email.IndexOf(".") > 0
-					? email.Substring(email.IndexOf("."), 1)
-					: email.IndexOf("_") > 0
-						? email.Substring(email.IndexOf("_"), 1)
-						: "#";
-
-			return Captcha.GenerateRandomCode(true, true).ToUpper() + password
-				+ Captcha.GenerateRandomCode(true, false).ToLower()
-				+ UtilityService.GetUUID().GetHMACSHA1(email, false).Left(3).GetCapitalizedFirstLetter()
-				+ UtilityService.GetUUID().Right(3).ToLower();
-		}
-
 		async Task<JObject> ResetPasswordAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// get account
@@ -1202,13 +1215,13 @@ namespace net.vieapps.Services.Users
 				};
 
 			// prepare
-			var password = this.GenerateRandomPassword(email);
+			var password = Account.GeneratePassword(email);
 			var code = (new JObject()
 			{
 				{ "ID", account.ID },
 				{ "Password", password },
 				{ "Time", DateTime.Now }
-			}).ToString(Formatting.None).Encrypt(ServiceComponent.ActivationKey).ToBase64Url(true);
+			}).ToString(Formatting.None).Encrypt(this.ActivationKey).ToBase64Url(true);
 
 			var uri = requestInfo.Query.ContainsKey("uri")
 				? requestInfo.Query["uri"].Url64Decode()
@@ -1691,7 +1704,7 @@ namespace net.vieapps.Services.Users
 
 			try
 			{
-				code = code.ToBase64(false, true).Decrypt(ServiceComponent.ActivationKey);
+				code = code.ToBase64(false, true).Decrypt(this.ActivationKey);
 			}
 			catch (Exception ex)
 			{
@@ -2010,7 +2023,7 @@ namespace net.vieapps.Services.Users
 				throw new MethodNotAllowedException(requestInfo.Verb);
 
 			var code = Captcha.GenerateCode();
-			var uri = UtilityService.GetAppSetting("HttpUri:Files", "https://afs.vieapps.net")
+			var uri = this.GetHttpURI("Files", "https://afs.vieapps.net")
 				+ "/captchas/" + code.Url64Encode() + "/"
 				+ (requestInfo.GetQueryParameter("register") ?? UtilityService.NewUID.Encrypt(CryptoService.DefaultEncryptionKey, true)).Substring(UtilityService.GetRandomNumber(13, 43), 13).Reverse() + ".jpg";
 

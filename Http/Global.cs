@@ -206,13 +206,13 @@ namespace net.vieapps.Services.Users
 				var authTicket = Global.GetAuthenticateTicket(app.Context);
 				if (!string.IsNullOrWhiteSpace(authTicket))
 				{
-					var ticket = AspNetSecurityService.ParseAuthenticateToken(authTicket, Base.AspNet.Global.RSA, Base.AspNet.Global.AESKey);
+					var ticket = AspNetSecurityService.ParseAuthenticateToken(authTicket, Base.AspNet.Global.RSA, Base.AspNet.Global.EncryptionKey);
 					var userID = ticket.Item1;
 					var accessToken = ticket.Item2;
 					var sessionID = ticket.Item3;
 					var deviceID = ticket.Item4;
 
-					app.Context.User = new UserPrincipal(User.ParseAccessToken(accessToken, Base.AspNet.Global.RSA, Base.AspNet.Global.AESKey));
+					app.Context.User = new UserPrincipal(User.ParseAccessToken(accessToken, Base.AspNet.Global.RSA, Base.AspNet.Global.EncryptionKey));
 					app.Context.Items["Session-ID"] = sessionID;
 					app.Context.Items["Device-ID"] = deviceID;
 				}
@@ -231,7 +231,7 @@ namespace net.vieapps.Services.Users
 			context.Items["Session-ID"] = sessionID;
 			var cookie = new HttpCookie(".VIEApps-Authenticated-Session-ID")
 			{
-				Value = "VIEApps|" + sessionID.Encrypt(Base.AspNet.Global.AESKey),
+				Value = "VIEApps|" + sessionID.Encrypt(Base.AspNet.Global.EncryptionKey),
 				HttpOnly = true,
 				Expires = DateTime.Now.AddDays(180)
 			};
@@ -247,7 +247,7 @@ namespace net.vieapps.Services.Users
 				if (cookie != null && cookie.Value.StartsWith("VIEApps|"))
 					try
 					{
-						context.Items["Session-ID"] = cookie.Value.ToArray('|').Last().Decrypt(Base.AspNet.Global.AESKey);
+						context.Items["Session-ID"] = cookie.Value.ToArray('|').Last().Decrypt(Base.AspNet.Global.EncryptionKey);
 					}
 					catch { }
 			}
@@ -260,7 +260,7 @@ namespace net.vieapps.Services.Users
 			context.Items["Device-ID"] = sessionID;
 			var cookie = new HttpCookie(".VIEApps-Authenticated-Device-ID")
 			{
-				Value = "VIEApps|" + sessionID.Encrypt(Base.AspNet.Global.AESKey),
+				Value = "VIEApps|" + sessionID.Encrypt(Base.AspNet.Global.EncryptionKey),
 				HttpOnly = true,
 				Expires = DateTime.Now.AddDays(180)
 			};
@@ -276,7 +276,7 @@ namespace net.vieapps.Services.Users
 				if (cookie != null && cookie.Value.StartsWith("VIEApps|"))
 					try
 					{
-						context.Items["Device-ID"] = cookie.Value.ToArray('|').Last().Decrypt(Base.AspNet.Global.AESKey);
+						context.Items["Device-ID"] = cookie.Value.ToArray('|').Last().Decrypt(Base.AspNet.Global.EncryptionKey);
 					}
 					catch { }
 			}
@@ -373,19 +373,19 @@ namespace net.vieapps.Services.Users
 				(info) =>
 				{
 #if DEBUG || PROCESSLOGS
-					Base.AspNet.Global.WriteLogs(info.CorrelationID, null, $"Call the service [net.vieapps.services.{info.ServiceName}]\r\n{info.ToJson().ToString(Newtonsoft.Json.Formatting.Indented)}");
+					Base.AspNet.Global.WriteLogs(info.CorrelationID, null, $"Call the service [net.vieapps.services.{info.ServiceName.ToLower()}]\r\n{info.ToJson().ToString(Newtonsoft.Json.Formatting.Indented)}");
 #endif
 				},
 				(info, json) =>
 				{
 #if DEBUG || PROCESSLOGS
-					Base.AspNet.Global.WriteLogs(info.CorrelationID, null, $"Results from the service [net.vieapps.services.{info.ServiceName}]\r\n{json.ToString(Newtonsoft.Json.Formatting.Indented)}");
+					Base.AspNet.Global.WriteLogs(info.CorrelationID, null, $"Results from the service [net.vieapps.services.{info.ServiceName.ToLower()}]\r\n{json.ToString(Newtonsoft.Json.Formatting.Indented)}");
 #endif
 				},
 				(info, ex) =>
 				{
 #if DEBUG || PROCESSLOGS
-					Base.AspNet.Global.WriteLogs(info.CorrelationID, null, $"Error occurred while calling the service [net.vieapps.services.{info.ServiceName}]", ex);
+					Base.AspNet.Global.WriteLogs(info.CorrelationID, null, $"Error occurred while calling the service [net.vieapps.services.{info.ServiceName.ToLower()}]", ex);
 #endif
 				}
 			);
@@ -441,16 +441,16 @@ namespace net.vieapps.Services.Users
 		{
 			// parse
 			context = context ?? HttpContext.Current;
-			var token = User.ParsePassportToken(context.Request.QueryString["x-passport-token"], Base.AspNet.Global.AESKey, Base.AspNet.Global.GenerateJWTKey());
+			var token = User.ParsePassportToken(context.Request.QueryString["x-passport-token"], Base.AspNet.Global.EncryptionKey, Base.AspNet.Global.JWTKey);
 			var userID = token.Item1;
 			var accessToken = token.Item2;
 			var sessionID = token.Item3;
 			var deviceID = token.Item4;
 
-			var ticket = AspNetSecurityService.ParseAuthenticateToken(accessToken, Base.AspNet.Global.RSA, Base.AspNet.Global.AESKey);
+			var ticket = AspNetSecurityService.ParseAuthenticateToken(accessToken, Base.AspNet.Global.RSA, Base.AspNet.Global.EncryptionKey);
 			accessToken = ticket.Item2;
 
-			var user = User.ParseAccessToken(accessToken, Base.AspNet.Global.RSA, Base.AspNet.Global.AESKey);
+			var user = User.ParseAccessToken(accessToken, Base.AspNet.Global.RSA, Base.AspNet.Global.EncryptionKey);
 			if (!user.ID.Equals(ticket.Item1) || !user.ID.Equals(userID))
 				throw new InvalidTokenException("Token is invalid (User identity is invalid)");
 
@@ -488,7 +488,7 @@ namespace net.vieapps.Services.Users
 
 			// parse
 			context = context ?? HttpContext.Current;
-			var token = User.ParsePassportToken(context.Request.QueryString["x-passport-token"], Base.AspNet.Global.AESKey, Base.AspNet.Global.GenerateJWTKey());
+			var token = User.ParsePassportToken(context.Request.QueryString["x-passport-token"], Base.AspNet.Global.EncryptionKey, Base.AspNet.Global.JWTKey);
 			var userID = token.Item1;
 			var accessToken = token.Item2;
 			var sessionID = token.Item3;

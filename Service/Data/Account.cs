@@ -148,7 +148,7 @@ namespace net.vieapps.Services.Users
 			this.Sessions = await Session.FindAsync(Filters<Session>.Equals("UserID", this.ID), Sorts<Session>.Descending("ExpiredAt"), 0, 1, null, cancellationToken).ConfigureAwait(false);
 		}
 
-		public JObject GetAccountJson(bool addStatus = false, string idNode = "ID")
+		public JObject GetAccountJson(bool addStatus = false, string authenticationKey = null)
 		{
 			var roles = (SystemRole.All.ToString()
 				+ "," + SystemRole.Authenticated.ToString()
@@ -159,7 +159,7 @@ namespace net.vieapps.Services.Users
 
 			var json = new JObject()
 			{
-				{ idNode ?? "ID", this.ID },
+				{ "ID", this.ID },
 				{ "Roles", roles.ToJArray() },
 				{ "Privileges", (this.AccessPrivileges ?? new List<Privilege>()).ToJArray() },
 			};
@@ -167,7 +167,7 @@ namespace net.vieapps.Services.Users
 			if (addStatus)
 			{
 				json.Add(new JProperty("Status", this.Status.ToString()));
-				json.Add(new JProperty("TwoFactorsAuthentication", this.TwoFactorsAuthentication.ToJson()));
+				json.Add(new JProperty("TwoFactorsAuthentication", this.TwoFactorsAuthentication.ToJson(authenticationKey ?? UtilityService.GetAppSetting("Keys:Authentication"))));
 			}
 
 			return json;
@@ -196,6 +196,23 @@ namespace net.vieapps.Services.Users
 				? throw new InformationInvalidException()
 				: (id.Trim().ToLower().Left(13) + ":" + password).GetHMACSHA512(id.Trim().ToLower(), false).ToBase64Url(true);
 		}
+
+		/// <summary>
+		/// Generates the random password from an email address
+		/// </summary>
+		/// <param name="email">The email address</param>
+		/// <returns></returns>
+		public static string GeneratePassword(string email)
+		{
+			var pos = (email ?? "").IndexOf("-");
+			if (pos < 0)
+				pos = (email ?? "").IndexOf(".");
+			if (pos < 0)
+				pos = (email ?? "").IndexOf("_");
+			return Captcha.GenerateRandomCode(true, true).GetCapitalizedFirstLetter()
+				+ (pos > 0 ? email.Substring(pos, 1) : "#") + OTPService.GeneratePassword((email.ToLower() + ":" + UtilityService.NewUID).ToBytes())
+				+ Captcha.GenerateRandomCode().GetCapitalizedFirstLetter();
+		}
 	}
 
 	#region Two-Factors Authentication
@@ -209,17 +226,17 @@ namespace net.vieapps.Services.Users
 			this.State = false;
 		}
 
-		public JArray GetProvidersJson()
+		public JArray GetProvidersJson(string authenticationKey)
 		{
-			return this.Settings?.ToJArray(s => s.ToJson()) ?? new JArray();
+			return this.Settings?.ToJArray(s => s.ToJson(authenticationKey)) ?? new JArray();
 		}
 
-		public JObject ToJson(Action<JObject> onPreCompleted = null)
+		public JObject ToJson(string authenticationKey, Action<JObject> onPreCompleted = null)
 		{
 			var json = new JObject()
 			{
 				{ "Required",  this.Required },
-				{ "Providers", this.GetProvidersJson() }
+				{ "Providers", this.GetProvidersJson(authenticationKey) }
 			};
 			onPreCompleted?.Invoke(json);
 			return json;
@@ -246,14 +263,14 @@ namespace net.vieapps.Services.Users
 		public string Stamp { get; set; }
 		public long Time { get; set; }
 
-		public JObject ToJson(Action<JObject> onPreCompleted = null)
+		public JObject ToJson(string authenticationKey, Action<JObject> onPreCompleted = null)
 		{
 			var json = new JObject()
 			{
 				{ "Label", this.Type.Equals(TwoFactorsAuthenticationType.SMS) ? $"SMS (******{this.Stamp.Right(4)})" : "Authenticator" },
 				{ "Type", this.Type.ToString() },
 				{ "Time", this.Time.FromUnixTimestamp() },
-				{ "Info", $"{this.Type}|{this.Stamp}|{this.Time}".Encrypt(null, true) }
+				{ "Info", $"{this.Type}|{this.Stamp}|{this.Time}".Encrypt(authenticationKey, true) }
 			};
 			onPreCompleted?.Invoke(json);
 			return json;
