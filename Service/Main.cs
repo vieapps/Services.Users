@@ -473,13 +473,19 @@ namespace net.vieapps.Services.Users
 			// get session
 			else
 			{
+				// verify
+				if (requestInfo.Extra == null || !requestInfo.Extra.ContainsKey("Signature")
+				|| !requestInfo.Extra["Signature"].Equals(requestInfo.Header["x-app-token"].GetHMACSHA256(this.ValidationKey)))
+					throw new InformationInvalidException();
+
+				// get information
 				var session = requestInfo.Session.User.ID.Equals("") || requestInfo.Session.User.IsSystemAccount
 					? await Utility.Cache.FetchAsync<Session>(requestInfo.Session.SessionID).ConfigureAwait(false)
 					: await Session.GetAsync<Session>(requestInfo.Session.SessionID, cancellationToken).ConfigureAwait(false);
 
 				var result = session?.ToJson();
 				if (result != null)
-					result["AccessToken"] = ((result["AccessToken"] as JValue).Value as string).Encrypt();
+					result["AccessToken"] = ((result["AccessToken"] as JValue).Value as string).Encrypt(this.EncryptionKey);
 
 				return result;
 			}
@@ -540,15 +546,19 @@ namespace net.vieapps.Services.Users
 			if (string.IsNullOrWhiteSpace(requestInfo.Session.SessionID))
 				throw new InvalidRequestException();
 
-			var data = requestInfo.GetBodyExpando();
-			if (data == null)
+			// verify
+			if (requestInfo.Extra == null || !requestInfo.Extra.ContainsKey("Signature") || !requestInfo.Extra["Signature"].Equals(requestInfo.Body.GetHMACSHA256(this.ValidationKey)))
+				throw new InformationInvalidException();
+
+			var request = requestInfo.GetBodyExpando();
+			if (request == null)
 				throw new InformationRequiredException();
 
 			// register a session of vistor/system account
 			if (requestInfo.Session.User.ID.Equals("") || requestInfo.Session.User.IsSystemAccount)
 			{
 				// update cache of session
-				var session = data.Copy<Session>();
+				var session = request.Copy<Session>();
 				Utility.Cache.Set(session, 180);
 
 				// response
@@ -561,14 +571,14 @@ namespace net.vieapps.Services.Users
 				var session = await Session.GetAsync<Session>(requestInfo.Session.SessionID, cancellationToken).ConfigureAwait(false);
 				if (session == null)
 				{
-					session = data.Copy<Session>();
+					session = request.Copy<Session>();
 					await Session.CreateAsync(session, cancellationToken).ConfigureAwait(false);
 				}
 				else
 				{
-					if (!requestInfo.Session.SessionID.IsEquals(data.Get<string>("ID")) || !requestInfo.Session.User.ID.IsEquals(data.Get<string>("UserID")))
+					if (!requestInfo.Session.SessionID.IsEquals(request.Get<string>("ID")) || !requestInfo.Session.User.ID.IsEquals(request.Get<string>("UserID")))
 						throw new InvalidSessionException();
-					session.CopyFrom(data);
+					session.CopyFrom(request);
 					await Session.UpdateAsync(session, cancellationToken).ConfigureAwait(false);
 				}
 
@@ -593,17 +603,15 @@ namespace net.vieapps.Services.Users
 		#region Sign a session in
 		async Task<JObject> SignSessionInAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
+			// verify
+			if (requestInfo.Extra == null || !requestInfo.Extra.ContainsKey("Signature") || !requestInfo.Extra["Signature"].Equals(requestInfo.Body.GetHMACSHA256(this.ValidationKey)))
+				throw new InformationInvalidException();
+
 			// prepare
-			var body = requestInfo.GetBodyExpando();
-
-			var email = body.Get<string>("Email").Decrypt(this.EncryptionKey).Trim().ToLower();
-			var password = body.Get<string>("Password").Decrypt(this.EncryptionKey);
-
-			var signature = (email + password).GetHMACSHA256(this.ValidationKey);
-			if (!signature.IsEquals(body.Get<string>("Signature")))
-				throw new InvalidTokenSignatureException();
-
-			var type = body.Get("Type", "BuiltIn").ToEnum<AccountType>();
+			var request = requestInfo.GetBodyExpando();
+			var type = request.Get("Type", "BuiltIn").ToEnum<AccountType>();
+			var email = request.Get<string>("Email").Decrypt(this.EncryptionKey).Trim().ToLower();
+			var password = request.Get<string>("Password").Decrypt(this.EncryptionKey);
 			Account account = null;
 
 			// Windows account
@@ -615,17 +623,22 @@ namespace net.vieapps.Services.Users
 					: username.Trim();
 				var domain = email.Right(email.Length - email.PositionOf("@") - 1).Trim();
 
+				var body = new JObject()
+				{
+					{ "Domain", domain.Encrypt(this.EncryptionKey) },
+					{ "Username", username.Encrypt(this.EncryptionKey) },
+					{ "Password", password.Encrypt(this.EncryptionKey) }
+				}.ToString(Formatting.None);
+
 				await this.CallServiceAsync(new RequestInfo(requestInfo.Session, "WindowsAD", "Account")
 				{
 					Verb = "POST",
 					Header = requestInfo.Header,
-					Body = (new JObject()
+					Body = body,
+					Extra = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
 					{
-						{ "Domain", domain.Encrypt(this.EncryptionKey) },
-						{ "Username", username.Encrypt(this.EncryptionKey) },
-						{ "Password", password.Encrypt(this.EncryptionKey) },
-						{ "Signature", (domain + username + password).GetHMACSHA256(this.ValidationKey) }
-					}).ToString(Formatting.None)
+						{ "Signature", body.GetHMACSHA256(this.ValidationKey) }
+					}
 				}, cancellationToken).ConfigureAwait(false);
 
 				// state to create information of account/profile
@@ -650,7 +663,7 @@ namespace net.vieapps.Services.Users
 						var profile = new Profile()
 						{
 							ID = account.ID,
-							Name = body.Get("Name", username),
+							Name = request.Get("Name", username),
 							Email = email
 						};
 						await Profile.CreateAsync(profile, cancellationToken).ConfigureAwait(false);
@@ -672,7 +685,7 @@ namespace net.vieapps.Services.Users
 			else
 			{
 				account = await Account.GetByIdentityAsync(email, AccountType.BuiltIn, cancellationToken).ConfigureAwait(false);
-				if (account == null || !Account.HashPassword(account.ID, password).Equals(account.AccessKey))
+				if (account == null || !Account.GeneratePassword(account.ID, password).Equals(account.AccessKey))
 					throw new WrongAccountException();
 			}
 
@@ -698,6 +711,11 @@ namespace net.vieapps.Services.Users
 		#region Sign a session out
 		async Task<JObject> SignSessionOutAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
+			// verify
+			if (requestInfo.Extra == null || !requestInfo.Extra.ContainsKey("Signature")
+			|| !requestInfo.Extra["Signature"].Equals(requestInfo.Header["x-app-token"].GetHMACSHA256(this.ValidationKey)))
+				throw new InformationInvalidException();
+
 			// remove session
 			await Session.DeleteAsync<Session>(requestInfo.Session.SessionID, cancellationToken).ConfigureAwait(false);
 
@@ -779,24 +797,25 @@ namespace net.vieapps.Services.Users
 				var time = Convert.ToInt64(data[2]);
 				if (account.TwoFactorsAuthentication.Settings.Where(s => s.Type.Equals(type) && s.Stamp.Equals(data[1]) && s.Time.Equals(time)).Count() > 0)
 					stamp = $"{data[1]}|{time}";
+				else
+					throw new InformationInvalidException();
+			}
+			catch (InformationInvalidException)
+			{
+				throw;
 			}
 			catch (Exception ex)
 			{
 				throw new InformationInvalidException(ex);
 			}
 
-			if (string.IsNullOrWhiteSpace(stamp))
-				throw new InformationInvalidException();
-
 			// validate
-			await this.CallServiceAsync(new RequestInfo(requestInfo.Session, "OTPs", "Authenticator")
+			await this.CallServiceAsync(new RequestInfo(requestInfo.Session, "OTPs", "Authenticator", "GET")
 			{
-				Verb = "GET",
-				Extra = new Dictionary<string, string>()
+				Extra = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
 				{
-					{ "Account", account.AccessIdentity.Encrypt(this.EncryptionKey) },
-					{ "ID", account.ID.Encrypt(this.EncryptionKey) },
 					{ "Type", type.ToString() },
+					{ "ID", account.ID.Encrypt(this.EncryptionKey) },
 					{ "Stamp", stamp.Encrypt(this.EncryptionKey) },
 					{ "Password", otp.Encrypt(this.EncryptionKey) }
 				}
@@ -831,15 +850,14 @@ namespace net.vieapps.Services.Users
 
 			// get provisioning info
 			stamp += "|" + DateTime.Now.ToUnixTimestamp().ToString();
-			var json = await this.CallServiceAsync(new RequestInfo(requestInfo.Session, "OTPs", "Authenticator")
+			var json = await this.CallServiceAsync(new RequestInfo(requestInfo.Session, "OTPs", "Authenticator", "GET")
 			{
-				Verb = "GET",
-				Extra = new Dictionary<string, string>()
+				Extra = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
 				{
-					{ "Account", account.AccessIdentity.Encrypt(this.EncryptionKey) },
-					{ "ID", account.ID.Encrypt(this.EncryptionKey) },
 					{ "Type", type.ToString() },
+					{ "ID", account.ID.Encrypt(this.EncryptionKey) },
 					{ "Stamp", stamp.Encrypt(this.EncryptionKey) },
+					{ "Account", account.AccessIdentity.Encrypt(this.EncryptionKey) },
 					{ "Issuer", body.Get("Issuer", "").Encrypt(this.EncryptionKey) },
 					{ "Setup", "" }
 				}
@@ -848,10 +866,10 @@ namespace net.vieapps.Services.Users
 			// response
 			json.Add(new JProperty("Provisioning", new JObject()
 			{
+				{ "Type", type.ToString() },
 				{ "Account", account.AccessIdentity },
 				{ "ID", account.ID },
-				{ "Type", type.ToString() },
-				{ "Stamp", stamp },
+				{ "Stamp", stamp }
 			}.ToString(Formatting.None).Encrypt(this.AuthenticationKey)));
 			return json;
 		}
@@ -872,14 +890,12 @@ namespace net.vieapps.Services.Users
 			if (!Enum.TryParse((json["Type"] as JValue).Value.ToString(), out TwoFactorsAuthenticationType type))
 				type = TwoFactorsAuthenticationType.App;
 			var stamp = (json["Stamp"] as JValue).Value.ToString();
-			json = await this.CallServiceAsync(new RequestInfo(requestInfo.Session, "OTPs", "Authenticator")
+			json = await this.CallServiceAsync(new RequestInfo(requestInfo.Session, "OTPs", "Authenticator", "GET")
 			{
-				Verb = "GET",
-				Extra = new Dictionary<string, string>()
+				Extra = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
 				{
-					{ "Account", account.AccessIdentity.Encrypt(this.EncryptionKey) },
-					{ "ID", account.ID.Encrypt(this.EncryptionKey) },
 					{ "Type", type.ToString() },
+					{ "ID", account.ID.Encrypt(this.EncryptionKey) },
 					{ "Stamp", stamp.Encrypt(this.EncryptionKey) },
 					{ "Password", body.Get("OTP", "").Encrypt(this.EncryptionKey) }
 				}
@@ -1034,7 +1050,7 @@ namespace net.vieapps.Services.Users
 				var password = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Password")
 					? requestInfo.Extra["Password"].Decrypt()
 					: null;
-				if (string.IsNullOrWhiteSpace(password) && !string.IsNullOrWhiteSpace(email))
+				if (string.IsNullOrWhiteSpace(password))
 					password = Account.GeneratePassword(email);
 
 				// check existing account
@@ -1206,7 +1222,7 @@ namespace net.vieapps.Services.Users
 		async Task<JObject> ResetPasswordAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// get account
-			var email = requestInfo.Extra["Email"].Decrypt();
+			var email = requestInfo.Extra["Email"].Decrypt(this.EncryptionKey);
 			var account = await Account.GetByIdentityAsync(email, AccountType.BuiltIn, cancellationToken).ConfigureAwait(false);
 			if (account == null)
 				return new JObject()
@@ -1269,14 +1285,14 @@ namespace net.vieapps.Services.Users
 		async Task<JObject> UpdatePasswordAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// get account and check
-			var oldPassword = requestInfo.Extra["OldPassword"].Decrypt();
+			var oldPassword = requestInfo.Extra["OldPassword"].Decrypt(this.EncryptionKey);
 			var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID, cancellationToken).ConfigureAwait(false);
-			if (account == null || !Account.HashPassword(account.ID, oldPassword).Equals(account.AccessKey))
+			if (account == null || !Account.GeneratePassword(account.ID, oldPassword).Equals(account.AccessKey))
 				throw new WrongAccountException();
 
 			// update
-			var password = requestInfo.Extra["Password"].Decrypt();
-			account.AccessKey = Account.HashPassword(account.ID, password);
+			var password = requestInfo.Extra["Password"].Decrypt(this.EncryptionKey);
+			account.AccessKey = Account.GeneratePassword(account.ID, password);
 			account.LastAccess = DateTime.Now;
 			await Account.UpdateAsync(account, cancellationToken);
 
@@ -1315,13 +1331,13 @@ namespace net.vieapps.Services.Users
 		async Task<JObject> UpdateEmailAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// get account and check
-			var oldPassword = requestInfo.Extra["OldPassword"].Decrypt();
+			var oldPassword = requestInfo.Extra["OldPassword"].Decrypt(this.EncryptionKey);
 			var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID, cancellationToken).ConfigureAwait(false);
-			if (account == null || !Account.HashPassword(account.ID, oldPassword).Equals(account.AccessKey))
+			if (account == null || !Account.GeneratePassword(account.ID, oldPassword).Equals(account.AccessKey))
 				throw new WrongAccountException();
 
 			// check existing
-			var email = requestInfo.Extra["Email"].Decrypt();
+			var email = requestInfo.Extra["Email"].Decrypt(this.EncryptionKey);
 			var otherAccount = await Account.GetByIdentityAsync(email, AccountType.BuiltIn, cancellationToken).ConfigureAwait(false);
 			if (otherAccount != null)
 				throw new InformationExistedException("The email '" + email + "' is used by other account");
@@ -1785,7 +1801,7 @@ namespace net.vieapps.Services.Users
 					Type = info.Get("Type", "BuiltIn").ToEnum<AccountType>(),
 					Joined = info.Get<DateTime>("Time"),
 					AccessIdentity = email,
-					AccessKey = Account.HashPassword(id, info.Get<string>("Password"))
+					AccessKey = Account.GeneratePassword(id, info.Get<string>("Password"))
 				};
 				await Account.CreateAsync(account, cancellationToken).ConfigureAwait(false);
 
@@ -1828,7 +1844,7 @@ namespace net.vieapps.Services.Users
 				throw new InvalidActivateInformationException();
 
 			// update new password
-			account.AccessKey = Account.HashPassword(account.ID, password);
+			account.AccessKey = Account.GeneratePassword(account.ID, password);
 			account.LastAccess = DateTime.Now;
 			account.Sessions = null;
 			await Account.UpdateAsync(account).ConfigureAwait(false);

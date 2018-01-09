@@ -185,12 +185,12 @@ namespace net.vieapps.Services.Users
 		}
 
 		/// <summary>
-		/// Hashs the password for storing
+		/// Generates a password for storing
 		/// </summary>
 		/// <param name="id">The string that presents the identity of an account</param>
 		/// <param name="password">The string that presents the password of an account</param>
 		/// <returns></returns>
-		public static string HashPassword(string id, string password)
+		public static string GeneratePassword(string id, string password)
 		{
 			return string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(password) || !id.IsValidUUID()
 				? throw new InformationInvalidException()
@@ -198,11 +198,11 @@ namespace net.vieapps.Services.Users
 		}
 
 		/// <summary>
-		/// Generates the random password from an email address
+		/// Generates a random password
 		/// </summary>
 		/// <param name="email">The email address</param>
 		/// <returns></returns>
-		public static string GeneratePassword(string email)
+		public static string GeneratePassword(string email = null)
 		{
 			var pos = (email ?? "").IndexOf("-");
 			if (pos < 0)
@@ -210,7 +210,7 @@ namespace net.vieapps.Services.Users
 			if (pos < 0)
 				pos = (email ?? "").IndexOf("_");
 			return Captcha.GenerateRandomCode(true, true).GetCapitalizedFirstLetter()
-				+ (pos > 0 ? email.Substring(pos, 1) : "#") + OTPService.GeneratePassword((email.ToLower() + ":" + UtilityService.NewUID).ToBytes())
+				+ (pos > 0 ? email.Substring(pos, 1) : "#") + OTPService.GeneratePassword((UtilityService.NewUID + (email ?? "")).ToBytes())
 				+ Captcha.GenerateRandomCode().GetCapitalizedFirstLetter();
 		}
 	}
