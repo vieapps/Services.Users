@@ -210,7 +210,7 @@ namespace net.vieapps.Services.Users
 			if (pos < 0)
 				pos = (email ?? "").IndexOf("_");
 			return Captcha.GenerateRandomCode(true, true).GetCapitalizedFirstLetter()
-				+ (pos > 0 ? email.Substring(pos, 1) : "#") + OTPService.GeneratePassword((UtilityService.NewUID + (email ?? "")).ToBytes())
+				+ (pos > 0 ? email.Substring(pos, 1) : "#") + OTPService.GeneratePassword(UtilityService.NewUID + (email ?? ""))
 				+ Captcha.GenerateRandomCode().GetCapitalizedFirstLetter();
 		}
 	}
@@ -223,7 +223,6 @@ namespace net.vieapps.Services.Users
 		{
 			this.Required = false;
 			this.Settings = new List<TwoFactorsAuthenticationSetting>();
-			this.State = false;
 		}
 
 		public JArray GetProvidersJson(string authenticationKey)
@@ -244,8 +243,6 @@ namespace net.vieapps.Services.Users
 
 		public bool Required { get; set; }
 		public List<TwoFactorsAuthenticationSetting> Settings { get; set; }
-		[JsonIgnore, BsonIgnore]
-		public bool State { get; set; }
 	}
 
 	[Serializable]

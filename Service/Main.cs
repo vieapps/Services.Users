@@ -822,7 +822,6 @@ namespace net.vieapps.Services.Users
 			}, cancellationToken).ConfigureAwait(false);
 
 			// update
-			account.TwoFactorsAuthentication.State = true;
 			await Task.WhenAll(
 				Utility.Cache.SetAsync<Account>(account),
 				Utility.Cache.RemoveAsync<Session>(requestInfo.Session.SessionID)
