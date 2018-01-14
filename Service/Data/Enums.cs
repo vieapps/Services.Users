@@ -134,13 +134,18 @@ namespace net.vieapps.Services.Users
 	public enum TwoFactorsAuthenticationType
 	{
 		/// <summary>
-		/// Presents the authenticator app
+		/// Presents the authenticator app like Google Authenticator, Microsoft Authenticator
 		/// </summary>
 		App,
 
 		/// <summary>
-		/// Presents the SMS
+		/// Presents the complex integrated SMS
 		/// </summary>
 		SMS,
+
+		/// <summary>
+		/// Presents the simple mobile phone number
+		/// </summary>
+		Phone
 	}
 }

@@ -21,7 +21,7 @@ using net.vieapps.Components.Repository;
 namespace net.vieapps.Services.Users
 {
 	[Serializable, BsonIgnoreExtraElements, DebuggerDisplay("ID = {ID}, Identity = {AccessIdentity}, Type = {Type}")]
-	[Entity(CollectionName = "Accounts", TableName = "T_Users_Accounts", CacheStorageType = typeof(Utility), CacheStorageName = "Cache")]
+	[Entity(CollectionName = "Accounts", TableName = "T_Users_Accounts", CacheStorageType = typeof(Utility), CacheStorageName = "Cache", CreateNewVersionWhenUpdated = false)]
 	public class Account : Repository<Account>
 	{
 		public Account()
@@ -126,7 +126,7 @@ namespace net.vieapps.Services.Users
 		}
 		#endregion
 
-		#region IBusiness properties
+		#region IBusinessEntity properties
 		[JsonIgnore, BsonIgnore, Ignore]
 		public override string Title { get; set; }
 
@@ -142,11 +142,6 @@ namespace net.vieapps.Services.Users
 		[JsonIgnore, BsonIgnore, Ignore]
 		public override Privileges OriginalPrivileges { get; set; }
 		#endregion
-
-		public async Task GetSessionsAsync(CancellationToken cancellationToken = default(CancellationToken))
-		{
-			this.Sessions = await Session.FindAsync(Filters<Session>.Equals("UserID", this.ID), Sorts<Session>.Descending("ExpiredAt"), 0, 1, null, cancellationToken).ConfigureAwait(false);
-		}
 
 		public JObject GetAccountJson(bool addStatus = false, string authenticationKey = null)
 		{
@@ -184,6 +179,12 @@ namespace net.vieapps.Services.Users
 			return Account.GetAsync<Account>(Filters<Account>.And(Filters<Account>.Equals("AccessIdentity", identity), Filters<Account>.Equals("Type", type.ToString())), null, null, cancellationToken);
 		}
 
+		public async Task GetSessionsAsync(CancellationToken cancellationToken = default(CancellationToken))
+		{
+			this.Sessions = await Session.FindAsync(Filters<Session>.Equals("UserID", this.ID), Sorts<Session>.Descending("ExpiredAt"), 0, 1, null, cancellationToken).ConfigureAwait(false);
+		}
+
+		#region Generate password
 		/// <summary>
 		/// Generates a password for storing
 		/// </summary>
@@ -209,10 +210,12 @@ namespace net.vieapps.Services.Users
 				pos = (email ?? "").IndexOf(".");
 			if (pos < 0)
 				pos = (email ?? "").IndexOf("_");
-			return Captcha.GenerateRandomCode(true, true).GetCapitalizedFirstLetter()
+			return CaptchaService.GenerateRandomCode(true, true).GetCapitalizedFirstLetter()
 				+ (pos > 0 ? email.Substring(pos, 1) : "#") + OTPService.GeneratePassword(UtilityService.NewUID + (email ?? ""))
-				+ Captcha.GenerateRandomCode().GetCapitalizedFirstLetter();
+				+ CaptchaService.GenerateRandomCode().GetCapitalizedFirstLetter();
 		}
+		#endregion
+
 	}
 
 	#region Two-Factors Authentication
@@ -242,6 +245,7 @@ namespace net.vieapps.Services.Users
 		}
 
 		public bool Required { get; set; }
+
 		public List<TwoFactorsAuthenticationSetting> Settings { get; set; }
 	}
 
@@ -257,14 +261,16 @@ namespace net.vieapps.Services.Users
 
 		[JsonConverter(typeof(StringEnumConverter)), BsonRepresentation(BsonType.String)]
 		public TwoFactorsAuthenticationType Type { get; set; }
+
 		public string Stamp { get; set; }
+
 		public long Time { get; set; }
 
 		public JObject ToJson(string authenticationKey, Action<JObject> onPreCompleted = null)
 		{
 			var json = new JObject()
 			{
-				{ "Label", this.Type.Equals(TwoFactorsAuthenticationType.SMS) ? $"SMS (******{this.Stamp.Right(4)})" : "Authenticator" },
+				{ "Label", this.Type.Equals(TwoFactorsAuthenticationType.App) ? "Authenticator" : $"SMS (******{this.Stamp.Right(4)})" },
 				{ "Type", this.Type.ToString() },
 				{ "Time", this.Time.FromUnixTimestamp() },
 				{ "Info", $"{this.Type}|{this.Stamp}|{this.Time}".Encrypt(authenticationKey, true) }

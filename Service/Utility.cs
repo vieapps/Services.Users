@@ -7,8 +7,11 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Configuration;
 using System.Security.Cryptography;
+using System.Xml.Serialization;
 
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using MongoDB.Bson.Serialization.Attributes;
 
 using net.vieapps.Components.Utility;
 using net.vieapps.Components.Security;
@@ -20,7 +23,6 @@ namespace net.vieapps.Services.Users
 {
 	public static class Utility
 	{
-
 		static int _CacheTime = 0;
 
 		public static int CacheExpirationTime
@@ -57,12 +59,21 @@ namespace net.vieapps.Services.Users
 				return Utility._FilesHttpUri;
 			}
 		}
-
 	}
 
 	//  --------------------------------------------------------------------------------------------
 
 	[Serializable]
 	[Repository]
-	public abstract class Repository<T> : RepositoryBase<T> where T : class { }
+	public abstract class Repository<T> : RepositoryBase<T> where T : class
+	{
+		/// <summary>
+		/// Gets the name of the service that associates with this repository
+		/// </summary>
+		[JsonIgnore, XmlIgnore, BsonIgnore, Ignore]
+		public override string ServiceName
+		{
+			get { return "Users"; }
+		}
+	}
 }

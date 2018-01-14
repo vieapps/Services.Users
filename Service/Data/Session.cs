@@ -12,7 +12,7 @@ using net.vieapps.Components.Repository;
 namespace net.vieapps.Services.Users
 {
 	[Serializable, BsonIgnoreExtraElements, DebuggerDisplay("ID = {ID}, IP = {IP}, AppInfo = {AppInfo}")]
-	[Entity(CollectionName = "Sessions", TableName = "T_Users_Sessions", CacheStorageType = typeof(Utility), CacheStorageName = "Cache")]
+	[Entity(CollectionName = "Sessions", TableName = "T_Users_Sessions", CacheStorageType = typeof(Utility), CacheStorageName = "Cache", CreateNewVersionWhenUpdated = false)]
 	public class Session : Repository<Session>
 	{
 		public Session()
@@ -26,6 +26,8 @@ namespace net.vieapps.Services.Users
 			this.IP = "";
 			this.DeviceID = "";
 			this.AppInfo = "";
+			this.OSInfo = "";
+			this.Verification = false;
 			this.Online = false;
 		}
 
@@ -79,13 +81,25 @@ namespace net.vieapps.Services.Users
 		public string AppInfo { get; set; }
 
 		/// <summary>
+		/// Gets or sets the OS info of the device that use to performs the actions in this session
+		/// </summary>
+		[Property(MaxLength = 500)]
+		public string OSInfo { get; set; }
+
+		/// <summary>
+		/// Gets or sets two-factors verification status
+		/// </summary>
+		[Sortable]
+		public bool Verification { get; set; }
+
+		/// <summary>
 		/// Gets or sets online status
 		/// </summary>
 		[Sortable]
 		public bool Online { get; set; }
 		#endregion
 
-		#region IBusiness properties
+		#region IBusinessEntity properties
 		[JsonIgnore, BsonIgnore, Ignore]
 		public override string Title { get; set; }
 

@@ -516,7 +516,7 @@ namespace net.vieapps.Services.Users
 			if (string.IsNullOrWhiteSpace(requestInfo.Session.SessionID))
 				throw new SessionNotFoundException();
 
-			var accessToken = requestInfo.Extra["AccessToken"].Decrypt();
+			var accessToken = requestInfo.Extra["AccessToken"].Decrypt(this.EncryptionKey);
 			if (string.IsNullOrWhiteSpace(accessToken))
 				throw new TokenNotFoundException();
 
@@ -578,8 +578,9 @@ namespace net.vieapps.Services.Users
 				{
 					if (!requestInfo.Session.SessionID.IsEquals(request.Get<string>("ID")) || !requestInfo.Session.User.ID.IsEquals(request.Get<string>("UserID")))
 						throw new InvalidSessionException();
+
 					session.CopyFrom(request);
-					await Session.UpdateAsync(session, cancellationToken).ConfigureAwait(false);
+					await Session.UpdateAsync(session, true, cancellationToken).ConfigureAwait(false);
 				}
 
 				// remove duplicated sessions
@@ -592,7 +593,7 @@ namespace net.vieapps.Services.Users
 				var account = await Account.GetAsync<Account>(session.UserID, cancellationToken).ConfigureAwait(false);
 				account.LastAccess = DateTime.Now;
 				await account.GetSessionsAsync(cancellationToken).ConfigureAwait(false);
-				await Account.UpdateAsync(account, cancellationToken).ConfigureAwait(false);
+				await Account.UpdateAsync(account, true, cancellationToken).ConfigureAwait(false);
 
 				// response
 				return session.ToJson();
@@ -717,7 +718,7 @@ namespace net.vieapps.Services.Users
 				throw new InformationInvalidException();
 
 			// remove session
-			await Session.DeleteAsync<Session>(requestInfo.Session.SessionID, cancellationToken).ConfigureAwait(false);
+			await Session.DeleteAsync<Session>(requestInfo.Session.SessionID, requestInfo.Session.User.ID, cancellationToken).ConfigureAwait(false);
 
 			// update account
 			var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID, cancellationToken).ConfigureAwait(false);
@@ -727,7 +728,7 @@ namespace net.vieapps.Services.Users
 					await account.GetSessionsAsync(cancellationToken).ConfigureAwait(false);
 				account.Sessions = account.Sessions.Where(s => !s.ID.Equals(requestInfo.Session.SessionID)).ToList();
 				account.LastAccess = DateTime.Now;
-				await Account.UpdateAsync(account, cancellationToken).ConfigureAwait(false);
+				await Account.UpdateAsync(account, true, cancellationToken).ConfigureAwait(false);
 			}
 
 			// response
@@ -796,7 +797,7 @@ namespace net.vieapps.Services.Users
 				type = data[0].ToEnum<TwoFactorsAuthenticationType>();
 				var time = Convert.ToInt64(data[2]);
 				if (account.TwoFactorsAuthentication.Settings.Where(s => s.Type.Equals(type) && s.Stamp.Equals(data[1]) && s.Time.Equals(time)).Count() > 0)
-					stamp = $"{data[1]}|{time}";
+					stamp = data[1] + (!type.Equals(TwoFactorsAuthenticationType.Phone) ? $"|{time}" : "");
 				else
 					throw new InformationInvalidException();
 			}
@@ -821,7 +822,7 @@ namespace net.vieapps.Services.Users
 				}
 			}, cancellationToken).ConfigureAwait(false);
 
-			// update
+			// update when success
 			await Task.WhenAll(
 				Utility.Cache.SetAsync<Account>(account),
 				Utility.Cache.RemoveAsync<Session>(requestInfo.Session.SessionID)
@@ -877,6 +878,7 @@ namespace net.vieapps.Services.Users
 		#region Update an OTP
 		async Task<JObject> UpdateOTPAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
+			// prepare
 			var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID, cancellationToken);
 			if (account == null)
 				throw new InformationNotFoundException();
@@ -886,7 +888,8 @@ namespace net.vieapps.Services.Users
 			if (!account.ID.IsEquals((json["ID"] as JValue).Value.ToString()) || !account.AccessIdentity.IsEquals((json["Account"] as JValue).Value.ToString()))
 				throw new InformationInvalidException();
 
-			if (!Enum.TryParse((json["Type"] as JValue).Value.ToString(), out TwoFactorsAuthenticationType type))
+			// validate with OTPs service
+			if (!Enum.TryParse((json["Type"] as JValue).Value as string, out TwoFactorsAuthenticationType type))
 				type = TwoFactorsAuthenticationType.App;
 			var stamp = (json["Stamp"] as JValue).Value.ToString();
 			json = await this.CallServiceAsync(new RequestInfo(requestInfo.Session, "OTPs", "Authenticator", "GET")
@@ -900,6 +903,7 @@ namespace net.vieapps.Services.Users
 				}
 			}, cancellationToken).ConfigureAwait(false);
 
+			// update settings
 			account.TwoFactorsAuthentication.Required = true;
 			account.TwoFactorsAuthentication.Settings.Add(new TwoFactorsAuthenticationSetting()
 			{
@@ -908,17 +912,72 @@ namespace net.vieapps.Services.Users
 				Time = Convert.ToInt64(stamp.ToArray('|').Last())
 			});
 
+			// get all sessions
+			if (account.Sessions == null)
+				await account.GetSessionsAsync(cancellationToken).ConfigureAwait(false);
+
+			// revoke all sessions that are not verified with two-factors authentication
+			var sessions = account.Sessions.Where(s => !s.ID.Equals(requestInfo.Session.SessionID) && !s.Verification).ToList();
+			var messages = sessions.Select(s => new BaseMessage()
+			{
+				Type = "Session#Revoke",
+				Data = new JObject()
+				{
+					{ "Session", s.ID },
+					{ "User", account.GetAccountJson() },
+					{ "Device", s.DeviceID }
+				}
+			}).ToList();
+
+			// update current session
+			var session = account.Sessions.First(s => s.ID.Equals(requestInfo.Session.SessionID));
+			var needUpdate = false;
+			if (!session.Verification)
+			{
+				needUpdate = session.Verification = true;
+				messages.Add(new BaseMessage()
+				{
+					Type = "Session#Update",
+					Data = new JObject()
+					{
+						{ "Session", session.ID },
+						{ "User", account.GetAccountJson() },
+						{ "Device", session.DeviceID },
+						{ "Verification", session.Verification },
+						{ "Token", session.AccessToken.Encrypt(this.EncryptionKey) }
+					}
+				});
+			}
+
+			// update account
+			if (sessions.Count > 0)
+				account.Sessions = account.Sessions.Except(sessions).ToList();
 			json = account.GetAccountJson(true, this.AuthenticationKey);
+
+			// run all tasks
 			await Task.WhenAll(
-				Account.UpdateAsync(account),
-				Utility.Cache.SetAsync<Account>(account),
+				Account.UpdateAsync(account, true, cancellationToken),
+				!needUpdate
+					? Task.CompletedTask
+					: Session.UpdateAsync(session, true, cancellationToken),
+				sessions.Count < 1
+					? Task.CompletedTask
+					: Session.DeleteManyAsync(Filters<Session>.Or(sessions.Select(s => Filters<Session>.Equals("ID", s.ID))), null, cancellationToken),
+				sessions.Count < 1
+					? Task.CompletedTask
+					: sessions.ForEachAsync((s, t) => Utility.Cache.RemoveAsync(s)),
+				messages.Count < 1
+					? Task.CompletedTask
+					: this.SendInterCommunicateMessagesAsync("APIGateway", messages, cancellationToken),
 				this.SendUpdateMessageAsync(new UpdateMessage()
 				{
 					Type = "Users#Account",
 					DeviceID = requestInfo.Session.DeviceID,
 					Data = json
-				})
+				}, cancellationToken)
 			).ConfigureAwait(false);
+
+			// response
 			return json;
 		}
 		#endregion
@@ -926,6 +985,7 @@ namespace net.vieapps.Services.Users
 		#region Delete an OTP
 		async Task<JObject> DeleteOTPAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
+			// prepare
 			var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID, cancellationToken);
 			if (account == null)
 				throw new InformationNotFoundException();
@@ -935,20 +995,49 @@ namespace net.vieapps.Services.Users
 			var stamp = info[1];
 			var time = Convert.ToInt64(info[2]);
 
+			// update settings
 			account.TwoFactorsAuthentication.Settings = account.TwoFactorsAuthentication.Settings.Where(s => !s.Type.Equals(type) && !s.Stamp.Equals(stamp) && !s.Time.Equals(time)).ToList();
 			account.TwoFactorsAuthentication.Required = account.TwoFactorsAuthentication.Settings.Count > 0;
 
+			// prepare to update
 			var json = account.GetAccountJson(true, this.AuthenticationKey);
-			await Task.WhenAll(
-				Account.UpdateAsync(account),
-				Utility.Cache.SetAsync<Account>(account),
-				this.SendUpdateMessageAsync(new UpdateMessage()
+
+			if (account.Sessions == null)
+				await account.GetSessionsAsync(cancellationToken).ConfigureAwait(false);
+
+			if (!account.TwoFactorsAuthentication.Required)
+				account.Sessions.ForEach(s => s.Verification = false);
+
+			var messages = account.Sessions
+				.Where(s => s.Online)
+				.Select(s => new UpdateMessage()
 				{
 					Type = "Users#Account",
-					DeviceID = requestInfo.Session.DeviceID,
+					DeviceID = s.DeviceID,
 					Data = json
 				})
+				.ToList();
+
+			// run all tasks
+			await Task.WhenAll(
+				Account.UpdateAsync(account, true, cancellationToken),
+				account.TwoFactorsAuthentication.Required
+					? Task.CompletedTask
+					: account.Sessions.ForEachAsync((session, token) => Session.UpdateAsync(session, true, token), cancellationToken),
+				account.TwoFactorsAuthentication.Required
+					? Task.CompletedTask
+					: this.SendInterCommunicateMessagesAsync("APIGateway", account.Sessions.Select(session => new BaseMessage()
+					{
+						Type = "Session#Refresh",
+						Data = new JObject()
+						{
+							{ "Session", session.ID }
+						}
+					}).ToList(), cancellationToken),
+				this.SendUpdateMessagesAsync(messages, cancellationToken)
 			).ConfigureAwait(false);
+
+			// response
 			return json;
 		}
 		#endregion
@@ -1044,10 +1133,10 @@ namespace net.vieapps.Services.Users
 
 				var name = requestBody.Get<string>("Name");
 				var email = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Email")
-					? requestInfo.Extra["Email"].Decrypt().Trim().ToLower()
+					? requestInfo.Extra["Email"].Decrypt(this.EncryptionKey).Trim().ToLower()
 					: null;
 				var password = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Password")
-					? requestInfo.Extra["Password"].Decrypt()
+					? requestInfo.Extra["Password"].Decrypt(this.EncryptionKey)
 					: null;
 				if (string.IsNullOrWhiteSpace(password))
 					password = Account.GeneratePassword(email);
@@ -1210,7 +1299,7 @@ namespace net.vieapps.Services.Users
 			}
 
 			// update database
-			await Account.UpdateAsync(account, cancellationToken).ConfigureAwait(false);
+			await Account.UpdateAsync(account, requestInfo.Session.User.ID, cancellationToken).ConfigureAwait(false);
 
 			// response
 			return account.GetAccountJson();
@@ -1231,12 +1320,12 @@ namespace net.vieapps.Services.Users
 
 			// prepare
 			var password = Account.GeneratePassword(email);
-			var code = (new JObject()
+			var code = new JObject()
 			{
 				{ "ID", account.ID },
 				{ "Password", password },
 				{ "Time", DateTime.Now }
-			}).ToString(Formatting.None).Encrypt(this.ActivationKey).ToBase64Url(true);
+			}.ToString(Formatting.None).Encrypt(this.ActivationKey).ToBase64Url(true);
 
 			var uri = requestInfo.Query.ContainsKey("uri")
 				? requestInfo.Query["uri"].Url64Decode()
@@ -1293,7 +1382,7 @@ namespace net.vieapps.Services.Users
 			var password = requestInfo.Extra["Password"].Decrypt(this.EncryptionKey);
 			account.AccessKey = Account.GeneratePassword(account.ID, password);
 			account.LastAccess = DateTime.Now;
-			await Account.UpdateAsync(account, cancellationToken);
+			await Account.UpdateAsync(account, true, cancellationToken);
 
 			// send alert email
 			var instructions = await this.GetUpdateInstructionsAsync(requestInfo, "password", cancellationToken).ConfigureAwait(false);
@@ -1350,8 +1439,8 @@ namespace net.vieapps.Services.Users
 			account.Profile.LastUpdated = DateTime.Now;
 
 			await Task.WhenAll(
-				Account.UpdateAsync(account, cancellationToken),
-				Profile.UpdateAsync(account.Profile, cancellationToken)
+				Account.UpdateAsync(account, requestInfo.Session.User.ID, cancellationToken),
+				Profile.UpdateAsync(account.Profile, requestInfo.Session.User.ID, cancellationToken)
 			).ConfigureAwait(false);
 
 			// send alert email
@@ -1402,12 +1491,12 @@ namespace net.vieapps.Services.Users
 					"Sessions",
 					account != null
 						? account.Sessions.ToJArray(session => new JObject()
-							{
-								{ "SessionID", session.ID },
-								{ "DeviceID", session.DeviceID },
-								{ "AppInfo", session.AppInfo },
-								{ "IsOnline", session.Online }
-							})
+						{
+							{ "SessionID", session.ID },
+							{ "DeviceID", session.DeviceID },
+							{ "AppInfo", session.AppInfo },
+							{ "IsOnline", session.Online }
+						})
 						: new JArray()
 				}
 			};
@@ -1663,19 +1752,21 @@ namespace net.vieapps.Services.Users
 			if (profile == null || account == null)
 				throw new InformationNotFoundException();
 
-			// validate
-			profile.CopyFrom(requestInfo.GetBodyJson());
-			profile.ID = id;
-			profile.LastUpdated = DateTime.Now;
-			if (account.Type.Equals(AccountType.BuiltIn) && !profile.Email.Equals(account.AccessIdentity))
-				profile.Email = account.AccessIdentity;
+			// prepare
+			profile.CopyFrom(requestInfo.GetBodyJson(), "ID,Title,LastUpdated".ToHashSet(), _ =>
+			{
+				profile.Title = null;
+				profile.LastUpdated = DateTime.Now;
 
-			// check alias
-			if (string.IsNullOrWhiteSpace(profile.Alias))
-				profile.Alias = "";
+				if (account.Type.Equals(AccountType.BuiltIn) && !profile.Email.Equals(account.AccessIdentity))
+					profile.Email = account.AccessIdentity;
+
+				if (string.IsNullOrWhiteSpace(profile.Alias))
+					profile.Alias = "";
+			});
 
 			// update
-			await Profile.UpdateAsync(profile, cancellationToken).ConfigureAwait(false);
+			await Profile.UpdateAsync(profile, requestInfo.Session.User.ID, cancellationToken).ConfigureAwait(false);
 
 			// update information of the related service
 			if (requestInfo.Query.ContainsKey("related-service"))
@@ -1778,7 +1869,7 @@ namespace net.vieapps.Services.Users
 				{
 					account.Status = AccountStatus.Activated;
 					account.LastAccess = DateTime.Now;
-					await Account.UpdateAsync(account, cancellationToken).ConfigureAwait(false);
+					await Account.UpdateAsync(account, true, cancellationToken).ConfigureAwait(false);
 				}
 
 				// response
@@ -1846,7 +1937,7 @@ namespace net.vieapps.Services.Users
 			account.AccessKey = Account.GeneratePassword(account.ID, password);
 			account.LastAccess = DateTime.Now;
 			account.Sessions = null;
-			await Account.UpdateAsync(account).ConfigureAwait(false);
+			await Account.UpdateAsync(account, true, cancellationToken).ConfigureAwait(false);
 
 			// response
 			return account.GetAccountJson();
@@ -1858,10 +1949,7 @@ namespace net.vieapps.Services.Users
 			// update the collection of online session
 			try
 			{
-				if (this._onlineSessions.ContainsKey(requestInfo.Session.SessionID))
-					this._onlineSessions[requestInfo.Session.SessionID] = requestInfo.Session.User.ID;
-				else
-					this._onlineSessions.Add(requestInfo.Session.SessionID, requestInfo.Session.User.ID);
+				this._onlineSessions[requestInfo.Session.SessionID] = requestInfo.Session.User.ID;
 			}
 			catch { }
 
@@ -1872,7 +1960,7 @@ namespace net.vieapps.Services.Users
 				if (account != null)
 				{
 					account.LastAccess = DateTime.Now;
-					await Account.UpdateAsync(account, cancellationToken).ConfigureAwait(false);
+					await Account.UpdateAsync(account, true, cancellationToken).ConfigureAwait(false);
 				}
 			}
 
@@ -1904,6 +1992,10 @@ namespace net.vieapps.Services.Users
 
 		protected override void ProcessInterCommunicateMessage(CommunicateMessage message)
 		{
+#if DEBUG
+			this.WriteLog(UtilityService.NewUID, $"Got an inter-communicate message\r\n{message.ToJson().ToString(Formatting.Indented)}");
+#endif
+
 			// prepare
 			var data = message.Data?.ToExpandoObject();
 			if (data == null)
@@ -1922,25 +2014,26 @@ namespace net.vieapps.Services.Users
 					// update the collection of online session
 					if (!isOnline)
 						this._onlineSessions.Remove(sessionID);
+
 					else
 						try
 						{
-							if (this._onlineSessions.ContainsKey(sessionID))
-								this._onlineSessions[sessionID] = userID;
-							else
-								this._onlineSessions.Add(sessionID, userID);
+							this._onlineSessions[sessionID] = userID;
 						}
 						catch { }
 
 					// update & broadcast
 					if (!string.IsNullOrWhiteSpace(userID))
 					{
+						// update database
 						var session = Session.Get<Session>(sessionID);
 						if (session != null && session.Online != isOnline)
 						{
 							session.Online = isOnline;
-							Session.Update(session);
+							Session.Update(session, true);
 						}
+
+						// boardcast messages to clients
 						Task.Run(async () =>
 						{
 							try
@@ -1951,24 +2044,19 @@ namespace net.vieapps.Services.Users
 									DeviceID = "*",
 									ExcludedDeviceID = deviceID,
 									Data = message.Data
-								});
+								}).ConfigureAwait(false);
 							}
 							catch { }
 						});
 					}
-
 #if DEBUG
-					this.WriteLog(UtilityService.NewUID, "Update online status successful" + "\r\n" + "=====>" + "\r\n" + message.ToJson().ToString(Formatting.Indented));
+					this.WriteLog(UtilityService.NewUID, $"Update online status successful\r\n=====>\r\n{message.ToJson().ToString(Formatting.Indented)}");
 #endif
 				}
-#if DEBUG
 				catch (Exception ex)
 				{
 					this.WriteLog(UtilityService.NewUID, "Error occurred while updating online status", ex);
 				}
-#else
-				catch { }
-#endif
 
 			// total of online users
 			else if (message.Type.IsEquals("OnlineUsers"))
@@ -1981,12 +2069,12 @@ namespace net.vieapps.Services.Users
 							Type = "Users#Online",
 							DeviceID = "*",
 							Data = new JValue(this._onlineSessions.Count)
-						});
+						}).ConfigureAwait(false);
 					}
 					catch { }
 				});
 
-			// reupdate sessions when got new access token
+			// re-update sessions when got new access token
 			else if (message.Type.IsEquals("Session"))
 			{
 				var userID = data.Get<string>("UserID");
@@ -1995,34 +2083,35 @@ namespace net.vieapps.Services.Users
 				{
 					try
 					{
-						var token = accessToken.Decrypt();
-						var account = await Account.GetAsync<Account>(userID);
+						var token = accessToken.Decrypt(this.EncryptionKey);
+						var account = await Account.GetAsync<Account>(userID).ConfigureAwait(false);
 						if (account != null)
 						{
 							if (account.Sessions == null)
-								await account.GetSessionsAsync();
+								await account.GetSessionsAsync().ConfigureAwait(false);
 
-							await account.Sessions.ForEachAsync(async (session, ct) =>
+							await account.Sessions.ForEachAsync(async (session, cancellationToken) =>
 							{
 								if (session.Online)
 								{
 									session.AccessToken = token;
-									await Session.UpdateAsync(session, ct);
+									await Session.UpdateAsync(session, true, cancellationToken).ConfigureAwait(false);
 
-									await this.SendInterCommunicateMessageAsync("apigateway", new BaseMessage()
+									await this.SendInterCommunicateMessageAsync("APIGateway", new BaseMessage()
 									{
-										Type = "Users#Session",
+										Type = "Session#Update",
 										Data = new JObject()
 										{
 											{ "Session", session.ID },
 											{ "User", account.GetAccountJson() },
 											{ "Device", session.DeviceID },
+											{ "Verification", session.Verification },
 											{ "Token", accessToken }
 										}
-									}, ct);
+									}, cancellationToken).ConfigureAwait(false);
 								}
 								else
-									await Session.DeleteAsync<Session>(session.ID, ct);
+									await Session.DeleteAsync<Session>(session.ID, UtilityService.GetAppSetting("Users:SystemAccountID", "VIEAppsNGX-MMXVII-System-Account"), cancellationToken).ConfigureAwait(false);
 							});
 						}
 					}
@@ -2037,7 +2126,7 @@ namespace net.vieapps.Services.Users
 			if (!requestInfo.Verb.IsEquals("GET"))
 				throw new MethodNotAllowedException(requestInfo.Verb);
 
-			var code = Captcha.GenerateCode();
+			var code = CaptchaService.GenerateCode();
 			var uri = this.GetHttpURI("Files", "https://afs.vieapps.net")
 				+ "/captchas/" + code.Url64Encode() + "/"
 				+ (requestInfo.GetQueryParameter("register") ?? UtilityService.NewUID.Encrypt(CryptoService.DefaultEncryptionKey, true)).Substring(UtilityService.GetRandomNumber(13, 43), 13).Reverse() + ".jpg";
@@ -2068,8 +2157,9 @@ namespace net.vieapps.Services.Users
 			// timer to clean expired sessions (13 hours)
 			this.StartTimer(async () =>
 			{
+				var userID = UtilityService.GetAppSetting("Users:SystemAccountID", "VIEAppsNGX-MMXVII-System-Account");
 				await (await Session.FindAsync(Filters<Session>.LessThan("ExpiredAt", DateTime.Now), null, 0, 1, null, this.CancellationTokenSource.Token).ConfigureAwait(false))
-					.ForEachAsync((session, token) => Session.DeleteAsync<Session>(session.ID, token), this.CancellationTokenSource.Token, true, false)
+					.ForEachAsync((session, token) => Session.DeleteAsync<Session>(session.ID, userID, token), this.CancellationTokenSource.Token, true, false)
 					.ConfigureAwait(false);
 			}, 13 * 60 * 60);
 		}
