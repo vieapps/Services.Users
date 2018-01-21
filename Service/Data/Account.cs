@@ -21,7 +21,7 @@ using net.vieapps.Components.Repository;
 namespace net.vieapps.Services.Users
 {
 	[Serializable, BsonIgnoreExtraElements, DebuggerDisplay("ID = {ID}, Identity = {AccessIdentity}, Type = {Type}")]
-	[Entity(CollectionName = "Accounts", TableName = "T_Users_Accounts", CacheStorageType = typeof(Utility), CacheStorageName = "Cache", CreateNewVersionWhenUpdated = false)]
+	[Entity(CollectionName = "Accounts", TableName = "T_Users_Accounts", CacheClass = typeof(Utility), CacheName = "Cache", CreateNewVersionWhenUpdated = false)]
 	public class Account : Repository<Account>
 	{
 		public Account()

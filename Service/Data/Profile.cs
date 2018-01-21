@@ -17,7 +17,7 @@ using net.vieapps.Components.Repository;
 namespace net.vieapps.Services.Users
 {
 	[Serializable, BsonIgnoreExtraElements, DebuggerDisplay("ID = {ID}, Name = {Name}, Email = {Email}")]
-	[Entity(CollectionName = "Profiles", TableName = "T_Users_Profiles", CacheStorageType = typeof(Utility), CacheStorageName = "Cache", Searchable = true)]
+	[Entity(CollectionName = "Profiles", TableName = "T_Users_Profiles", CacheClass = typeof(Utility), CacheName = "Cache", Searchable = true)]
 	public class Profile : Repository<Profile>
 	{
 		public Profile()
