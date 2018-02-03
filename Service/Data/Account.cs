@@ -24,88 +24,74 @@ namespace net.vieapps.Services.Users
 	[Entity(CollectionName = "Accounts", TableName = "T_Users_Accounts", CacheClass = typeof(Utility), CacheName = "Cache", CreateNewVersionWhenUpdated = false)]
 	public class Account : Repository<Account>
 	{
-		public Account()
-		{
-			this.ID = "";
-			this.Status = AccountStatus.Activated;
-			this.Type = AccountType.BuiltIn;
-			this.TwoFactorsAuthentication = new TwoFactorsAuthentication();
-			this.Joined = DateTime.Now;
-			this.LastAccess = DateTime.Now;
-			this.OAuthType = "";
-			this.AccessMapIdentity = "";
-			this.AccessIdentity = "";
-			this.AccessKey = "";
-			this.AccessRoles = new Dictionary<string, List<string>>();
-			this.AccessPrivileges = new List<Privilege>();
-		}
+		public Account() { }
 
 		#region Properties
 		/// <summary>
 		/// Gets or sets the status
 		/// </summary>
 		[JsonConverter(typeof(StringEnumConverter)), BsonRepresentation(BsonType.String), Property(NotNull = true), Sortable]
-		public AccountStatus Status { get; set; }
+		public AccountStatus Status { get; set; } = AccountStatus.Activated;
 
 		/// <summary>
 		/// Gets or sets the type
 		/// </summary>
 		[JsonConverter(typeof(StringEnumConverter)), BsonRepresentation(BsonType.String), Property(NotNull = true), Sortable]
-		public AccountType Type { get; set; }
+		public AccountType Type { get; set; } = AccountType.BuiltIn;
 
 		/// <summary>
 		/// Gets or sets the state that require two-factors authentication
 		/// </summary>
 		[AsJson]
-		public TwoFactorsAuthentication TwoFactorsAuthentication { get; set; }
+		public TwoFactorsAuthentication TwoFactorsAuthentication { get; set; } = new TwoFactorsAuthentication();
 
 		/// <summary>
 		/// Gets or sets the joined time of the user account
 		/// </summary>
 		[Sortable(IndexName = "Times")]
-		public DateTime Joined { get; set; }
+		public DateTime Joined { get; set; } = DateTime.Now;
 
 		/// <summary>
 		/// Gets or sets the last activity time of the user account
 		/// </summary>
 		[Sortable(IndexName = "Times")]
-		public DateTime LastAccess { get; set; }
+		public DateTime LastAccess { get; set; } = DateTime.Now;
 
 		/// <summary>
 		/// Gets or sets the type of the OAuth user account, must be string of <see cref="OAuthType">OAuthType</see> when the type of user account is OAuth
 		/// </summary>
 		[Property(MaxLength = 20, NotNull = true), Sortable(UniqueIndexName = "Account")]
-		public string OAuthType { get; set; }
+		public string OAuthType { get; set; } = "";
 
 		/// <summary>
 		/// Gets or sets the identity of the mapped user account (when the user account is OAuth and mapped to a built-in user account)
 		/// </summary>
 		[Property(MaxLength = 32), Sortable(UniqueIndexName = "Account")]
-		public string AccessMapIdentity { get; set; }
+		public string AccessMapIdentity { get; set; } = "";
 
 		/// <summary>
 		/// Gets or sets the identiy of the user account (email address when the user is built-in account, OAuth ID if the user is OAuth account, account with full domain if the user is Windows account)
 		/// </summary>
 		[Property(MaxLength = 250, NotNull = true), Sortable(UniqueIndexName = "Account")]
-		public string AccessIdentity { get; set; }
+		public string AccessIdentity { get; set; } = "";
 
 		/// <summary>
 		/// Gets or sets the key of the user account in (hashed password when the user is built-in account or access token when the user is OAuth account)
 		/// </summary>
-		[JsonIgnore]
-		public string AccessKey { get; set; }
+		[Property(MaxLength = 250), JsonIgnore]
+		public string AccessKey { get; set; } = "";
 
 		/// <summary>
 		/// Gets or sets the working roles (means working roles of business services) of the user account
 		/// </summary>
 		[AsJson]
-		public Dictionary<string, List<string>> AccessRoles { get; set; }
+		public Dictionary<string, List<string>> AccessRoles { get; set; } = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
 
 		/// <summary>
 		/// Gets or sets the working privileges (means scopes/working privileges of services/services' objects) of the user account
 		/// </summary>
 		[AsJson]
-		public List<Privilege> AccessPrivileges { get; set; }
+		public List<Privilege> AccessPrivileges { get; set; } = new List<Privilege>();
 
 		/// <summary>
 		/// Gets or sets the collection of sessions of the user account
@@ -207,9 +193,9 @@ namespace net.vieapps.Services.Users
 		{
 			var pos = (email ?? "").IndexOf("-");
 			if (pos < 0)
-				pos = (email ?? "").IndexOf(".");
-			if (pos < 0)
 				pos = (email ?? "").IndexOf("_");
+			if (pos < 0)
+				pos = (email ?? "").IndexOf(".");
 			return CaptchaService.GenerateRandomCode(true, true).GetCapitalizedFirstLetter()
 				+ (pos > 0 ? email.Substring(pos, 1) : "#") + OTPService.GeneratePassword(UtilityService.NewUID + (email ?? ""))
 				+ CaptchaService.GenerateRandomCode().GetCapitalizedFirstLetter();

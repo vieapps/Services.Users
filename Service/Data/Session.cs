@@ -59,7 +59,7 @@ namespace net.vieapps.Services.Users
 		/// <summary>
 		/// Gets or sets the encrypted access token
 		/// </summary>
-		[Property(NotNull = true)]
+		[Property(NotNull = true, IsCLOB = true)]
 		public string AccessToken { get; set; }
 
 		/// <summary>

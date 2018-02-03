@@ -372,21 +372,18 @@ namespace net.vieapps.Services.Users
 			return Base.AspNet.Global.CallServiceAsync(requestInfo, cancellationToken,
 				(info) =>
 				{
-#if DEBUG || PROCESSLOGS
-					Base.AspNet.Global.WriteLogs(info.CorrelationID, null, $"Call the service [net.vieapps.services.{info.ServiceName.ToLower()}]\r\n{info.ToJson().ToString(Newtonsoft.Json.Formatting.Indented)}");
-#endif
+					if (Base.AspNet.Global.IsDebugLogEnabled)
+						Base.AspNet.Global.WriteLogs(info.CorrelationID, null, $"Call the service [net.vieapps.services.{info.ServiceName.ToLower()}]\r\n{info.ToJson().ToString(Newtonsoft.Json.Formatting.Indented)}");
 				},
 				(info, json) =>
 				{
-#if DEBUG || PROCESSLOGS
-					Base.AspNet.Global.WriteLogs(info.CorrelationID, null, $"Results from the service [net.vieapps.services.{info.ServiceName.ToLower()}]\r\n{json.ToString(Newtonsoft.Json.Formatting.Indented)}");
-#endif
+					if (Base.AspNet.Global.IsDebugLogEnabled)
+						Base.AspNet.Global.WriteLogs(info.CorrelationID, null, $"Results from the service [net.vieapps.services.{info.ServiceName.ToLower()}]\r\n{json?.ToString(Newtonsoft.Json.Formatting.Indented)}");
 				},
 				(info, ex) =>
 				{
-#if DEBUG || PROCESSLOGS
-					Base.AspNet.Global.WriteLogs(info.CorrelationID, null, $"Error occurred while calling the service [net.vieapps.services.{info.ServiceName.ToLower()}]", ex);
-#endif
+					if (Base.AspNet.Global.IsDebugLogEnabled)
+						Base.AspNet.Global.WriteLogs(info.CorrelationID, null, $"Error occurred while calling the service [net.vieapps.services.{info.ServiceName.ToLower()}]", ex);
 				}
 			);
 		}
