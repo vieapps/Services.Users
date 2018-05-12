@@ -116,16 +116,13 @@ namespace net.vieapps.Services.Users
 		public override Privileges OriginalPrivileges { get; set; }
 		#endregion
 
-		#region To JSON
 		public override JObject ToJson(bool addTypeOfExtendedProperties = false, Action<JObject> onPreCompleted = null)
 		{
-			return base.ToJson(addTypeOfExtendedProperties, (obj) =>
+			return base.ToJson(addTypeOfExtendedProperties, obj =>
 			{
-				obj.Add(new JProperty("Gravatar", string.IsNullOrWhiteSpace(this.Email) ? Utility.FilesHttpUri + "/avatars/default.png" : "https://secure.gravatar.com/avatar/" + this.Email.ToLower().Trim().GetMD5() + "?s=300&d=" + (Utility.FilesHttpUri + "/avatars/default.png").UrlEncode()));
+				obj["Gravatar"] = this.GetGravatarURI();
 				onPreCompleted?.Invoke(obj);
 			});
 		}
-		#endregion
-
 	}
 }

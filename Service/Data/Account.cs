@@ -88,7 +88,7 @@ namespace net.vieapps.Services.Users
 		public Dictionary<string, List<string>> AccessRoles { get; set; } = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
 
 		/// <summary>
-		/// Gets or sets the working privileges (means scopes/working privileges of services/services' objects) of the user account
+		/// Gets or sets the working privileges (means scopes/working privileges of services or services' objects) of the user account
 		/// </summary>
 		[AsJson]
 		public List<Privilege> AccessPrivileges { get; set; } = new List<Privilege>();
@@ -133,22 +133,23 @@ namespace net.vieapps.Services.Users
 		{
 			var roles = (SystemRole.All.ToString()
 				+ "," + SystemRole.Authenticated.ToString()
-				+ (User.SystemAdministrators.Contains(this.ID) ? "," + SystemRole.SystemAdministrator.ToString() : "")
+				+ (UserIdentity.SystemAdministrators.Contains(this.ID) ? "," + SystemRole.SystemAdministrator.ToString() : "")
 			).ToList();
 			this.AccessRoles?.ForEach(accessRoles => roles = roles.Concat(accessRoles).ToList());
 			roles = roles.Distinct().ToList();
 
-			var json = new JObject()
+			var json = new JObject
 			{
 				{ "ID", this.ID },
+				{ "Name", this.Profile?.Name },
 				{ "Roles", roles.ToJArray() },
-				{ "Privileges", (this.AccessPrivileges ?? new List<Privilege>()).ToJArray() },
+				{ "Privileges", (this.AccessPrivileges ?? new List<Privilege>()).ToJArray(privilege => privilege.ToJson()) }
 			};
 
 			if (addStatus)
 			{
-				json.Add(new JProperty("Status", this.Status.ToString()));
-				json.Add(new JProperty("TwoFactorsAuthentication", this.TwoFactorsAuthentication.ToJson(authenticationKey ?? UtilityService.GetAppSetting("Keys:Authentication"))));
+				json["Status"] = this.Status.ToString();
+				json["TwoFactorsAuthentication"] = this.TwoFactorsAuthentication.ToJson(authenticationKey ?? UtilityService.GetAppSetting("Keys:Authentication"));
 			}
 
 			return json;
@@ -161,13 +162,12 @@ namespace net.vieapps.Services.Users
 		/// <param name="cancellationToken"></param>
 		/// <returns></returns>
 		public static Task<Account> GetByIdentityAsync(string identity, AccountType type = AccountType.BuiltIn, CancellationToken cancellationToken = default(CancellationToken))
-		{
-			return Account.GetAsync<Account>(Filters<Account>.And(Filters<Account>.Equals("AccessIdentity", identity), Filters<Account>.Equals("Type", type.ToString())), null, null, cancellationToken);
-		}
+			=> Account.GetAsync<Account>(Filters<Account>.And(Filters<Account>.Equals("AccessIdentity", identity), Filters<Account>.Equals("Type", $"{type}")), null, null, cancellationToken);
 
-		public async Task GetSessionsAsync(CancellationToken cancellationToken = default(CancellationToken))
+		public async Task<List<Session>> GetSessionsAsync(CancellationToken cancellationToken = default(CancellationToken))
 		{
 			this.Sessions = await Session.FindAsync(Filters<Session>.Equals("UserID", this.ID), Sorts<Session>.Descending("ExpiredAt"), 0, 1, null, cancellationToken).ConfigureAwait(false);
+			return this.Sessions;
 		}
 
 		#region Generate password
@@ -178,11 +178,9 @@ namespace net.vieapps.Services.Users
 		/// <param name="password">The string that presents the password of an account</param>
 		/// <returns></returns>
 		public static string GeneratePassword(string id, string password)
-		{
-			return string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(password) || !id.IsValidUUID()
+			=> string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(password) || !id.IsValidUUID()
 				? throw new InformationInvalidException()
 				: (id.Trim().ToLower().Left(13) + ":" + password).GetHMACSHA512(id.Trim().ToLower(), false).ToBase64Url(true);
-		}
 
 		/// <summary>
 		/// Generates a random password
@@ -197,7 +195,7 @@ namespace net.vieapps.Services.Users
 			if (pos < 0)
 				pos = (email ?? "").IndexOf(".");
 			return CaptchaService.GenerateRandomCode(true, true).GetCapitalizedFirstLetter()
-				+ (pos > 0 ? email.Substring(pos, 1) : "#") + OTPService.GeneratePassword(UtilityService.NewUID + (email ?? ""))
+				+ (pos > 0 ? email.Substring(pos, 1) : "#") + OTPService.GeneratePassword(UtilityService.NewUUID + (email ?? ""))
 				+ CaptchaService.GenerateRandomCode().GetCapitalizedFirstLetter();
 		}
 		#endregion
@@ -214,14 +212,11 @@ namespace net.vieapps.Services.Users
 			this.Settings = new List<TwoFactorsAuthenticationSetting>();
 		}
 
-		public JArray GetProvidersJson(string authenticationKey)
-		{
-			return this.Settings?.ToJArray(s => s.ToJson(authenticationKey)) ?? new JArray();
-		}
+		public JArray GetProvidersJson(string authenticationKey) => this.Settings?.ToJArray(s => s.ToJson(authenticationKey)) ?? new JArray();
 
 		public JObject ToJson(string authenticationKey, Action<JObject> onPreCompleted = null)
 		{
-			var json = new JObject()
+			var json = new JObject
 			{
 				{ "Required",  this.Required },
 				{ "Providers", this.GetProvidersJson(authenticationKey) }
@@ -254,7 +249,7 @@ namespace net.vieapps.Services.Users
 
 		public JObject ToJson(string authenticationKey, Action<JObject> onPreCompleted = null)
 		{
-			var json = new JObject()
+			var json = new JObject
 			{
 				{ "Label", this.Type.Equals(TwoFactorsAuthenticationType.App) ? "Authenticator" : $"SMS (******{this.Stamp.Right(4)})" },
 				{ "Type", this.Type.ToString() },

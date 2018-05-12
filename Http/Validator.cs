@@ -55,8 +55,10 @@ namespace net.vieapps.Services.Users
 					throw new InvalidRequestException();
 
 				remoteUri += (remoteUri.IndexOf("?") > 0 ? "&" : "?") + "x-passport-token=";
+				/*
 				if ((!remoteIsAuthenticated && context.Request.IsAuthenticated) || (remoteIsAuthenticated && !context.Request.IsAuthenticated))
-					User.GetPassportToken((context.User as User).ID, context.Request.IsAuthenticated ? Global.GetAuthenticateTicket(context) : "", Global.GetSessionID(context), Global.GetDeviceID(context), Base.AspNet.Global.EncryptionKey, Base.AspNet.Global.JWTKey);
+					UserIdentity.GetPassportToken((context.User as UserIdentity).ID, context.Request.IsAuthenticated ? Global.GetAuthenticateTicket(context) : "", Global.GetSessionID(context), Global.GetDeviceID(context), Base.AspNet.Global.EncryptionKey, Base.AspNet.Global.JWTKey);
+				*/
 
 				// register session if already authenticated
 				if (context.Request.IsAuthenticated)

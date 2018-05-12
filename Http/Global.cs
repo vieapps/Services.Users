@@ -45,6 +45,7 @@ namespace net.vieapps.Services.Users
 
 			// default service name
 			Base.AspNet.Global.ServiceName = "Users";
+			var correlationID = Base.AspNet.Global.GetCorrelationID(context?.Items);
 
 			// open WAMP channels
 			Task.Run(async () =>
@@ -55,42 +56,87 @@ namespace net.vieapps.Services.Users
 						Global.InterCommunicateMessageUpdater = Base.AspNet.Global.IncommingChannel.RealmProxy.Services
 							.GetSubject<CommunicateMessage>("net.vieapps.rtu.communicate.messages.users")
 							.Subscribe(
-								message => Global.ProcessInterCommunicateMessage(message),
-								exception => Base.AspNet.Global.WriteLogs("Error occurred while fetching inter-communicate message", exception)
+								async (message) =>
+								{
+									var relatedID = Base.AspNet.Global.GetCorrelationID();
+									try
+									{
+										await Global.ProcessInterCommunicateMessageAsync(message).ConfigureAwait(false);
+										await Task.WhenAll(
+											Base.AspNet.Global.WriteDebugLogsAsync(relatedID, Base.AspNet.Global.ServiceName, $"Process an inter-communicate message successful\r\n{message?.ToJson().ToString(Base.AspNet.Global.IsDebugLogEnabled ? Newtonsoft.Json.Formatting.Indented : Newtonsoft.Json.Formatting.None)}"),
+											Base.AspNet.Global.IsDebugLogEnabled ? Base.AspNet.Global.WriteLogsAsync(relatedID, "RTU", $"Process an inter-communicate message successful\r\n{message?.ToJson().ToString(Newtonsoft.Json.Formatting.Indented)}") : Task.CompletedTask
+										).ConfigureAwait(false);
+									}
+									catch (Exception ex)
+									{
+										await Task.WhenAll(
+											Base.AspNet.Global.WriteDebugLogsAsync(relatedID, Base.AspNet.Global.ServiceName, $"Error occurred while processing an inter-communicate message\r\n{message?.ToJson().ToString(Base.AspNet.Global.IsDebugLogEnabled ? Newtonsoft.Json.Formatting.Indented : Newtonsoft.Json.Formatting.None)}", ex),
+											Base.AspNet.Global.WriteLogsAsync(relatedID, "RTU", $"Error occurred while processing an inter-communicate message\r\n{message?.ToJson().ToString(Base.AspNet.Global.IsDebugLogEnabled ? Newtonsoft.Json.Formatting.Indented : Newtonsoft.Json.Formatting.None)}", ex)
+										).ConfigureAwait(false);
+									}
+								},
+								async (exception) =>
+								{
+									var relatedID = Base.AspNet.Global.GetCorrelationID();
+									await Task.WhenAll(
+										Base.AspNet.Global.WriteDebugLogsAsync(relatedID, Base.AspNet.Global.ServiceName, "Error occurred while fetching inter-communicate message", exception),
+										Base.AspNet.Global.WriteLogsAsync(relatedID, "RTU", "Error occurred while fetching inter-communicate message", exception)
+									).ConfigureAwait(false);
+								}
 							);
 					},
 					(sender, args) =>
 					{
 						Task.Run(async () =>
 						{
-							await Task.WhenAll(
-								Base.AspNet.Global.InitializeLoggingServiceAsync(),
-								Base.AspNet.Global.InitializeRTUServiceAsync()
-							).ConfigureAwait(false);
+							var relatedID = Base.AspNet.Global.GetCorrelationID();
+							try
+							{
+								await Task.WhenAll(
+									Base.AspNet.Global.InitializeLoggingServiceAsync(),
+									Base.AspNet.Global.InitializeRTUServiceAsync()
+								).ConfigureAwait(false);
+								await Task.WhenAll(
+									Base.AspNet.Global.WriteDebugLogsAsync(relatedID, "RTU", "Initializing helper services succesful"),
+									Base.AspNet.Global.WriteLogsAsync(relatedID, "RTU", "Initializing helper services succesful")
+								).ConfigureAwait(false);
+							}
+							catch (Exception ex)
+							{
+								await Task.WhenAll(
+									Base.AspNet.Global.WriteDebugLogsAsync(relatedID, "RTU", "Error occurred while initializing helper services", ex),
+									Base.AspNet.Global.WriteLogsAsync(relatedID, "RTU", "Error occurred while initializing helper services", ex)
+								).ConfigureAwait(false);
+							}
 						}).ConfigureAwait(false);
 					}
 				).ConfigureAwait(false);
 			}).ConfigureAwait(false);
 
 			// handling unhandled exception
-			AppDomain.CurrentDomain.UnhandledException += (sender, arguments) =>
+			AppDomain.CurrentDomain.UnhandledException += (sender, args) =>
 			{
-				Base.AspNet.Global.WriteLogs("An unhandled exception is thrown", arguments.ExceptionObject as Exception);
+				Base.AspNet.Global.WriteDebugLogs(Base.AspNet.Global.GetCorrelationID(), Base.AspNet.Global.ServiceName, "An unhandled exception is thrown", args.ExceptionObject as Exception);
+				Base.AspNet.Global.WriteLogs("An unhandled exception is thrown", args.ExceptionObject as Exception);
 			};
 
 			stopwatch.Stop();
-			Base.AspNet.Global.WriteLogs("*** The User HTTP Service is ready for serving. The app is initialized in " + stopwatch.GetElapsedTimes());
+			Task.Run(async () =>
+			{
+				await Task.Delay(345).ConfigureAwait(false);
+				await Task.WhenAll(
+					Base.AspNet.Global.WriteDebugLogsAsync(correlationID, Base.AspNet.Global.ServiceName, $"*** The Users HTTP Service is ready for serving. The app is initialized in {stopwatch.GetElapsedTimes()}"),
+					Base.AspNet.Global.IsInfoLogEnabled ? Base.AspNet.Global.WriteLogsAsync(correlationID, $"*** The Users HTTP Service is ready for serving. The app is initialized in {stopwatch.GetElapsedTimes()}") : Task.CompletedTask
+				).ConfigureAwait(false);
+			}).ConfigureAwait(false);
 		}
 
 		internal static void OnAppEnd()
 		{
-			try
-			{
-				Base.AspNet.Global.CancellationTokenSource.Cancel();
-			}
-			catch { }
-			Base.AspNet.Global.CancellationTokenSource.Dispose();
+			Base.AspNet.Global.WriteDebugLogsAsync(UtilityService.NewUUID, Base.AspNet.Global.ServiceName, "Stop the Users HTTP Service...");
 			Global.InterCommunicateMessageUpdater?.Dispose();
+			Base.AspNet.Global.CancellationTokenSource.Cancel();
+			Base.AspNet.Global.CancellationTokenSource.Dispose();
 			Base.AspNet.Global.CloseChannels();
 			Base.AspNet.Global.RSA.Dispose();
 		}
@@ -124,13 +170,19 @@ namespace net.vieapps.Services.Users
 				? ""
 				: requestTo.ToLower().ToArray('/', true).First();
 
+			var correlationID = Base.AspNet.Global.GetCorrelationID(app.Context.Items);
+
 			// by-pass segments
 			if (Base.AspNet.Global.BypassSegments.Count > 0 && Base.AspNet.Global.BypassSegments.Contains(requestTo))
+			{
+				Base.AspNet.Global.WriteDebugLogs(correlationID, Base.AspNet.Global.ServiceName, $"Bypass the request of by-pass segment [{app.Context.Request.RawUrl}]");
 				return;
+			}
 
 			// hidden segments
 			else if (Base.AspNet.Global.HiddenSegments.Count > 0 && Base.AspNet.Global.HiddenSegments.Contains(requestTo))
 			{
+				Base.AspNet.Global.WriteDebugLogs(correlationID, Base.AspNet.Global.ServiceName, $"Stop the request of hidden segment [{app.Context.Request.RawUrl}]");
 				Global.ShowError(app.Context, 403, "Forbidden", "AccessDeniedException", null);
 				app.Context.Response.End();
 				return;
@@ -157,44 +209,54 @@ namespace net.vieapps.Services.Users
 				return;
 			}
 
-#if DEBUG || REQUESTLOGS
 			var appInfo = app.Context.GetAppInfo();
-			Base.AspNet.Global.WriteLogs(new List<string>() {
-					"Begin process [" + app.Context.Request.HttpMethod + "]: " + app.Context.Request.Url.Scheme + "://" + app.Context.Request.Url.Host + app.Context.Request.RawUrl,
-					"- Origin: " + appInfo.Item1 + " / " + appInfo.Item2 + " - " + appInfo.Item3,
-					"- IP: " + app.Context.Request.UserHostAddress,
-					"- Agent: " + app.Context.Request.UserAgent,
-				});
+			var logs = new List<string>()
+			{
+				"Begin of request [" + app.Context.Request.HttpMethod + "]: " + app.Context.Request.Url.Scheme + "://" + app.Context.Request.Url.Host + app.Context.Request.RawUrl,
+				"- Origin: " + appInfo.Item1 + " / " + appInfo.Item2 + " - " + appInfo.Item3,
+				"- IP: " + app.Context.Request.UserHostAddress,
+				"- Agent: " + app.Context.Request.UserAgent,
+			};
+			Base.AspNet.Global.WriteDebugLogs(correlationID, Base.AspNet.Global.ServiceName, logs);
 
-			app.Context.Items["StopWatch"] = new Stopwatch();
-			(app.Context.Items["StopWatch"] as Stopwatch).Start();
-#endif
+			// diagnostics
+			if (Base.AspNet.Global.IsInfoLogEnabled)
+			{
+				app.Context.Items["StopWatch"] = new Stopwatch();
+				(app.Context.Items["StopWatch"] as Stopwatch).Start();
+			}
 
 			// rewrite url
-			var query = "";
+			var url = app.Request.ApplicationPath + "Global.ashx?";
 			foreach (string key in app.Request.QueryString)
 				if (!string.IsNullOrWhiteSpace(key))
-					query += (query.Equals("") ? "" : "&") + key + "=" + app.Request.QueryString[key].UrlEncode();
+					url += $"{key}={app.Request.QueryString[key].UrlEncode()}&";
 
-			app.Context.RewritePath(app.Request.ApplicationPath + "Global.ashx", null, query);
+			if (Base.AspNet.Global.IsInfoLogEnabled)
+			{
+				if (Base.AspNet.Global.IsDebugLogEnabled)
+					logs.Add($"Rewrite URL: [{app.Context.Request.Url.Scheme}://{app.Context.Request.Url.Host + app.Context.Request.RawUrl}] => [{app.Context.Request.Url.Scheme}://{app.Context.Request.Url.Host + url.Left(url.Length - 1)}]");
+				Base.AspNet.Global.WriteLogs(logs);
+			}
+
+			app.Context.RewritePath(url.Left(url.Length - 1));
 		}
 
 		internal static void OnAppEndRequest(HttpApplication app)
 		{
-#if DEBUG || REQUESTLOGS
-			// add execution times
-			if (!app.Context.Request.HttpMethod.Equals("OPTIONS") && app.Context.Items.Contains("StopWatch"))
+			var executionTimes = "";
+			if (Base.AspNet.Global.IsInfoLogEnabled && app.Context.Items.Contains("StopWatch"))
 			{
 				(app.Context.Items["StopWatch"] as Stopwatch).Stop();
-				var executionTimes = (app.Context.Items["StopWatch"] as Stopwatch).GetElapsedTimes();
-				Base.AspNet.Global.WriteLogs("End process - Execution times: " + executionTimes);
+				executionTimes = $" - Execution times: {(app.Context.Items["StopWatch"] as Stopwatch).GetElapsedTimes()}";
+				Base.AspNet.Global.WriteLogs($"End of request{executionTimes}");
 				try
 				{
 					app.Response.Headers.Add("x-execution-times", executionTimes);
 				}
 				catch { }
 			}
-#endif
+			Base.AspNet.Global.WriteDebugLogs(Base.AspNet.Global.GetCorrelationID(), Base.AspNet.Global.ServiceName, $"End of request{executionTimes}");
 		}
 		#endregion
 
@@ -212,7 +274,7 @@ namespace net.vieapps.Services.Users
 					var sessionID = ticket.Item3;
 					var deviceID = ticket.Item4;
 
-					app.Context.User = new UserPrincipal(User.ParseAccessToken(accessToken, Base.AspNet.Global.RSA, Base.AspNet.Global.EncryptionKey));
+					app.Context.User = new UserPrincipal(accessToken.ParseAccessToken(Base.AspNet.Global.ECCKey));
 					app.Context.Items["Session-ID"] = sessionID;
 					app.Context.Items["Device-ID"] = deviceID;
 				}
@@ -361,7 +423,7 @@ namespace net.vieapps.Services.Users
 			var exception = app.Server.GetLastError();
 			app.Server.ClearError();
 
-			Base.AspNet.Global.WriteLogs("", exception);
+			Base.AspNet.Global.WriteLogs("Got an error while processing", exception);
 			app.Context.ShowError(exception);
 		}
 		#endregion
@@ -369,21 +431,22 @@ namespace net.vieapps.Services.Users
 		#region Call services
 		internal static Task<JObject> CallServiceAsync(RequestInfo requestInfo, CancellationToken cancellationToken = default(CancellationToken))
 		{
+			var name = $"net.vieapps.services.{requestInfo?.ServiceName}".ToLower();
 			return Base.AspNet.Global.CallServiceAsync(requestInfo, cancellationToken,
 				(info) =>
 				{
 					if (Base.AspNet.Global.IsDebugLogEnabled)
-						Base.AspNet.Global.WriteLogs(info.CorrelationID, null, $"Call the service [net.vieapps.services.{info.ServiceName.ToLower()}]\r\n{info.ToJson().ToString(Newtonsoft.Json.Formatting.Indented)}");
+						Base.AspNet.Global.WriteLogs(info.CorrelationID, null, $"Call the service [{name}]\r\n{info?.ToJson().ToString(Newtonsoft.Json.Formatting.Indented)}");
 				},
 				(info, json) =>
 				{
 					if (Base.AspNet.Global.IsDebugLogEnabled)
-						Base.AspNet.Global.WriteLogs(info.CorrelationID, null, $"Results from the service [net.vieapps.services.{info.ServiceName.ToLower()}]\r\n{json?.ToString(Newtonsoft.Json.Formatting.Indented)}");
+						Base.AspNet.Global.WriteLogs(info.CorrelationID, null, $"Results from the service [{name}]\r\n{json?.ToString(Newtonsoft.Json.Formatting.Indented)}");
 				},
 				(info, ex) =>
 				{
 					if (Base.AspNet.Global.IsDebugLogEnabled)
-						Base.AspNet.Global.WriteLogs(info.CorrelationID, null, $"Error occurred while calling the service [net.vieapps.services.{info.ServiceName.ToLower()}]", ex);
+						Base.AspNet.Global.WriteLogs(info.CorrelationID, null, $"Error occurred while calling the service [{name}]", ex);
 				}
 			);
 		}
@@ -419,7 +482,7 @@ namespace net.vieapps.Services.Users
 		{
 			context = context ?? HttpContext.Current;
 			var session = Global.GetSession(context.Request.Headers, context.Request.QueryString, context.Request.UserAgent, context.Request.UserHostAddress, context.Request.UrlReferrer);
-			session.User = context.User as User;
+			session.User = context.User as UserIdentity;
 			if (string.IsNullOrWhiteSpace(session.SessionID))
 				session.SessionID = Global.GetSessionID(context);
 			if (string.IsNullOrWhiteSpace(session.DeviceID))
@@ -436,9 +499,10 @@ namespace net.vieapps.Services.Users
 
 		internal static async Task SignInAsync(HttpContext context = null)
 		{
+			/*
 			// parse
 			context = context ?? HttpContext.Current;
-			var token = User.ParsePassportToken(context.Request.QueryString["x-passport-token"], Base.AspNet.Global.EncryptionKey, Base.AspNet.Global.JWTKey);
+			var token = context.Request.QueryString["x-passport-token"].ParsePassportToken(Base.AspNet.Global.EncryptionKey, Base.AspNet.Global.JWTKey, Base.AspNet.Global.ECCKey);
 			var userID = token.Item1;
 			var accessToken = token.Item2;
 			var sessionID = token.Item3;
@@ -475,6 +539,7 @@ namespace net.vieapps.Services.Users
 			// assign session/device identity
 			Global.SetSessionID(context, sessionID);
 			Global.SetDeviceID(context, deviceID);
+			*/
 		}
 
 		internal static void SignOut(HttpContext context = null)
@@ -483,6 +548,7 @@ namespace net.vieapps.Services.Users
 			FormsAuthentication.Initialize();
 			FormsAuthentication.SignOut();
 
+			/*
 			// parse
 			context = context ?? HttpContext.Current;
 			var token = User.ParsePassportToken(context.Request.QueryString["x-passport-token"], Base.AspNet.Global.EncryptionKey, Base.AspNet.Global.JWTKey);
@@ -497,6 +563,7 @@ namespace net.vieapps.Services.Users
 			// assign session/device identity
 			Global.SetSessionID(context, sessionID);
 			Global.SetDeviceID(context, deviceID);
+			*/
 		}
 
 		internal static async Task<bool> ExistsAsync(this Services.Session session)
@@ -511,14 +578,14 @@ namespace net.vieapps.Services.Users
 		{
 			try
 			{
-				await Base.AspNet.Global.RTUService.SendInterCommunicateMessageAsync(message, Base.AspNet.Global.CancellationTokenSource.Token);
+				await Base.AspNet.Global.RTUService.SendInterCommunicateMessageAsync(message, Base.AspNet.Global.CancellationTokenSource.Token).ConfigureAwait(false);
 			}
 			catch { }
 		}
 
-		static void ProcessInterCommunicateMessage(CommunicateMessage message)
+		static Task ProcessInterCommunicateMessageAsync(CommunicateMessage message)
 		{
-
+			return Task.CompletedTask;
 		}
 		#endregion
 

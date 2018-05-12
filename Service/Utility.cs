@@ -1,12 +1,12 @@
 ﻿#region Related components
 using System;
-using System.Collections.Generic;
-using System.Collections.Specialized;
 using System.Linq;
 using System.Text;
+using System.Collections.Generic;
+using System.Collections.Specialized;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Configuration;
-using System.Security.Cryptography;
 using System.Xml.Serialization;
 
 using Newtonsoft.Json;
@@ -23,6 +23,8 @@ namespace net.vieapps.Services.Users
 {
 	public static class Utility
 	{
+
+		#region Cache
 		static int _CacheTime = 0;
 
 		public static int CacheExpirationTime
@@ -44,8 +46,10 @@ namespace net.vieapps.Services.Users
 
 		static Cache _Cache = new Cache("VIEApps-Services-Users", Utility.CacheExpirationTime, UtilityService.GetAppSetting("Cache:Provider"));
 
-		public static Cache Cache { get { return Utility._Cache; } }
+		public static Cache Cache => Utility._Cache;
+		#endregion
 
+		#region Files URI
 		static string _FilesHttpUri = null;
 
 		internal static string FilesHttpUri
@@ -59,6 +63,57 @@ namespace net.vieapps.Services.Users
 				return Utility._FilesHttpUri;
 			}
 		}
+		#endregion
+
+		#region Extensions for working with profile
+		internal static JObject GetProfileJson(this Profile profile, JObject relatedData = null, bool doNormalize = true, bool addRelated = true, bool useBriefInfo = false)
+		{
+			var json = useBriefInfo
+				? new JObject()
+				{
+					{ "ID", profile.ID },
+					{ "Name", profile.Name },
+					{ "Avatar", profile.Avatar },
+					{ "Gravatar", profile.GetGravatarURI() },
+				}
+				: profile.ToJson(false, obj =>
+				{
+					if (addRelated)
+					{
+						var account = Account.Get<Account>(profile.ID);
+						obj["LastAccess"] = account.LastAccess;
+						obj["Joined"] = account.Joined;
+
+						if (relatedData != null)
+							foreach (var kvp in relatedData)
+								try
+								{
+									if (!kvp.Key.IsEquals("ID"))
+										obj[kvp.Key] = kvp.Value;
+								}
+								catch { }
+					}
+				});
+
+			if (doNormalize)
+			{
+				json["Email"] = !string.IsNullOrWhiteSpace(profile.Email)
+					? profile.Email.Left(profile.Email.IndexOf("@")) + "@..."
+					: "";
+				json["Mobile"] = !string.IsNullOrWhiteSpace(profile.Mobile)
+					? profile.Mobile.Trim().Replace(" ", "").Right(4).PadLeft(10, 'x')
+					: "";
+			}
+
+			return json;
+		}
+
+		internal static string GetGravatarURI(this Profile profile)
+			=> string.IsNullOrWhiteSpace(profile.Email)
+				? Utility.FilesHttpUri + "/avatars/default.png"
+				: "https://secure.gravatar.com/avatar/" + profile.Email.ToLower().Trim().GetMD5() + "?s=300&d=" + (Utility.FilesHttpUri + "/avatars/default.png").UrlEncode();
+		#endregion
+
 	}
 
 	//  --------------------------------------------------------------------------------------------
@@ -67,13 +122,7 @@ namespace net.vieapps.Services.Users
 	[Repository]
 	public abstract class Repository<T> : RepositoryBase<T> where T : class
 	{
-		/// <summary>
-		/// Gets the name of the service that associates with this repository
-		/// </summary>
 		[JsonIgnore, XmlIgnore, BsonIgnore, Ignore]
-		public override string ServiceName
-		{
-			get { return "Users"; }
-		}
+		public override string ServiceName => ServiceBase.ServiceComponent.ServiceName;
 	}
 }
