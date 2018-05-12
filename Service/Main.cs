@@ -510,11 +510,7 @@ namespace net.vieapps.Services.Users
 				? await Utility.Cache.FetchAsync<Session>(requestInfo.Session.SessionID).ConfigureAwait(false)
 				: await Session.GetAsync<Session>(requestInfo.Session.SessionID, cancellationToken).ConfigureAwait(false);
 
-			var result = session?.ToJson();
-			if (result != null)
-				result["AccessToken"] = ((result["AccessToken"] as JValue).Value as string).Base64ToBytes().Encrypt(this.EncryptionKey.GenerateHashKey(256), this.EncryptionKey.GenerateHashKey(128)).ToBase64();
-
-			return result;
+			return session?.ToJson();
 		}
 		#endregion
 
@@ -2096,7 +2092,7 @@ namespace net.vieapps.Services.Users
 			}
 
 			// broadcast & return
-			var info = new JObject()
+			var info = new JObject
 			{
 				{ "UserID", requestInfo.Session.User.ID },
 				{ "SessionID", requestInfo.Session.SessionID },
@@ -2107,7 +2103,7 @@ namespace net.vieapps.Services.Users
 				{ "IsOnline", true }
 			};
 
-			await this.SendUpdateMessageAsync(new UpdateMessage()
+			await this.SendUpdateMessageAsync(new UpdateMessage
 			{
 				Type = "Users#Status",
 				DeviceID = "*",
@@ -2240,7 +2236,7 @@ namespace net.vieapps.Services.Users
 				+ "/captchas/" + code.Url64Encode() + "/"
 				+ (requestInfo.GetQueryParameter("register") ?? UtilityService.NewUUID.Encrypt(this.EncryptionKey, true)).Substring(UtilityService.GetRandomNumber(13, 43), 13).Reverse() + ".jpg";
 
-			return new JObject()
+			return new JObject
 			{
 				{ "Code", code },
 				{ "Uri", uri }
