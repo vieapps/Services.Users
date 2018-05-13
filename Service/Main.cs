@@ -26,6 +26,8 @@ namespace net.vieapps.Services.Users
 
 		public ServiceComponent() : base() { }
 
+		public override string ServiceName => "Users";
+
 		#region Encryption Keys
 		internal string ActivationKey => this.GetKey("Activation", "VIEApps-56BA2999-NGX-A2E4-Services-4B54-Activation-83EB-Key-693C250DC95D");
 
@@ -56,8 +58,6 @@ namespace net.vieapps.Services.Users
 					}
 			});
 		}
-
-		public override string ServiceName => "Users";
 		#endregion
 
 		public override async Task<JObject> ProcessRequestAsync(RequestInfo requestInfo, CancellationToken cancellationToken = default(CancellationToken))
@@ -465,35 +465,6 @@ namespace net.vieapps.Services.Users
 			{
 				{ "ID", requestInfo.Session.SessionID },
 				{ "Existed", existed }
-			};
-		}
-		#endregion
-
-		#region Verify integrity of a session
-		async Task<JObject> VerifySessionIntegrityAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
-		{
-			if (string.IsNullOrWhiteSpace(requestInfo.Session.SessionID))
-				throw new SessionNotFoundException();
-
-			var accessToken = requestInfo.Extra["AccessToken"].Decrypt(this.EncryptionKey);
-			if (string.IsNullOrWhiteSpace(accessToken))
-				throw new TokenNotFoundException();
-
-			var session = requestInfo.Session.User.ID.Equals("") || requestInfo.Session.User.IsSystemAccount
-				? await Utility.Cache.FetchAsync<Session>(requestInfo.Session.SessionID).ConfigureAwait(false)
-				: await Session.GetAsync<Session>(requestInfo.Session.SessionID, cancellationToken).ConfigureAwait(false);
-
-			if (session == null)
-				throw new SessionNotFoundException();
-			else if (session.ExpiredAt < DateTime.Now)
-				throw new SessionExpiredException();
-			else if (!accessToken.Equals(session.AccessToken))
-				throw new TokenRevokedException();
-
-			return new JObject()
-			{
-				{ "ID", session.ID },
-				{ "Integrity", "Good" }
 			};
 		}
 		#endregion
