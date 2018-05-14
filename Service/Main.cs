@@ -393,7 +393,7 @@ namespace net.vieapps.Services.Users
 			return new Tuple<string, string, string, string, Tuple<string, int, bool, string, string>>(subject, body, signature, sender, new Tuple<string, int, bool, string, string>(smtpServer, smtpServerPort, smtpServerEnableSsl, smtpUser, smtpUserPassword));
 		}
 
-		Task<JObject> CallRelatedServiceAsync(RequestInfo requestInfo, UserIdentity user, string objectName, string verb, string objectIdentity, Dictionary<string, string> extra, CancellationToken cancellationToken = default(CancellationToken))
+		Task<JObject> CallRelatedServiceAsync(RequestInfo requestInfo, User user, string objectName, string verb, string objectIdentity, Dictionary<string, string> extra, CancellationToken cancellationToken = default(CancellationToken))
 		{
 			var request = new RequestInfo(
 				new Services.Session(requestInfo.Session) { User = user },
@@ -1148,7 +1148,7 @@ namespace net.vieapps.Services.Users
 					if (requestInfo.Query.ContainsKey("related-service"))
 						try
 						{
-							await this.CallRelatedServiceAsync(requestInfo, json.FromJson<UserIdentity>(), "profile", "POST", null, relatedInfo?.ToDictionary(kvp => kvp.Key, kvp => kvp.Value as string), cancellationToken).ConfigureAwait(false);
+							await this.CallRelatedServiceAsync(requestInfo, json.FromJson<User>(), "profile", "POST", null, relatedInfo?.ToDictionary(kvp => kvp.Key, kvp => kvp.Value as string), cancellationToken).ConfigureAwait(false);
 						}
 						catch { }
 				}
@@ -1317,7 +1317,7 @@ namespace net.vieapps.Services.Users
 
 			// sessions
 			var json = account.GetAccountJson(account.TwoFactorsAuthentication.Required, this.AuthenticationKey);
-			var user = json.FromJson<UserIdentity>();
+			var user = json.FromJson<User>();
 			if (account.Sessions == null)
 				await account.GetSessionsAsync(cancellationToken).ConfigureAwait(false);
 
@@ -1930,7 +1930,7 @@ namespace net.vieapps.Services.Users
 						var relatedAccount = await Account.GetAsync<Account>(relatedUser, cancellationToken).ConfigureAwait(false);
 						var relatedSession = new Services.Session(requestInfo.Session)
 						{
-							User = relatedAccount.GetAccountJson().FromJson<UserIdentity>()
+							User = relatedAccount.GetAccountJson().FromJson<User>()
 						};
 
 						// update privileges
@@ -1998,7 +1998,7 @@ namespace net.vieapps.Services.Users
 						var relatedAccount = await Account.GetAsync<Account>(relatedUser, cancellationToken).ConfigureAwait(false);
 						var relatedSession = new Services.Session(requestInfo.Session)
 						{
-							User = relatedAccount.GetAccountJson().FromJson<UserIdentity>()
+							User = relatedAccount.GetAccountJson().FromJson<User>()
 						};
 						var relatedRequest = new RequestInfo(relatedSession, relatedService, "activate", "GET")
 						{
