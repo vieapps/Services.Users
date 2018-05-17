@@ -54,7 +54,7 @@ namespace net.vieapps.Services.Users
 					}
 					catch (Exception ex)
 					{
-						await this.WriteLogAsync(UtilityService.NewUUID, "Error occurred while running the next action", ex).ConfigureAwait(false);
+						await this.WriteLogsAsync(UtilityService.NewUUID, "Error occurred while invoking the next action", ex).ConfigureAwait(false);
 					}
 			});
 		}
@@ -62,46 +62,64 @@ namespace net.vieapps.Services.Users
 
 		public override async Task<JObject> ProcessRequestAsync(RequestInfo requestInfo, CancellationToken cancellationToken = default(CancellationToken))
 		{
+			var stopwatch = Stopwatch.StartNew();
+			this.Logger.LogInformation($"Begin request ({requestInfo.Verb} {requestInfo.URI}) [{requestInfo.CorrelationID}]");
 			try
 			{
+				JObject json = null;
 				switch (requestInfo.ObjectName.ToLower())
 				{
 					case "session":
-						return await this.ProcessSessionAsync(requestInfo, cancellationToken).ConfigureAwait(false);
+						json = await this.ProcessSessionAsync(requestInfo, cancellationToken).ConfigureAwait(false);
+						break;
 
 					case "otp":
-						return await this.ProcessOTPAsync(requestInfo, cancellationToken).ConfigureAwait(false);
+						json = await this.ProcessOTPAsync(requestInfo, cancellationToken).ConfigureAwait(false);
+						break;
 
 					case "account":
-						return await this.ProcessAccountAsync(requestInfo, cancellationToken).ConfigureAwait(false);
+						json = await this.ProcessAccountAsync(requestInfo, cancellationToken).ConfigureAwait(false);
+						break;
 
 					case "profile":
-						return await this.ProcessProfileAsync(requestInfo, cancellationToken).ConfigureAwait(false);
+						json = await this.ProcessProfileAsync(requestInfo, cancellationToken).ConfigureAwait(false);
+						break;
 
 					case "activate":
-						return await this.ProcessActivationAsync(requestInfo, cancellationToken).ConfigureAwait(false);
+						json = await this.ProcessActivationAsync(requestInfo, cancellationToken).ConfigureAwait(false);
+						break;
 
 					case "privileges":
-						return requestInfo.Verb.IsEquals("GET")
+						json = requestInfo.Verb.IsEquals("GET")
 							? await this.GetPrivilegesAsync(requestInfo, cancellationToken).ConfigureAwait(false)
 							: requestInfo.Verb.IsEquals("POST") || requestInfo.Verb.IsEquals("PUT")
 								? await this.SetPrivilegesAsync(requestInfo, cancellationToken).ConfigureAwait(false)
 								: throw new MethodNotAllowedException(requestInfo.Verb);
+						break;
 
 					case "status":
-						return await this.UpdateOnlineStatusAsync(requestInfo, cancellationToken).ConfigureAwait(false);
+						json = await this.UpdateOnlineStatusAsync(requestInfo, cancellationToken).ConfigureAwait(false);
+						break;
 
 					case "captcha":
-						return this.RegisterSessionCaptcha(requestInfo);
+						json = this.RegisterSessionCaptcha(requestInfo);
+						break;
 
 					default:
-						throw new InvalidRequestException($"The request is invalid [({requestInfo.Verb}): {requestInfo.URI}]");
+						throw new InvalidRequestException($"The request is invalid ({requestInfo.Verb} {requestInfo.URI})");
 				}
+				stopwatch.Stop();
+				this.Logger.LogInformation($"Success response - Execution times: {stopwatch.GetElapsedTimes()} [{requestInfo.CorrelationID}]");
+				if (this.IsDebugResultsEnabled)
+					this.Logger.LogInformation(
+						$"- Request: {requestInfo.ToJson().ToString(this.IsDebugLogEnabled ? Formatting.Indented : Formatting.None)}" + "\r\n" +
+						$"- Response: {json?.ToString(this.IsDebugLogEnabled ? Formatting.Indented : Formatting.None)}"
+					);
+				return json;
 			}
 			catch (Exception ex)
 			{
-				await this.WriteLogAsync(requestInfo.CorrelationID, "Error occurred while processing", ex).ConfigureAwait(false);
-				throw this.GetRuntimeException(requestInfo, ex);
+				throw this.GetRuntimeException(requestInfo, ex, stopwatch);
 			}
 		}
 
@@ -2090,14 +2108,15 @@ namespace net.vieapps.Services.Users
 
 		protected override async Task ProcessInterCommunicateMessageAsync(CommunicateMessage message, CancellationToken cancellationToken = default(CancellationToken))
 		{
-#if DEBUG
-			this.WriteLog(UtilityService.NewUUID, $"Got an inter-communicate message\r\n{message.ToJson().ToString(Formatting.Indented)}");
-#endif
+			if (this.IsDebugResultsEnabled)
+				this.WriteLogs(UtilityService.NewUUID, $"Got an inter-communicate message {message.ToJson().ToString(this.IsDebugLogEnabled ? Formatting.Indented : Formatting.None)}");
 
 			// prepare
 			var data = message.Data?.ToExpandoObject();
 			if (data == null)
 				return;
+
+			var correlationID = UtilityService.NewUUID;
 
 			// online status
 			if (message.Type.IsEquals("OnlineStatus"))
@@ -2132,7 +2151,7 @@ namespace net.vieapps.Services.Users
 						}
 
 						// boardcast messages to clients
-						await this.SendUpdateMessageAsync(new UpdateMessage()
+						await this.SendUpdateMessageAsync(new UpdateMessage
 						{
 							Type = "Users#Status",
 							DeviceID = "*",
@@ -2140,18 +2159,18 @@ namespace net.vieapps.Services.Users
 							Data = message.Data
 						}, cancellationToken).ConfigureAwait(false);
 					}
-#if DEBUG
-					this.WriteLog(UtilityService.NewUUID, $"Update online status successful\r\n=====>\r\n{message.ToJson().ToString(Formatting.Indented)}");
-#endif
+
+					if (this.IsDebugResultsEnabled)
+						this.WriteLogs(correlationID, $"Update online status successful {message.ToJson().ToString(this.IsDebugLogEnabled ? Formatting.Indented : Formatting.None)}");
 				}
 				catch (Exception ex)
 				{
-					await this.WriteLogAsync(UtilityService.NewUUID, "Error occurred while updating online status", ex);
+					await this.WriteLogsAsync(correlationID, "Error occurred while updating online status", ex);
 				}
 
 			// total of online users
 			else if (message.Type.IsEquals("OnlineUsers"))
-				await this.SendUpdateMessageAsync(new UpdateMessage()
+				await this.SendUpdateMessageAsync(new UpdateMessage
 				{
 					Type = "Users#Online",
 					DeviceID = "*",
@@ -2226,7 +2245,7 @@ namespace net.vieapps.Services.Users
 					DeviceID = "*",
 				}, this.CancellationTokenSource.Token).ConfigureAwait(false);
 #if DEBUG
-				await this.WriteLogAsync(UtilityService.NewUUID, "Send message to request update online status successful", null, false).ConfigureAwait(false);
+				await this.WriteLogsAsync(UtilityService.NewUUID, "Send message to request update online status successful").ConfigureAwait(false);
 #endif
 			}, 5 * 60);
 

@@ -20,7 +20,7 @@ namespace net.vieapps.Services.Users
 			this.ID = "";
 			this.IssuedAt = DateTime.Now;
 			this.RenewedAt = DateTime.Now;
-			this.ExpiredAt = DateTime.Now.AddDays(60);
+			this.ExpiredAt = DateTime.Now.AddDays(90);
 			this.UserID = "";
 			this.AccessToken = "";
 			this.IP = "";
