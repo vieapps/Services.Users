@@ -2,17 +2,17 @@
 
 	<PropertyGroup>
 		<TargetFramework>netstandard2.0</TargetFramework>
-		<AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+		<RootNamespace>net.vieapps.Services.Users</RootNamespace>
 		<AssemblyName>VIEApps.Services.Users</AssemblyName>
 		<AssemblyTitle>VIEApps NGX Users</AssemblyTitle>
 		<Authors>VIEApps.net</Authors>
 		<Company>VIEApps.net</Company>
 		<Product>VIEApps NGX</Product>
 		<Copyright>© 2018 VIEApps.net</Copyright>
-		<Version>10.1.2.1801</Version>
-		<AssemblyVersion>10.1.2.1801</AssemblyVersion>
-		<FileVersion>10.1.2.1801</FileVersion>
-		<InformationalVersion>v10.1.netstandard-2+rev:2018.01.02</InformationalVersion>
+		<Version>10.2.0.1806</Version>
+		<AssemblyVersion>10.2.0.1806</AssemblyVersion>
+		<FileVersion>10.2.0.1806</FileVersion>
+		<InformationalVersion>v10.2.netstandard-2+rev:2018.06.01</InformationalVersion>
 	</PropertyGroup>
 
 	<PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">

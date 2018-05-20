@@ -24,29 +24,22 @@ namespace net.vieapps.Services.Users
 	public static class Utility
 	{
 
-		#region Cache
-		static int _CacheTime = 0;
-
-		public static int CacheExpirationTime
+		#region Caching mechanism
+		static Utility()
 		{
-			get
+			Task.Run(async () =>
 			{
-				if (Utility._CacheTime < 1)
-					try
-					{
-						Utility._CacheTime = UtilityService.GetAppSetting("Cache:ExpirationTime", "30").CastAs<int>();
-					}
-					catch
-					{
-						Utility._CacheTime = 30;
-					}
-				return Utility._CacheTime;
-			}
+				await Task.Delay(123).ConfigureAwait(false);
+				Utility.GetCache();
+			}).ConfigureAwait(false);
 		}
 
-		static Cache _Cache = new Cache("VIEApps-Services-Users", Utility.CacheExpirationTime, UtilityService.GetAppSetting("Cache:Provider"));
+		internal static Cache GetCache()
+		{
+			return Utility.Cache ?? (Utility.Cache = new Cache("VIEApps-Services-Users", UtilityService.GetAppSetting("Cache:ExpirationTime", "30").CastAs<int>(), false, UtilityService.GetAppSetting("Cache:Provider"), Logger.GetLoggerFactory()));
+		}
 
-		public static Cache Cache => Utility._Cache;
+		internal static Cache Cache { get; private set; }
 		#endregion
 
 		#region Files URI
@@ -69,7 +62,7 @@ namespace net.vieapps.Services.Users
 		internal static JObject GetProfileJson(this Profile profile, JObject relatedData = null, bool doNormalize = true, bool addRelated = true, bool useBriefInfo = false)
 		{
 			var json = useBriefInfo
-				? new JObject()
+				? new JObject
 				{
 					{ "ID", profile.ID },
 					{ "Name", profile.Name },

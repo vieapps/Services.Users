@@ -9,6 +9,7 @@ using System.Collections.Generic;
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Numerics;
+using System.IO.Compression;
 
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -22,9 +23,9 @@ namespace net.vieapps.Services.Users
 {
 	public class ServiceComponent : ServiceBase
 	{
-		readonly ConcurrentDictionary<string, bool> _visitorSessions = new ConcurrentDictionary<string, bool>();
-
 		public ServiceComponent() : base() { }
+
+		ConcurrentDictionary<string, bool> VisitorSessions { get; } = new ConcurrentDictionary<string, bool>();
 
 		public override string ServiceName => "Users";
 
@@ -411,32 +412,41 @@ namespace net.vieapps.Services.Users
 			return new Tuple<string, string, string, string, Tuple<string, int, bool, string, string>>(subject, body, signature, sender, new Tuple<string, int, bool, string, string>(smtpServer, smtpServerPort, smtpServerEnableSsl, smtpUser, smtpUserPassword));
 		}
 
-		Task<JObject> CallRelatedServiceAsync(RequestInfo requestInfo, User user, string objectName, string verb, string objectIdentity, Dictionary<string, string> extra, CancellationToken cancellationToken = default(CancellationToken))
+		async Task<JObject> CallRelatedServiceAsync(RequestInfo requestInfo, User user, string objectName, string verb, string objectIdentity, Dictionary<string, string> extra, CancellationToken cancellationToken = default(CancellationToken))
 		{
-			var request = new RequestInfo(
-				new Services.Session(requestInfo.Session) { User = user },
-				requestInfo.Query["related-service"],
-				objectName,
-				verb,
-				requestInfo.Query,
-				requestInfo.Header,
-				requestInfo.Body,
-				requestInfo.Extra,
-				requestInfo.CorrelationID
-			);
+			try
+			{
+				var request = new RequestInfo(
+					new Services.Session(requestInfo.Session)
+					{
+						User = user ?? (requestInfo.Session.User ?? new User())
+					},
+					requestInfo.GetQueryParameter("related-service") ?? "",
+					objectName ?? "",
+					verb ?? "GET",
+					new Dictionary<string, string>(requestInfo.Query ?? new Dictionary<string, string>(), StringComparer.OrdinalIgnoreCase),
+					new Dictionary<string, string>(requestInfo.Header ?? new Dictionary<string, string>(), StringComparer.OrdinalIgnoreCase),
+					requestInfo.Body ?? "",
+					new Dictionary<string, string>(requestInfo.Extra ?? new Dictionary<string, string>(), StringComparer.OrdinalIgnoreCase),
+					requestInfo.CorrelationID ?? UtilityService.NewUUID
+				);
 
-			if (!string.IsNullOrWhiteSpace(objectIdentity))
-				request.Query["object-identity"] = objectIdentity;
+				if (!string.IsNullOrWhiteSpace(objectIdentity))
+					request.Query["object-identity"] = objectIdentity;
 
-			extra?.ForEach(kvp => request.Extra[kvp.Key] = kvp.Value);
+				extra?.ForEach(kvp => request.Extra[kvp.Key] = kvp.Value);
 
-			return this.CallServiceAsync(request, cancellationToken);
+				return await this.CallServiceAsync(request, cancellationToken).ConfigureAwait(false);
+			}
+			catch (Exception ex)
+			{
+				await this.WriteLogsAsync(requestInfo.CorrelationID, $"Error occurred while calling related service: {ex.Message}", ex).ConfigureAwait(false);
+				return new JObject();
+			}
 		}
 
 		Task<JObject> CallRelatedServiceAsync(RequestInfo requestInfo, string objectName, string verb = "GET", string objectIdentity = null, CancellationToken cancellationToken = default(CancellationToken))
-		{
-			return this.CallRelatedServiceAsync(requestInfo, requestInfo.Session.User, objectName, verb, objectIdentity, null, cancellationToken);
-		}
+			=> this.CallRelatedServiceAsync(requestInfo, requestInfo.Session.User, objectName, verb, objectIdentity, null, cancellationToken);
 		#endregion
 
 		Task<JObject> ProcessSessionAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
@@ -524,7 +534,7 @@ namespace net.vieapps.Services.Users
 				// update cache of session
 				var session = request.Copy<Session>();
 				await Utility.Cache.SetAsync(session, 180, cancellationToken).ConfigureAwait(false);
-				this._visitorSessions.TryAdd(session.ID, true);
+				this.VisitorSessions.TryAdd(session.ID, true);
 
 				// response
 				return session.ToJson();
@@ -1162,13 +1172,10 @@ namespace net.vieapps.Services.Users
 					profile.Name = name;
 					profile.Email = email;
 
-					await Profile.CreateAsync(profile, cancellationToken).ConfigureAwait(false);
-					if (requestInfo.Query.ContainsKey("related-service"))
-						try
-						{
-							await this.CallRelatedServiceAsync(requestInfo, json.FromJson<User>(), "profile", "POST", null, relatedInfo?.ToDictionary(kvp => kvp.Key, kvp => kvp.Value as string), cancellationToken).ConfigureAwait(false);
-						}
-						catch { }
+					await Task.WhenAll(
+						Profile.CreateAsync(profile, cancellationToken),
+						requestInfo.Query.ContainsKey("related-service") ? this.CallRelatedServiceAsync(requestInfo, json.FromJson<User>(), "profile", "POST", null, relatedInfo?.ToDictionary(kvp => kvp.Key, kvp => kvp.Value as string), cancellationToken) : Task.CompletedTask
+					).ConfigureAwait(false);
 				}
 
 				// send activation email
@@ -1686,7 +1693,7 @@ namespace net.vieapps.Services.Users
 #else
 				json = result.ToString(Formatting.None);
 #endif
-				await Utility.Cache.SetAsync($"{cacheKey }{pageNumber}:json", json, Utility.CacheExpirationTime / 2).ConfigureAwait(false);
+				await Utility.Cache.SetAsync($"{cacheKey }{pageNumber}:json", json, Utility.Cache.ExpirationTime / 2).ConfigureAwait(false);
 			}
 
 			// return the result
@@ -1742,17 +1749,8 @@ namespace net.vieapps.Services.Users
 		#endregion
 
 		#region Get a profile
-		async Task<JObject> GetProfileRelatedJsonAsync(RequestInfo requestInfo, CancellationToken cancellationToken = default(CancellationToken))
-		{
-			if (requestInfo.Query.ContainsKey("related-service"))
-				try
-				{
-					return await this.CallRelatedServiceAsync(requestInfo, "profile", "GET", requestInfo.Session.User.ID, cancellationToken).ConfigureAwait(false);
-				}
-				catch { }
-			return null;
-
-		}
+		Task<JObject> GetProfileRelatedJsonAsync(RequestInfo requestInfo, CancellationToken cancellationToken = default(CancellationToken))
+			=> this.CallRelatedServiceAsync(requestInfo, "profile", "GET", requestInfo.Session.User.ID, cancellationToken);
 
 		async Task<JObject> GetProfileAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
@@ -1811,10 +1809,15 @@ namespace net.vieapps.Services.Users
 				throw new InformationNotFoundException();
 
 			// prepare
-			profile.CopyFrom(requestInfo.GetBodyJson(), "ID,Title,LastUpdated".ToHashSet(), _ =>
+			profile.CopyFrom(requestInfo.GetBodyJson(), "ID,Title,LastUpdated".ToHashSet(), prf =>
 			{
 				profile.Title = null;
 				profile.LastUpdated = DateTime.Now;
+				profile.Avatar = string.IsNullOrWhiteSpace(profile.Avatar)
+					? string.Empty
+					: profile.Avatar.IsStartsWith(Utility.FilesHttpUri)
+						? profile.Avatar.Right(profile.Avatar.Length - Utility.FilesHttpUri.Length)
+						: profile.Avatar;
 
 				if (account.Type.Equals(AccountType.BuiltIn) && !profile.Email.Equals(account.AccessIdentity))
 					profile.Email = account.AccessIdentity;
@@ -1824,21 +1827,16 @@ namespace net.vieapps.Services.Users
 			});
 
 			// update
-			await Profile.UpdateAsync(profile, requestInfo.Session.User.ID, cancellationToken).ConfigureAwait(false);
-
-			// update information of the related service
-			if (requestInfo.Query.ContainsKey("related-service"))
-				try
-				{
-					await this.CallRelatedServiceAsync(requestInfo, "profile", "PUT", profile.ID, cancellationToken).ConfigureAwait(false);
-				}
-				catch { }
+			await Task.WhenAll(
+				Profile.UpdateAsync(profile, requestInfo.Session.User.ID, cancellationToken),
+				requestInfo.Query.ContainsKey("related-service") ? this.CallRelatedServiceAsync(requestInfo, "profile", "PUT", profile.ID, cancellationToken) : Task.CompletedTask
+			).ConfigureAwait(false);
 
 			// send update message
 			var json = profile.GetProfileJson(await this.GetProfileRelatedJsonAsync(requestInfo, cancellationToken), false);
-			await this.SendUpdateMessageAsync(new UpdateMessage()
+			await this.SendUpdateMessageAsync(new UpdateMessage
 			{
-				Type = "Users#Profile",
+				Type = "Users#Profile#Update",
 				DeviceID = "*",
 				ExcludedDeviceID = requestInfo.Session.DeviceID,
 				Data = json
@@ -2260,14 +2258,14 @@ namespace net.vieapps.Services.Users
 			// timer to refresh visitor sessions (1 hour)
 			this.StartTimer(async () =>
 			{
-				await this._visitorSessions.Keys.ToList().ForEachAsync(async (id, token) =>
+				await this.VisitorSessions.Keys.ToList().ForEachAsync(async (id, token) =>
 				{
 					var key = $"Session#{id}";
 					var session = await Utility.Cache.GetAsync(key, token).ConfigureAwait(false);
 					if (session != null)
 						await Utility.Cache.SetAsync(key, session, 180, token).ConfigureAwait(false);
 					else
-						this._visitorSessions.TryRemove(id, out bool state);
+						this.VisitorSessions.TryRemove(id, out bool state);
 				}, this.CancellationTokenSource.Token).ConfigureAwait(false);
 			}, 60 * 60);
 		}

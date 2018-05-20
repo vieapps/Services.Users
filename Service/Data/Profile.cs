@@ -118,10 +118,11 @@ namespace net.vieapps.Services.Users
 
 		public override JObject ToJson(bool addTypeOfExtendedProperties = false, Action<JObject> onPreCompleted = null)
 		{
-			return base.ToJson(addTypeOfExtendedProperties, obj =>
+			return base.ToJson(addTypeOfExtendedProperties, json =>
 			{
-				obj["Gravatar"] = this.GetGravatarURI();
-				onPreCompleted?.Invoke(obj);
+				json["Avatar"] = string.IsNullOrWhiteSpace(this.Avatar) ? "" : this.Avatar.StartsWith("/") ? Utility.FilesHttpUri + this.Avatar : this.Avatar;
+				json["Gravatar"] = this.GetGravatarURI();
+				onPreCompleted?.Invoke(json);
 			});
 		}
 	}
