@@ -785,7 +785,7 @@ namespace net.vieapps.Services.Users
 			}
 
 			// validate
-			await this.CallServiceAsync(new RequestInfo(requestInfo.Session, "AuthenticatorOTP")
+			await this.CallServiceAsync(new RequestInfo(requestInfo.Session, "AuthenticatorOTP", "Time-Based-OTP")
 			{
 				Verb = "GET",
 				Extra = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -825,7 +825,7 @@ namespace net.vieapps.Services.Users
 
 			// get provisioning info
 			stamp += "|" + DateTime.Now.ToUnixTimestamp().ToString();
-			var json = await this.CallServiceAsync(new RequestInfo(requestInfo.Session, "AuthenticatorOTP")
+			var json = await this.CallServiceAsync(new RequestInfo(requestInfo.Session, "AuthenticatorOTP", "Time-Based-OTP")
 			{
 				Verb = "GET",
 				Extra = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -868,7 +868,7 @@ namespace net.vieapps.Services.Users
 			if (!Enum.TryParse((json["Type"] as JValue).Value as string, out TwoFactorsAuthenticationType type))
 				type = TwoFactorsAuthenticationType.App;
 			var stamp = (json["Stamp"] as JValue).Value.ToString();
-			json = await this.CallServiceAsync(new RequestInfo(requestInfo.Session, "OTPs", "Authenticator", "GET")
+			json = await this.CallServiceAsync(new RequestInfo(requestInfo.Session, "AuthenticatorOTP", "Time-Based-OTP")
 			{
 				Extra = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
 				{
@@ -881,7 +881,7 @@ namespace net.vieapps.Services.Users
 
 			// update settings
 			account.TwoFactorsAuthentication.Required = true;
-			account.TwoFactorsAuthentication.Settings.Add(new TwoFactorsAuthenticationSetting()
+			account.TwoFactorsAuthentication.Settings.Add(new TwoFactorsAuthenticationSetting
 			{
 				Type = type,
 				Stamp = stamp.ToArray('|').First(),
@@ -897,7 +897,7 @@ namespace net.vieapps.Services.Users
 			var messages = sessions.Select(s => new BaseMessage()
 			{
 				Type = "Session#Revoke",
-				Data = new JObject()
+				Data = new JObject
 				{
 					{ "Session", s.ID },
 					{ "User", account.GetAccountJson() },
@@ -914,7 +914,7 @@ namespace net.vieapps.Services.Users
 				messages.Add(new BaseMessage()
 				{
 					Type = "Session#Update",
-					Data = new JObject()
+					Data = new JObject
 					{
 						{ "Session", session.ID },
 						{ "User", account.GetAccountJson() },
@@ -945,7 +945,7 @@ namespace net.vieapps.Services.Users
 				messages.Count < 1
 					? Task.CompletedTask
 					: this.SendInterCommunicateMessagesAsync("APIGateway", messages, cancellationToken),
-				this.SendUpdateMessageAsync(new UpdateMessage()
+				this.SendUpdateMessageAsync(new UpdateMessage
 				{
 					Type = "Users#Account",
 					DeviceID = requestInfo.Session.DeviceID,
@@ -986,7 +986,7 @@ namespace net.vieapps.Services.Users
 
 			var messages = account.Sessions
 				.Where(s => s.Online)
-				.Select(s => new UpdateMessage()
+				.Select(s => new UpdateMessage
 				{
 					Type = "Users#Account",
 					DeviceID = s.DeviceID,
@@ -1005,7 +1005,7 @@ namespace net.vieapps.Services.Users
 					: this.SendInterCommunicateMessagesAsync("APIGateway", account.Sessions.Select(session => new BaseMessage()
 					{
 						Type = "Session#Refresh",
-						Data = new JObject()
+						Data = new JObject
 						{
 							{ "Session", session.ID }
 						}
