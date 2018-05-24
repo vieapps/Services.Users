@@ -141,7 +141,6 @@ namespace net.vieapps.Services.Users
 			var json = new JObject
 			{
 				{ "ID", this.ID },
-				{ "Name", this.Profile?.Name },
 				{ "Roles", roles.ToJArray() },
 				{ "Privileges", (this.AccessPrivileges ?? new List<Privilege>()).ToJArray(privilege => privilege.ToJson()) }
 			};
@@ -165,10 +164,7 @@ namespace net.vieapps.Services.Users
 			=> Account.GetAsync<Account>(Filters<Account>.And(Filters<Account>.Equals("AccessIdentity", identity), Filters<Account>.Equals("Type", $"{type}")), null, null, cancellationToken);
 
 		public async Task<List<Session>> GetSessionsAsync(CancellationToken cancellationToken = default(CancellationToken))
-		{
-			this.Sessions = await Session.FindAsync(Filters<Session>.Equals("UserID", this.ID), Sorts<Session>.Descending("ExpiredAt"), 0, 1, null, cancellationToken).ConfigureAwait(false);
-			return this.Sessions;
-		}
+			=> this.Sessions = await Session.FindAsync(Filters<Session>.Equals("UserID", this.ID), Sorts<Session>.Descending("ExpiredAt"), 0, 1, null, cancellationToken).ConfigureAwait(false);
 
 		#region Generate password
 		/// <summary>

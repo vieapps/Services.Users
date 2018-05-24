@@ -23,24 +23,7 @@ namespace net.vieapps.Services.Users
 {
 	public static class Utility
 	{
-
-		#region Caching mechanism
-		static Utility()
-		{
-			Task.Run(async () =>
-			{
-				await Task.Delay(123).ConfigureAwait(false);
-				Utility.GetCache();
-			}).ConfigureAwait(false);
-		}
-
-		internal static Cache GetCache()
-		{
-			return Utility.Cache ?? (Utility.Cache = new Cache("VIEApps-Services-Users", UtilityService.GetAppSetting("Cache:ExpirationTime", "30").CastAs<int>(), false, UtilityService.GetAppSetting("Cache:Provider"), Logger.GetLoggerFactory()));
-		}
-
-		internal static Cache Cache { get; private set; }
-		#endregion
+		public static Cache Cache { get; } = new Cache("VIEApps-Services-Users", UtilityService.GetAppSetting("Cache:ExpirationTime", "30").CastAs<int>(), false, UtilityService.GetAppSetting("Cache:Provider"), Logger.GetLoggerFactory());
 
 		#region Files URI
 		static string _FilesHttpUri = null;

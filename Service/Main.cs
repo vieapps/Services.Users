@@ -40,7 +40,7 @@ namespace net.vieapps.Services.Users
 		#endregion
 
 		#region Start
-		public override void Start(string[] args = null, bool initializeRepository = true, Func<IService, Task> next = null)
+		public override void Start(string[] args = null, bool initializeRepository = true, Func<IService, Task> nextAsync = null)
 		{
 			base.Start(args, initializeRepository, async (service) =>
 			{
@@ -48,14 +48,14 @@ namespace net.vieapps.Services.Users
 				this.RegisterTimers(args);
 
 				// last action
-				if (next != null)
+				if (nextAsync != null)
 					try
 					{
-						await next(service).ConfigureAwait(false);
+						await nextAsync(service).ConfigureAwait(false);
 					}
 					catch (Exception ex)
 					{
-						await this.WriteLogsAsync(UtilityService.NewUUID, "Error occurred while invoking the next action", ex).ConfigureAwait(false);
+						this.Logger.LogError("Error occurred while invoking the next action", ex);
 					}
 			});
 		}
@@ -414,6 +414,7 @@ namespace net.vieapps.Services.Users
 
 		async Task<JObject> CallRelatedServiceAsync(RequestInfo requestInfo, User user, string objectName, string verb, string objectIdentity, Dictionary<string, string> extra, CancellationToken cancellationToken = default(CancellationToken))
 		{
+			var correlationID = requestInfo.CorrelationID ?? UtilityService.NewUUID;
 			try
 			{
 				var request = new RequestInfo(
@@ -428,7 +429,7 @@ namespace net.vieapps.Services.Users
 					new Dictionary<string, string>(requestInfo.Header ?? new Dictionary<string, string>(), StringComparer.OrdinalIgnoreCase),
 					requestInfo.Body ?? "",
 					new Dictionary<string, string>(requestInfo.Extra ?? new Dictionary<string, string>(), StringComparer.OrdinalIgnoreCase),
-					requestInfo.CorrelationID ?? UtilityService.NewUUID
+					correlationID
 				);
 
 				if (!string.IsNullOrWhiteSpace(objectIdentity))
@@ -440,7 +441,7 @@ namespace net.vieapps.Services.Users
 			}
 			catch (Exception ex)
 			{
-				await this.WriteLogsAsync(requestInfo.CorrelationID, $"Error occurred while calling related service: {ex.Message}", ex).ConfigureAwait(false);
+				await this.WriteLogsAsync(correlationID, $"Error occurred while calling related service: {ex.Message}", ex).ConfigureAwait(false);
 				return new JObject();
 			}
 		}
@@ -606,9 +607,8 @@ namespace net.vieapps.Services.Users
 					{ "Password", password.Encrypt(this.EncryptionKey) }
 				}.ToString(Formatting.None);
 
-				await this.CallServiceAsync(new RequestInfo(requestInfo.Session, "WindowsAD", "Account")
+				await this.CallServiceAsync(new RequestInfo(requestInfo.Session, "WindowsAD", "Account", "POST")
 				{
-					Verb = "POST",
 					Header = requestInfo.Header,
 					Body = body,
 					Extra = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
