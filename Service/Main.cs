@@ -559,6 +559,9 @@ namespace net.vieapps.Services.Users
 					await Session.UpdateAsync(session, true, cancellationToken).ConfigureAwait(false);
 				}
 
+				// make sure the cache has updated
+				await Utility.Cache.SetAsync(session, 0, cancellationToken).ConfigureAwait(false);
+
 				// remove duplicated sessions
 				await Session.DeleteManyAsync(Filters<Session>.And(
 						Filters<Session>.Equals("DeviceID", session.DeviceID),
@@ -840,13 +843,13 @@ namespace net.vieapps.Services.Users
 			}, cancellationToken).ConfigureAwait(false);
 
 			// response
-			json.Add(new JProperty("Provisioning", new JObject
+			json["Provisioning"] = new JObject
 			{
 				{ "Type", type.ToString() },
 				{ "Account", account.AccessIdentity },
 				{ "ID", account.ID },
 				{ "Stamp", stamp }
-			}.ToString(Formatting.None).Encrypt(this.AuthenticationKey)));
+			}.ToString(Formatting.None).Encrypt(this.AuthenticationKey);
 			return json;
 		}
 		#endregion
@@ -861,13 +864,13 @@ namespace net.vieapps.Services.Users
 
 			var body = requestInfo.GetBodyExpando();
 			var json = JObject.Parse(body.Get("Provisioning", "").Decrypt(this.AuthenticationKey));
-			if (!account.ID.IsEquals((json["ID"] as JValue).Value.ToString()) || !account.AccessIdentity.IsEquals((json["Account"] as JValue).Value.ToString()))
+			if (!account.ID.IsEquals(json.Get<string>("ID")) || !account.AccessIdentity.IsEquals(json.Get<string>("Account")))
 				throw new InformationInvalidException();
 
 			// validate with OTPs service
-			if (!Enum.TryParse((json["Type"] as JValue).Value as string, out TwoFactorsAuthenticationType type))
+			if (!Enum.TryParse(json.Get<string>("Type"), out TwoFactorsAuthenticationType type))
 				type = TwoFactorsAuthenticationType.App;
-			var stamp = (json["Stamp"] as JValue).Value.ToString();
+			var stamp = json.Get<string>("Stamp");
 			json = await this.CallServiceAsync(new RequestInfo(requestInfo.Session, "AuthenticatorOTP", "Time-Based-OTP")
 			{
 				Extra = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -894,7 +897,7 @@ namespace net.vieapps.Services.Users
 
 			// revoke all sessions that are not verified with two-factors authentication
 			var sessions = account.Sessions.Where(s => !s.ID.Equals(requestInfo.Session.SessionID) && !s.Verification).ToList();
-			var messages = sessions.Select(s => new BaseMessage()
+			var messages = sessions.Select(s => new BaseMessage
 			{
 				Type = "Session#Revoke",
 				Data = new JObject
@@ -911,7 +914,7 @@ namespace net.vieapps.Services.Users
 			if (!session.Verification)
 			{
 				needUpdate = session.Verification = true;
-				messages.Add(new BaseMessage()
+				messages.Add(new BaseMessage
 				{
 					Type = "Session#Update",
 					Data = new JObject
@@ -1002,7 +1005,7 @@ namespace net.vieapps.Services.Users
 					: account.Sessions.ForEachAsync((session, token) => Session.UpdateAsync(session, true, token), cancellationToken),
 				account.TwoFactorsAuthentication.Required
 					? Task.CompletedTask
-					: this.SendInterCommunicateMessagesAsync("APIGateway", account.Sessions.Select(session => new BaseMessage()
+					: this.SendInterCommunicateMessagesAsync("APIGateway", account.Sessions.Select(session => new BaseMessage
 					{
 						Type = "Session#Refresh",
 						Data = new JObject
@@ -1057,7 +1060,7 @@ namespace net.vieapps.Services.Users
 		{
 			// check to see the user in the request is system administrator or not
 			if (requestInfo.Extra != null && requestInfo.Extra.ContainsKey("IsSystemAdministrator"))
-				return new JObject()
+				return new JObject
 				{
 					{ "ID", requestInfo.Session.User.ID },
 					{ "IsSystemAdministrator", requestInfo.Session.User.IsSystemAdministrator }
@@ -1102,7 +1105,7 @@ namespace net.vieapps.Services.Users
 				var requestBody = requestInfo.GetBodyExpando();
 
 				var id = UtilityService.GetUUID();
-				var json = new JObject()
+				var json = new JObject
 				{
 					{ "Message", "Please check email and follow the instructions" }
 				};
@@ -1153,7 +1156,7 @@ namespace net.vieapps.Services.Users
 				if (isCreateNew)
 				{
 					// create account
-					var account = new Account()
+					var account = new Account
 					{
 						ID = id,
 						Status = requestBody.Get("Status", "Registered").ToEnum<AccountStatus>(),
@@ -1183,7 +1186,7 @@ namespace net.vieapps.Services.Users
 					? "invite"
 					: "account";
 
-				var codeData = new JObject()
+				var codeData = new JObject
 				{
 					{ "ID", id },
 					{ "Name", name },
@@ -1220,7 +1223,7 @@ namespace net.vieapps.Services.Users
 				}
 
 				var instructions = await this.GetActivateInstructionsAsync(requestInfo, mode, cancellationToken).ConfigureAwait(false);
-				var data = new Dictionary<string, string>()
+				var data = new Dictionary<string, string>
 				{
 					{ "Host", requestInfo.GetQueryParameter("host") ?? "unknown" },
 					{ "Email", email },
@@ -1519,7 +1522,7 @@ namespace net.vieapps.Services.Users
 
 			// send alert email
 			var instructions = await this.GetUpdateInstructionsAsync(requestInfo, "email", cancellationToken).ConfigureAwait(false);
-			var data = new Dictionary<string, string>()
+			var data = new Dictionary<string, string>
 			{
 				{ "Host", requestInfo.GetQueryParameter("host") ?? "unknown" },
 				{ "Email", account.AccessIdentity },
@@ -1558,13 +1561,13 @@ namespace net.vieapps.Services.Users
 			if (account != null && account.Sessions == null)
 				await account.GetSessionsAsync(cancellationToken).ConfigureAwait(false);
 
-			return new JObject()
+			return new JObject
 			{
 				{ "ID", userID },
 				{
 					"Sessions",
 					account != null
-						? account.Sessions.ToJArray(session => new JObject()
+						? account.Sessions.ToJArray(session => new JObject
 						{
 							{ "SessionID", session.ID },
 							{ "DeviceID", session.DeviceID },
@@ -1964,9 +1967,9 @@ namespace net.vieapps.Services.Users
 							var relatedRequest = new RequestInfo(relatedSession, relatedService, "activate", "GET")
 							{
 								Query = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-							{
-								{ "object-identity", account.ID }
-							},
+								{
+									{ "object-identity", account.ID }
+								},
 								CorrelationID = requestInfo.CorrelationID
 							};
 							relatedInfo.ForEach(kvp => relatedRequest.Extra[kvp.Key] = kvp.Value as string);
@@ -1983,7 +1986,7 @@ namespace net.vieapps.Services.Users
 			else
 			{
 				// create account
-				var account = new Account()
+				var account = new Account
 				{
 					ID = id,
 					Status = AccountStatus.Activated,
@@ -1999,7 +2002,7 @@ namespace net.vieapps.Services.Users
 				var json = account.GetAccountJson();
 
 				// create profile
-				var profile = new Profile()
+				var profile = new Profile
 				{
 					ID = id,
 					Name = name,
@@ -2237,7 +2240,7 @@ namespace net.vieapps.Services.Users
 			// timer to request client update state (5 minutes)
 			this.StartTimer(async () =>
 			{
-				await this.SendUpdateMessageAsync(new UpdateMessage()
+				await this.SendUpdateMessageAsync(new UpdateMessage
 				{
 					Type = "OnlineStatus",
 					DeviceID = "*",
