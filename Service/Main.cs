@@ -40,7 +40,7 @@ namespace net.vieapps.Services.Users
 		#endregion
 
 		#region Start
-		public override void Start(string[] args = null, bool initializeRepository = true, Func<IService, Task> nextAsync = null)
+		public override void Start(string[] args = null, bool initializeRepository = true, Func<ServiceBase, Task> nextAsync = null)
 		{
 			base.Start(args, initializeRepository, async (service) =>
 			{
