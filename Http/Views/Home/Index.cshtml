@@ -1,0 +1,19 @@
+﻿@using net.vieapps.Services
+@using net.vieapps.Services.Users
+
+@{
+	ViewBag.Title = "Home";
+}
+
+<h1>Home</h1>
+
+@section Scripts {
+	<script src="~/_assets/rsa.js"></script>
+	<script>
+		var _rsa = new RSA();
+		$(document).ready(function () {
+			_rsa.init("@Global.RSAExponent", "@Global.RSAModulus");
+			console.info("RSA is initialized");
+		});
+	</script>
+}

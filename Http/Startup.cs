@@ -39,7 +39,7 @@ namespace net.vieapps.Services.Users
 				.CaptureStartupErrors(true)
 				.UseStartup<Startup>()
 				.UseKestrel()
-				.UseUrls((args.FirstOrDefault(a => a.IsStartsWith("/listenuri:"))?.Replace("/listenuri:", "").Trim() ?? UtilityService.GetAppSetting("HttpUri:Listen", "http://0.0.0.0:8026")))
+				.UseUrls(args.FirstOrDefault(a => a.IsStartsWith("/listenuri:"))?.Replace("/listenuri:", "").Trim() ?? UtilityService.GetAppSetting("HttpUri:Listen", "http://0.0.0.0:8026"))
 				.Build()
 				.Run();
 		}
@@ -137,7 +137,7 @@ namespace net.vieapps.Services.Users
 			app.UseSession();
 			app.UseAuthentication();
 			app.UseMiddleware<Handler>();
-			app.UseMvc(routes => routes.MapRoute("default", "{controller}/{action=Index}/{id?}"));
+			app.UseMvc(routes => routes.MapRoute("default", "{controller=Home}/{action=Index}/{id?}"));
 
 			// on started
 			appLifetime.ApplicationStarted.Register(() =>

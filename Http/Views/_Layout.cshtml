@@ -1,0 +1,68 @@
+﻿@using net.vieapps.Services.Users
+@using net.vieapps.Services
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+	<title>@ViewData["Title"] - VIEApps NGX ID</title>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<meta name="robots" content="noindex,nofollow,none,noarchive,nocache,nosnippet,noodp,noydir" />
+	<link rel="stylesheet" type="text/css" href="~/_assets/style.css" />
+</head>
+<body>
+	<div>
+		@RenderBody()
+	</div>
+	<footer>
+		<ul>
+			<li>
+				<a href="@Utils.GetUrl("home")">
+					Home
+				</a>
+			</li>
+			@if (Global.IsAuthenticated())
+			{
+				<li>
+					<a href="@Utils.GetUrl("profile")">
+						Profile
+					</a>
+				</li>
+				<li>
+					<a href="@Utils.GetUrl("signout")">
+						Sign out
+					</a>
+				</li>
+			}
+			else
+			{
+				<li>
+					<a href="@Utils.GetUrl("signin")">
+						Log in
+					</a>
+				</li>
+				<li>
+					<a href="@Utils.GetUrl("register")">
+						Register
+					</a>
+				</li>
+			}
+		</ul>
+		<div>
+			<section>
+				&copy;@DateTime.Now.Year.ToString()
+				VIEApps NGX
+			</section>
+			<div>
+				<span>
+					<a href="@Utils.CurrentUrl&language=vi-VN">Tiếng Việt</a>
+				</span>
+				<span>
+					<a href="@Utils.CurrentUrl&language=en-US">English</a>
+				</span>
+			</div>
+		</div>
+	</footer>
+	<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.3.1/jquery.min.js"></script>
+	@RenderSection("Scripts", required: false)
+</body>
+</html>
