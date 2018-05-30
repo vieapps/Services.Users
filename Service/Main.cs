@@ -2223,7 +2223,7 @@ namespace net.vieapps.Services.Users
 				throw new MethodNotAllowedException(requestInfo.Verb);
 
 			var code = CaptchaService.GenerateCode();
-			var uri = this.GetHttpURI("Files", "https://afs.vieapps.net")
+			var uri = this.GetHttpURI("Files", "https://fs.vieapps.net")
 				+ "/captchas/" + code.Url64Encode() + "/"
 				+ (requestInfo.GetQueryParameter("register") ?? UtilityService.NewUUID.Encrypt(this.EncryptionKey, true)).Substring(UtilityService.GetRandomNumber(13, 43), 13).Reverse() + ".jpg";
 

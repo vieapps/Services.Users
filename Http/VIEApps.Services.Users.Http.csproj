@@ -1,103 +1,43 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
-<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
-  <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
-  <PropertyGroup>
-    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
-    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
-    <ProductVersion>
-    </ProductVersion>
-    <SchemaVersion>2.0</SchemaVersion>
-    <ProjectGuid>{F6BDA395-A866-4621-80E4-59E246DBFC97}</ProjectGuid>
-    <ProjectTypeGuids>{349c5851-65df-11da-9384-00065b846f21};{fae04ec0-301f-11d3-bf4b-00c04f79efbc}</ProjectTypeGuids>
-    <OutputType>Library</OutputType>
-    <AppDesignerFolder>Properties</AppDesignerFolder>
-    <RootNamespace>net.vieapps.Services.Users</RootNamespace>
-    <AssemblyName>VIEApps.Services.Users.Http</AssemblyName>
-    <TargetFrameworkVersion>v4.7.1</TargetFrameworkVersion>
-    <TargetFrameworkProfile />
-    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
-    <RestoreProjectStyle>PackageReference</RestoreProjectStyle>
-    <UseIISExpress>true</UseIISExpress>
-    <IISExpressSSLPort />
-    <IISExpressAnonymousAuthentication />
-    <IISExpressWindowsAuthentication />
-    <IISExpressUseClassicPipelineMode />
-    <UseGlobalApplicationHostFile />
-    <Use64BitIISExpress>true</Use64BitIISExpress>
-  </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
-    <DebugSymbols>true</DebugSymbols>
-    <DebugType>full</DebugType>
-    <Optimize>false</Optimize>
-    <OutputPath>bin\</OutputPath>
-    <DefineConstants>DEBUG;TRACE</DefineConstants>
-    <ErrorReport>prompt</ErrorReport>
-    <WarningLevel>3</WarningLevel>
-    <CodeAnalysisRuleSet>AllRules.ruleset</CodeAnalysisRuleSet>
-  </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
-    <DebugSymbols>true</DebugSymbols>
-    <DebugType>pdbonly</DebugType>
-    <Optimize>true</Optimize>
-    <OutputPath>bin\</OutputPath>
-    <DefineConstants>
-    </DefineConstants>
-    <ErrorReport>prompt</ErrorReport>
-    <WarningLevel>3</WarningLevel>
-    <CodeAnalysisRuleSet>AllRules.ruleset</CodeAnalysisRuleSet>
-  </PropertyGroup>
-  <ItemGroup>
-    <Reference Include="System.Web" />
-  </ItemGroup>
-  <ItemGroup>
-    <Compile Include="Finalizer.cs" />
-    <Compile Include="Initializer.cs" />
-    <Compile Include="Global.cs" />
-    <Compile Include="Properties\AssemblyInfo.cs" />
-    <Compile Include="Validator.cs" />
-  </ItemGroup>
-  <ItemGroup>
-    <Content Include="Global.asax" />
-  </ItemGroup>
-  <ItemGroup>
-    <ProjectReference Include="..\..\Base\VIEApps.Services.Base.csproj">
-      <Project>{c496cef5-9ff8-4364-9860-fcdefed4e277}</Project>
-      <Name>VIEApps.Services.Base</Name>
-    </ProjectReference>
-    <ProjectReference Include="..\Service\VIEApps.Services.Users.csproj">
-      <Project>{0950ce1c-8e96-4ca5-a67f-e09e27ee7788}</Project>
-      <Name>VIEApps.Services.Users</Name>
-    </ProjectReference>
-  </ItemGroup>
-  <ItemGroup>
-    <Content Include="Global.ashx" />
-  </ItemGroup>
-  <ItemGroup>
-    <Content Include="web.config" />
-  </ItemGroup>
-  <PropertyGroup>
-    <VisualStudioVersion Condition="'$(VisualStudioVersion)' == ''">15.0</VisualStudioVersion>
-    <VSToolsPath Condition="'$(VSToolsPath)' == ''">$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)</VSToolsPath>
-  </PropertyGroup>
-  <Import Project="$(MSBuildBinPath)\Microsoft.CSharp.targets" />
-  <Import Project="$(VSToolsPath)\WebApplications\Microsoft.WebApplication.targets" Condition="'$(VSToolsPath)' != ''" />
-  <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v10.0\WebApplications\Microsoft.WebApplication.targets" Condition="false" />
-  <ProjectExtensions>
-    <VisualStudio>
-      <FlavorProperties GUID="{349c5851-65df-11da-9384-00065b846f21}">
-        <WebProjectProperties>
-          <UseIIS>True</UseIIS>
-          <AutoAssignPort>True</AutoAssignPort>
-          <DevelopmentServerPort>2411</DevelopmentServerPort>
-          <DevelopmentServerVPath>/</DevelopmentServerVPath>
-          <IISUrl>http://localhost:2411/</IISUrl>
-          <NTLMAuthentication>False</NTLMAuthentication>
-          <UseCustomServer>False</UseCustomServer>
-          <CustomServerUrl>
-          </CustomServerUrl>
-          <SaveServerSettingsInUserFile>False</SaveServerSettingsInUserFile>
-        </WebProjectProperties>
-      </FlavorProperties>
-    </VisualStudio>
-  </ProjectExtensions>
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+
+	<PropertyGroup>
+		<TargetFramework>netcoreapp2.0</TargetFramework>
+		<OutputType>Exe</OutputType>
+		<RootNamespace>net.vieapps.Services.Users</RootNamespace>
+		<StartupObject>net.vieapps.Services.Users.Startup</StartupObject>
+		<AssemblyName>VIEApps.Services.Users.Http</AssemblyName>
+		<AssemblyTitle>VIEApps NGX Users HTTP</AssemblyTitle>
+		<AssemblyVersion>10.2.0.1806</AssemblyVersion>
+		<FileVersion>10.2.0.1806</FileVersion>
+		<InformationalVersion>v10.2.netcore-2+rev:2018.06.01</InformationalVersion>
+		<Product>VIEApps NGX</Product>
+		<Company>VIEApps.net</Company>
+		<SignAssembly>false</SignAssembly>
+		<DelaySign>false</DelaySign>
+		<AssemblyOriginatorKeyFile>../VIEApps.Components.snk</AssemblyOriginatorKeyFile>
+	</PropertyGroup>
+
+	<PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
+		<WarningLevel>3</WarningLevel>
+	</PropertyGroup>
+
+	<PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
+		<WarningLevel>3</WarningLevel>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<None Remove=".DS_Store" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Microsoft.AspNetCore.All" Version="2.0.8" />
+		<PackageReference Include="Serilog.Extensions.Logging.File" Version="1.1.0" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\..\Base.Http\VIEApps.Services.Base.Http.csproj" />
+		<ProjectReference Include="..\..\Base\VIEApps.Services.Base.csproj" />
+		<ProjectReference Include="..\Service\VIEApps.Services.Users.csproj" />
+	</ItemGroup>
+
 </Project>
