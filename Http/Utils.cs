@@ -49,7 +49,7 @@ namespace net.vieapps.Services.Users
 
 		public static string GetUrl(string view, string language = null)
 		{
-			return $"/{view}?s={Global.CurrentHttpContext.Session.Id.Encrypt(Global.EncryptionKey).ToBase64Url(true)}&language={language ?? Utils.CurrentLanguage}";
+			return $"/{view ?? "home"}?s={Global.CurrentHttpContext.Session.Id.Encrypt(Global.EncryptionKey).ToBase64Url(true)}&language={language ?? Utils.CurrentLanguage}";
 		}
 	}
 }
