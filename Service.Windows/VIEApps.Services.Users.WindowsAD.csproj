@@ -1,40 +1,38 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
-  <PropertyGroup>
-    <TargetFramework>netstandard2.0</TargetFramework>
-    <RootNamespace>net.vieapps.Services.Users.WindowsAD</RootNamespace>
-    <AssemblyName>VIEApps.Services.Users.WindowsAD</AssemblyName>
-    <AssemblyTitle>VIEApps NGX Users</AssemblyTitle>
-    <Authors>VIEApps.net</Authors>
-    <Company>VIEApps.net</Company>
-    <Product>VIEApps NGX</Product>
-    <Copyright>© 2018 VIEApps.net</Copyright>
-    <Version>10.2.0.1806</Version>
-    <AssemblyVersion>10.2.0.1806</AssemblyVersion>
-    <FileVersion>10.2.0.1806</FileVersion>
-    <InformationalVersion>v10.1.netstandard-2+rev:2018.06.01</InformationalVersion>
-  </PropertyGroup>
+	<PropertyGroup>
+		<TargetFramework>netstandard2.0</TargetFramework>
+		<RootNamespace>net.vieapps.Services.Users.WindowsAD</RootNamespace>
+		<AssemblyName>VIEApps.Services.Users.WindowsAD</AssemblyName>
+		<AssemblyTitle>VIEApps NGX Users</AssemblyTitle>
+		<Authors>VIEApps.net</Authors>
+		<Company>VIEApps.net</Company>
+		<Product>VIEApps NGX</Product>
+		<Copyright>© 2018 VIEApps.net</Copyright>
+		<Version>10.2.0.1806</Version>
+		<AssemblyVersion>10.2.0.1806</AssemblyVersion>
+		<FileVersion>10.2.0.1806</FileVersion>
+		<InformationalVersion>v10.1.netstandard-2+rev:2018.06.01</InformationalVersion>
+	</PropertyGroup>
 
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
-    <WarningLevel>3</WarningLevel>
-  </PropertyGroup>
+	<PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
+		<WarningLevel>3</WarningLevel>
+	</PropertyGroup>
 
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
-    <WarningLevel>3</WarningLevel>
-  </PropertyGroup>
+	<PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
+		<WarningLevel>3</WarningLevel>
+	</PropertyGroup>
 
-  <ItemGroup>
-    <None Remove=".DS_Store" />
-    <None Remove=".gitattributes" />
-    <None Remove=".gitignore" />
-  </ItemGroup>
+	<ItemGroup>
+		<None Remove=".DS_Store" />
+	</ItemGroup>
 
-  <ItemGroup>
-    <PackageReference Include="System.DirectoryServices.AccountManagement" Version="4.5.0" />
-  </ItemGroup>
+	<ItemGroup>
+		<PackageReference Include="System.DirectoryServices.AccountManagement" Version="4.5.0" />
+	</ItemGroup>
 
-  <ItemGroup>
-    <ProjectReference Include="..\..\Base\VIEApps.Services.Base.csproj" />
-  </ItemGroup>
+	<ItemGroup>
+		<ProjectReference Include="..\..\Base\VIEApps.Services.Base.csproj" />
+	</ItemGroup>
 
 </Project>
