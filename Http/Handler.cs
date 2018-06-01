@@ -77,8 +77,10 @@ namespace net.vieapps.Services.Users
 				}
 			}
 
-			// invoke next middleware
+			// set headers & invoke next middleware
 			else
+			{
+				context.Response.Headers["Server"] = "VIEApps NGX";
 				try
 				{
 					await this.Next.Invoke(context).ConfigureAwait(false);
@@ -88,6 +90,7 @@ namespace net.vieapps.Services.Users
 				{
 					Global.Logger.LogCritical($"Error occurred while invoking the next middleware: {ex.Message}", ex);
 				}
+			}
 		}
 
 		internal async Task ProcessInitializerRequestAsync(HttpContext context)
