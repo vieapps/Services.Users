@@ -21,7 +21,6 @@
 
 	<PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
 		<WarningLevel>3</WarningLevel>
-		<DefineConstants>TRACE;RELEASE;NETSTANDARD2_0;REQUESTLOGS</DefineConstants>
 	</PropertyGroup>
 
 	<ItemGroup>
