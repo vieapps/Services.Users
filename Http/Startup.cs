@@ -12,6 +12,7 @@ using Microsoft.AspNetCore;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.DataProtection;
@@ -84,6 +85,14 @@ namespace net.vieapps.Services.Users
 
 			// MVC
 			services.AddMvc();
+
+			// IIS integration
+			if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+				services.Configure<IISOptions>(options =>
+				{
+					options.ForwardClientCertificate = false;
+					options.AutomaticAuthentication = false;
+				});
 		}
 
 		public void Configure(IApplicationBuilder app, IApplicationLifetime appLifetime, IHostingEnvironment environment)
@@ -109,7 +118,7 @@ namespace net.vieapps.Services.Users
 
 			Global.Logger.LogInformation($"The {Global.ServiceName} HTTP service is starting");
 			Global.Logger.LogInformation($"Version: {typeof(Startup).Assembly.GetVersion()}");
-			Global.Logger.LogInformation($"Platform: {RuntimeInformation.FrameworkDescription} @ {(RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "Windows" : RuntimeInformation.IsOSPlatform(OSPlatform.Linux) ? "Linux" : $"Other OS")} {RuntimeInformation.OSArchitecture} ({RuntimeInformation.OSDescription.Trim()})");
+			Global.Logger.LogInformation($"Platform: {RuntimeInformation.FrameworkDescription} @ {(RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "Windows" : RuntimeInformation.IsOSPlatform(OSPlatform.Linux) ? "Linux" : "macOS")} {RuntimeInformation.OSArchitecture} ({(RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? "Macintosh; Intel Mac OS X; " : "")}{RuntimeInformation.OSDescription.Trim()})");
 #if DEBUG
 			Global.Logger.LogInformation($"Working mode: DEBUG ({(environment.IsDevelopment() ? "Development" : "Production")})");
 #else
@@ -131,6 +140,11 @@ namespace net.vieapps.Services.Users
 			Handler.OpenWAMPChannels();
 
 			// middleware
+			if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+				app.UseForwardedHeaders(new ForwardedHeadersOptions
+				{
+					ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
+				});
 			app.UseStatusCodeHandler();
 			app.UseResponseCompression();
 			app.UseCache();
