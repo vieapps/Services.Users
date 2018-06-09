@@ -2089,7 +2089,7 @@ namespace net.vieapps.Services.Users
 				{ "DeviceID", requestInfo.Session.DeviceID },
 				{ "AppName", requestInfo.Session.AppName },
 				{ "AppPlatform", requestInfo.Session.AppPlatform },
-				{ "IP", requestInfo.Session.IP },
+				{ "Location", await requestInfo.Session.GetLocationAsync(requestInfo.CorrelationID).ConfigureAwait(false) },
 				{ "IsOnline", true }
 			};
 
