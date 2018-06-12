@@ -23,7 +23,7 @@ namespace net.vieapps.Services.Users
 {
 	public class ServiceComponent : ServiceBase
 	{
-		public ServiceComponent() : base() { }
+		ConcurrentDictionary<string, string> OnlineSessions { get; } = new ConcurrentDictionary<string, string>();
 
 		ConcurrentDictionary<string, bool> VisitorSessions { get; } = new ConcurrentDictionary<string, bool>();
 
@@ -224,7 +224,7 @@ namespace net.vieapps.Services.Users
 						<i>Thông tin thêm:</i>
 						<ul>
 							<li>
-								Hoạt động đăng ký tài khoản được thực hiện lúc <b>{Time}</b> với thiết bị có địa chỉ IP là <b>{IP}</b>
+								Hoạt động này được thực hiện lúc <b>{Time}</b>  tại <b>{Location}</b>
 							</li>
 							<li>
 								Mã kích hoạt chỉ có giá trị trong vòng 01 tháng kể từ thời điểm nhận được email này.
@@ -263,7 +263,7 @@ namespace net.vieapps.Services.Users
 						<i>Thông tin thêm:</i>
 						<ul>
 							<li>
-								Lời mời tham gia hệ thống được thực hiện lúc <b>{Time}</b> với thiết bị có địa chỉ IP là <b>{IP}</b>
+								Hoạt động này được thực hiện lúc <b>{Time}</b> với thiết bị <b>{AppPlatform}</b> tại <b>{Location}</b>
 							</li>
 							<li>
 								Mã khởi tạo & kích hoạt chỉ có giá trị trong vòng 01 tháng kể từ thời điểm nhận được email này.
@@ -299,7 +299,7 @@ namespace net.vieapps.Services.Users
 						<i>Thông tin thêm:</i>
 						<ul>
 							<li>
-								Hoạt động này được thực hiện lúc <b>{Time}</b> với thiết bị <b>{AppPlatform}</b> có địa chỉ IP là <b>{IP}</b>
+								Hoạt động này được thực hiện lúc <b>{Time}</b> với thiết bị <b>{AppPlatform}</b> tại <b>{Location}</b>
 							</li>
 							<li>
 								Mã kích hoạt chỉ có giá trị trong vòng 01 ngày kể từ thời điểm nhận được email này.
@@ -372,7 +372,7 @@ namespace net.vieapps.Services.Users
 						<i>Thông tin thêm:</i>
 						<ul>
 							<li>
-								Hoạt động này được thực hiện lúc <b>{Time}</b> với thiết bị <b>{AppPlatform}</b> có địa chỉ IP là <b>{IP}</b>
+								Hoạt động này được thực hiện lúc <b>{Time}</b> với thiết bị <b>{AppPlatform}</b> tại <b>{Location}</b>
 							</li>
 							<li>
 								Nếu không phải bạn thực hiện hoạt động này, bạn nên kiểm tra lại thông tin đăng nhập cũng như email liên quan
@@ -397,7 +397,7 @@ namespace net.vieapps.Services.Users
 						<i>Thông tin thêm:</i>
 						<ul>
 							<li>
-								Hoạt động này được thực hiện lúc <b>{Time}</b> với thiết bị <b>{AppPlatform}</b> có địa chỉ IP là <b>{IP}</b>
+								Hoạt động này được thực hiện lúc <b>{Time}</b> với thiết bị <b>{AppPlatform}</b> tại <b>{Location}</b>
 							</li>
 							<li>
 								Nếu không phải bạn thực hiện hoạt động này, bạn nên kiểm tra lại thông tin đăng nhập cũng như email liên quan
@@ -1231,6 +1231,7 @@ namespace net.vieapps.Services.Users
 					{ "Name", name },
 					{ "Time", DateTime.Now.ToString("hh:mm tt @ dd/MM/yyyy") },
 					{ "AppPlatform", requestInfo.Session.AppName + " @ " + requestInfo.Session.AppPlatform },
+					{ "Location", await requestInfo.GetLocationAsync().ConfigureAwait(false) },
 					{ "IP", requestInfo.Session.IP },
 					{ "Uri", uri },
 					{ "Code", code },
@@ -1420,6 +1421,7 @@ namespace net.vieapps.Services.Users
 				{ "Name", account.Profile.Name },
 				{ "Time", DateTime.Now.ToString("hh:mm tt @ dd/MM/yyyy") },
 				{ "AppPlatform", requestInfo.Session.AppName + " @ " + requestInfo.Session.AppPlatform },
+				{ "Location", await requestInfo.GetLocationAsync().ConfigureAwait(false) },
 				{ "IP", requestInfo.Session.IP },
 				{ "Uri", uri },
 				{ "Code", code },
@@ -1471,6 +1473,7 @@ namespace net.vieapps.Services.Users
 				{ "Name", account.Profile.Name },
 				{ "Time", DateTime.Now.ToString("hh:mm tt @ dd/MM/yyyy") },
 				{ "AppPlatform", requestInfo.Session.AppName + " @ " + requestInfo.Session.AppPlatform },
+				{ "Location", await requestInfo.GetLocationAsync().ConfigureAwait(false) },
 				{ "IP", requestInfo.Session.IP },
 				{ "Signature", instructions.Item3 }
 			};
@@ -1530,6 +1533,7 @@ namespace net.vieapps.Services.Users
 				{ "Name", account.Profile.Name },
 				{ "Time", DateTime.Now.ToString("hh:mm tt @ dd/MM/yyyy") },
 				{ "AppPlatform", requestInfo.Session.AppName + " @ " + requestInfo.Session.AppPlatform },
+				{ "Location", await requestInfo.GetLocationAsync().ConfigureAwait(false) },
 				{ "IP", requestInfo.Session.IP },
 				{ "Signature", instructions.Item3 }
 			};
@@ -2064,11 +2068,10 @@ namespace net.vieapps.Services.Users
 		async Task<JObject> UpdateOnlineStatusAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// update the collection of online session
-			try
-			{
-				this._onlineSessions[requestInfo.Session.SessionID] = requestInfo.Session.User.ID;
-			}
-			catch { }
+			if (this.OnlineSessions.TryGetValue(requestInfo.Session.SessionID, out string userID))
+				this.OnlineSessions.TryUpdate(requestInfo.Session.SessionID, requestInfo.Session.User.ID, userID);
+			else
+				this.OnlineSessions.TryAdd(requestInfo.Session.SessionID, requestInfo.Session.User.ID);
 
 			// update last access
 			if (!requestInfo.Session.User.IsSystemAccount && !requestInfo.Session.User.ID.Equals(""))
@@ -2085,7 +2088,7 @@ namespace net.vieapps.Services.Users
 			var info = new JObject
 			{
 				{ "UserID", requestInfo.Session.User.ID },
-				{ "SessionID", requestInfo.Session.SessionID },
+				{ "SessionID", requestInfo.Session.SessionID.Encrypt(this.EncryptionKey, true) },
 				{ "DeviceID", requestInfo.Session.DeviceID },
 				{ "AppName", requestInfo.Session.AppName },
 				{ "AppPlatform", requestInfo.Session.AppPlatform },
@@ -2105,8 +2108,6 @@ namespace net.vieapps.Services.Users
 		}
 
 		#region Process inter-communicate messages
-		Dictionary<string, string> _onlineSessions = new Dictionary<string, string>();
-
 		protected override async Task ProcessInterCommunicateMessageAsync(CommunicateMessage message, CancellationToken cancellationToken = default(CancellationToken))
 		{
 			if (this.IsDebugResultsEnabled)
@@ -2131,14 +2132,10 @@ namespace net.vieapps.Services.Users
 
 					// update the collection of online session
 					if (!isOnline)
-						this._onlineSessions.Remove(sessionID);
+						this.OnlineSessions.TryRemove(sessionID, out string val);
 
 					else
-						try
-						{
-							this._onlineSessions[sessionID] = userID;
-						}
-						catch { }
+						this.OnlineSessions.TryAdd(sessionID, userID);
 
 					// update & broadcast
 					if (!string.IsNullOrWhiteSpace(userID))
@@ -2152,12 +2149,25 @@ namespace net.vieapps.Services.Users
 						}
 
 						// boardcast messages to clients
+						var msgData = message.Data as JObject;
+						msgData.Remove("IP");
+						msgData["Location"] = await new Services.Session
+						{
+							SessionID = session.ID,
+							User = new User
+							{
+								ID = session.UserID,
+								SessionID = session.ID
+							},
+							IP = session.IP
+						}.GetLocationAsync(correlationID).ConfigureAwait(false);
+
 						await this.SendUpdateMessageAsync(new UpdateMessage
 						{
 							Type = "Users#Status",
 							DeviceID = "*",
 							ExcludedDeviceID = deviceID,
-							Data = message.Data
+							Data = msgData
 						}, cancellationToken).ConfigureAwait(false);
 					}
 
@@ -2175,7 +2185,7 @@ namespace net.vieapps.Services.Users
 				{
 					Type = "Users#Online",
 					DeviceID = "*",
-					Data = new JValue(this._onlineSessions.Count)
+					Data = new JValue(this.OnlineSessions.Count)
 				}, cancellationToken).ConfigureAwait(false);
 
 			// re-update sessions when got new access token
@@ -2199,7 +2209,7 @@ namespace net.vieapps.Services.Users
 							await this.SendInterCommunicateMessageAsync("APIGateway", new BaseMessage()
 							{
 								Type = "Session#Update",
-								Data = new JObject()
+								Data = new JObject
 								{
 									{ "Session", session.ID },
 									{ "User", account.GetAccountJson() },
