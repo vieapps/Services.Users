@@ -11,6 +11,8 @@ using System.Security.Cryptography;
 using System.Numerics;
 using System.IO.Compression;
 
+using Microsoft.Extensions.Logging;
+
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
@@ -99,11 +101,15 @@ namespace net.vieapps.Services.Users
 						break;
 
 					case "status":
-						json = await this.UpdateOnlineStatusAsync(requestInfo, cancellationToken).ConfigureAwait(false);
+						json = requestInfo.Verb.IsEquals("GET")
+							? await this.UpdateOnlineStatusAsync(requestInfo.Session, true, requestInfo.CorrelationID, cancellationToken).ConfigureAwait(false)
+							: throw new MethodNotAllowedException(requestInfo.Verb);
 						break;
 
 					case "captcha":
-						json = this.RegisterSessionCaptcha(requestInfo);
+						json = requestInfo.Verb.IsEquals("GET")
+							? this.RegisterSessionCaptcha(requestInfo)
+							: throw new MethodNotAllowedException(requestInfo.Verb);
 						break;
 
 					default:
@@ -535,7 +541,6 @@ namespace net.vieapps.Services.Users
 				// update cache of session
 				var session = request.Copy<Session>();
 				await Utility.Cache.SetAsync(session, 180, cancellationToken).ConfigureAwait(false);
-				this.VisitorSessions.TryAdd(session.ID, true);
 
 				// response
 				return session.ToJson();
@@ -1076,7 +1081,7 @@ namespace net.vieapps.Services.Users
 				throw new InformationNotFoundException();
 
 			// response
-			return account.GetAccountJson(requestInfo.Extra != null && requestInfo.Extra.ContainsKey("x-status"), this.AuthenticationKey);
+			return account.GetAccountJson(requestInfo.Query.ContainsKey("x-status"), this.AuthenticationKey);
 		}
 		#endregion
 
@@ -1365,8 +1370,8 @@ namespace net.vieapps.Services.Users
 				Task.WhenAll(account.Sessions.Select(session => Session.UpdateAsync(session, true, cancellationToken)))
 			).ConfigureAwait(false);
 
-			// send update messages
-			await this.SendInterCommunicateMessagesAsync("APIGateway", account.Sessions.Select(session => new BaseMessage()
+			// send update messages to API Gateway to update with clients
+			await this.SendInterCommunicateMessagesAsync("APIGateway", account.Sessions.Select(session => new BaseMessage
 			{
 				Type = "Session#Update",
 				Data = new JObject()
@@ -1391,14 +1396,14 @@ namespace net.vieapps.Services.Users
 			var email = requestInfo.Extra["Email"].Decrypt(this.EncryptionKey);
 			var account = await Account.GetByIdentityAsync(email, AccountType.BuiltIn, cancellationToken).ConfigureAwait(false);
 			if (account == null)
-				return new JObject()
+				return new JObject
 				{
 					{ "Message", "Please check your email and follow the instruction to activate" }
 				};
 
 			// prepare
 			var password = Account.GeneratePassword(email);
-			var code = new JObject()
+			var code = new JObject
 			{
 				{ "ID", account.ID },
 				{ "Password", password },
@@ -1413,7 +1418,7 @@ namespace net.vieapps.Services.Users
 
 			// prepare activation email
 			var instructions = await this.GetActivateInstructionsAsync(requestInfo, "reset", cancellationToken).ConfigureAwait(false);
-			var data = new Dictionary<string, string>()
+			var data = new Dictionary<string, string>
 			{
 				{ "Host", requestInfo.GetQueryParameter("host") ?? "unknown" },
 				{ "Email", account.AccessIdentity },
@@ -1441,7 +1446,7 @@ namespace net.vieapps.Services.Users
 			await this.SendEmailAsync(instructions.Item4, account.Profile.Name + " <" + account.AccessIdentity + ">", subject, body, smtp.Item1, smtp.Item2, smtp.Item3, smtp.Item4, smtp.Item5, cancellationToken).ConfigureAwait(false);
 
 			// response
-			return new JObject()
+			return new JObject
 			{
 				{ "Message", "Please check your email and follow the instruction to activate" }
 			};
@@ -1465,7 +1470,7 @@ namespace net.vieapps.Services.Users
 
 			// send alert email
 			var instructions = await this.GetUpdateInstructionsAsync(requestInfo, "password", cancellationToken).ConfigureAwait(false);
-			var data = new Dictionary<string, string>()
+			var data = new Dictionary<string, string>
 			{
 				{ "Host", requestInfo.GetQueryParameter("host") ?? "unknown" },
 				{ "Email", account.AccessIdentity },
@@ -2065,18 +2070,110 @@ namespace net.vieapps.Services.Users
 		}
 		#endregion
 
-		async Task<JObject> UpdateOnlineStatusAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		#region Process inter-communicate messages
+		protected override async Task ProcessInterCommunicateMessageAsync(CommunicateMessage message, CancellationToken cancellationToken = default(CancellationToken))
 		{
-			// update the collection of online session
-			if (this.OnlineSessions.TryGetValue(requestInfo.Session.SessionID, out string userID))
-				this.OnlineSessions.TryUpdate(requestInfo.Session.SessionID, requestInfo.Session.User.ID, userID);
-			else
-				this.OnlineSessions.TryAdd(requestInfo.Session.SessionID, requestInfo.Session.User.ID);
+			var correlationID = UtilityService.NewUUID;
+			if (this.IsDebugResultsEnabled)
+				await this.WriteLogsAsync(correlationID, $"Begin process an inter-communicate message {message.ToJson().ToString(this.IsDebugLogEnabled ? Formatting.Indented : Formatting.None)}", null, this.ServiceName, "RTU").ConfigureAwait(false);
 
-			// update last access
-			if (!requestInfo.Session.User.IsSystemAccount && !requestInfo.Session.User.ID.Equals(""))
+			// prepare
+			var data = message.Data?.ToExpandoObject();
+			if (data == null)
+				return;
+
+			// online status of a session (service instance)
+			if (message.Type.IsEquals("Session#State"))
+				try
+				{
+					var sessionID = data.Get<string>("SessionID");
+					var userID = data.Get<string>("UserID");
+					if (data.Get<bool>("IsOnline"))
+					{
+						this.OnlineSessions.TryAdd(sessionID, userID);
+						if (userID.Equals(""))
+							this.VisitorSessions.TryAdd(sessionID, true);
+					}
+					else
+					{
+						this.OnlineSessions.TryRemove(sessionID, out string val);
+						if (userID.Equals(""))
+							this.VisitorSessions.TryRemove(sessionID, out bool state);
+					}
+
+					if (this.IsDebugResultsEnabled)
+						await this.WriteLogsAsync(correlationID, $"Update online state of a session successful - Online sessions: {this.OnlineSessions.Count:#,##0} - Vistor sessions: {this.VisitorSessions.Count:#,##0} - User sessions: {(this.OnlineSessions.Count - this.VisitorSessions.Count):#,##0}", null, this.ServiceName, "RTU").ConfigureAwait(false);
+				}
+				catch (Exception ex)
+				{
+					await this.WriteLogsAsync(correlationID, $"Error occurred while updating online sessions: {ex.Message}", ex, this.ServiceName, "RTU").ConfigureAwait(false); ;
+				}
+
+			// online status of a session
+			else if (message.Type.IsEquals("Session#Status"))
+				try
+				{
+					// update status
+					var sessionInfo = data.FromExpandoObject<Services.Session>();
+					var isOnline = data.Get("IsOnline", false);
+					await this.UpdateOnlineStatusAsync(sessionInfo, isOnline, correlationID, cancellationToken, false);
+
+					// update session
+					if (!string.IsNullOrWhiteSpace(sessionInfo.User.ID))
+					{
+						var session = await Session.GetAsync<Session>(sessionInfo.SessionID, cancellationToken);
+						if (session != null && session.Online != isOnline)
+						{
+							session.Online = isOnline;
+							await Session.UpdateAsync(session, true, cancellationToken).ConfigureAwait(false);
+						}
+					}
+
+					if (this.IsDebugResultsEnabled)
+						await this.WriteLogsAsync(correlationID, $"Update online status of a session successful ({sessionInfo.SessionID} - {isOnline})", null, this.ServiceName, "RTU").ConfigureAwait(false);
+				}
+				catch (Exception ex)
+				{
+					await this.WriteLogsAsync(correlationID, $"Error occurred while updating online status: {ex.Message}", ex, this.ServiceName, "RTU").ConfigureAwait(false); ;
+				}
+
+			// total of online users
+			else if (message.Type.IsEquals("Session#Online"))
+				await this.SendUpdateMessageAsync(new UpdateMessage
+				{
+					Type = "Users#Session#Online",
+					DeviceID = "*",
+					Data = new JObject
+					{
+						{ "TotalSessions", this.OnlineSessions.Count },
+						{ "VisitorSessions", this.VisitorSessions.Count },
+						{ "UserSessions", this.OnlineSessions.Count - this.VisitorSessions.Count }
+					}
+				}, cancellationToken).ConfigureAwait(false);
+
+			// unknown
+			else if (this.IsDebugResultsEnabled)
+				await this.WriteLogsAsync(correlationID, $"Don't known how to process ({message.Type})", null, this.ServiceName, "RTU", LogLevel.Warning).ConfigureAwait(false);
+		}
+
+		async Task<JObject> UpdateOnlineStatusAsync(Services.Session session, bool isOnline, string correlationID = null, CancellationToken cancellationToken = default(CancellationToken), bool updateLastAccess = true)
+		{
+			// send message to update all service instances
+			await this.SendInterCommunicateMessageAsync("Users", new BaseMessage
 			{
-				var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID, cancellationToken).ConfigureAwait(false);
+				Type = "Session#State",
+				Data = new JObject
+				{
+					{ "SessionID", session.SessionID },
+					{ "UserID", session.User.ID },
+					{ "IsOnline", isOnline }
+				}
+			}, cancellationToken).ConfigureAwait(false);
+
+			// update last-access time
+			if (updateLastAccess && !session.User.IsSystemAccount && !session.User.ID.Equals(""))
+			{
+				var account = await Account.GetAsync<Account>(session.User.ID, cancellationToken).ConfigureAwait(false);
 				if (account != null)
 				{
 					account.LastAccess = DateTime.Now;
@@ -2084,154 +2181,38 @@ namespace net.vieapps.Services.Users
 				}
 			}
 
-			// broadcast & return
-			var info = new JObject
+			// prepare
+			var statusInfo = new JObject
 			{
-				{ "UserID", requestInfo.Session.User.ID },
-				{ "SessionID", requestInfo.Session.SessionID.Encrypt(this.EncryptionKey, true) },
-				{ "DeviceID", requestInfo.Session.DeviceID },
-				{ "AppName", requestInfo.Session.AppName },
-				{ "AppPlatform", requestInfo.Session.AppPlatform },
-				{ "Location", await requestInfo.Session.GetLocationAsync(requestInfo.CorrelationID).ConfigureAwait(false) },
-				{ "IsOnline", true }
+				{ "SessionID", session.GetEncryptedID(session.SessionID, this.EncryptionKey, this.ValidationKey) },
+				{ "UserID", session.User.ID },
+				{ "DeviceID", session.DeviceID },
+				{ "AppName", session.AppName },
+				{ "AppPlatform", session.AppPlatform },
+				{ "Location", await session.GetLocationAsync(correlationID).ConfigureAwait(false) },
+				{ "IsOnline", isOnline }
 			};
 
-			await this.SendUpdateMessageAsync(new UpdateMessage
-			{
-				Type = "Users#Status",
-				DeviceID = "*",
-				ExcludedDeviceID = requestInfo.Session.DeviceID,
-				Data = info
-			}, cancellationToken).ConfigureAwait(false);
-
-			return info;
-		}
-
-		#region Process inter-communicate messages
-		protected override async Task ProcessInterCommunicateMessageAsync(CommunicateMessage message, CancellationToken cancellationToken = default(CancellationToken))
-		{
-			if (this.IsDebugResultsEnabled)
-				this.WriteLogs(UtilityService.NewUUID, $"Got an inter-communicate message {message.ToJson().ToString(this.IsDebugLogEnabled ? Formatting.Indented : Formatting.None)}");
-
-			// prepare
-			var data = message.Data?.ToExpandoObject();
-			if (data == null)
-				return;
-
-			var correlationID = UtilityService.NewUUID;
-
-			// online status
-			if (message.Type.IsEquals("OnlineStatus"))
-				try
-				{
-					// prepare
-					var userID = data.Get<string>("UserID");
-					var isOnline = data.Get("IsOnline", false);
-					var sessionID = data.Get<string>("SessionID");
-					var deviceID = data.Get("DeviceID", "");
-
-					// update the collection of online session
-					if (!isOnline)
-						this.OnlineSessions.TryRemove(sessionID, out string val);
-
-					else
-						this.OnlineSessions.TryAdd(sessionID, userID);
-
-					// update & broadcast
-					if (!string.IsNullOrWhiteSpace(userID))
-					{
-						// update database
-						var session = await Session.GetAsync<Session>(sessionID, cancellationToken);
-						if (session != null && session.Online != isOnline)
-						{
-							session.Online = isOnline;
-							await Session.UpdateAsync(session, true, cancellationToken).ConfigureAwait(false);
-						}
-
-						// boardcast messages to clients
-						var msgData = message.Data as JObject;
-						msgData.Remove("IP");
-						msgData["Location"] = await new Services.Session
-						{
-							SessionID = session.ID,
-							User = new User
-							{
-								ID = session.UserID,
-								SessionID = session.ID
-							},
-							IP = session.IP
-						}.GetLocationAsync(correlationID).ConfigureAwait(false);
-
-						await this.SendUpdateMessageAsync(new UpdateMessage
-						{
-							Type = "Users#Status",
-							DeviceID = "*",
-							ExcludedDeviceID = deviceID,
-							Data = msgData
-						}, cancellationToken).ConfigureAwait(false);
-					}
-
-					if (this.IsDebugResultsEnabled)
-						this.WriteLogs(correlationID, $"Update online status successful {message.ToJson().ToString(this.IsDebugLogEnabled ? Formatting.Indented : Formatting.None)}");
-				}
-				catch (Exception ex)
-				{
-					await this.WriteLogsAsync(correlationID, "Error occurred while updating online status", ex);
-				}
-
-			// total of online users
-			else if (message.Type.IsEquals("OnlineUsers"))
+			// broadcast update to clients
+			if (!session.User.IsSystemAccount && !session.User.ID.Equals(""))
 				await this.SendUpdateMessageAsync(new UpdateMessage
 				{
-					Type = "Users#Online",
+					Type = "Users#Session#Status",
 					DeviceID = "*",
-					Data = new JValue(this.OnlineSessions.Count)
+					ExcludedDeviceID = session.DeviceID,
+					Data = statusInfo
 				}, cancellationToken).ConfigureAwait(false);
 
-			// re-update sessions when got new access token
-			else if (message.Type.IsEquals("Session"))
-			{
-				var userID = data.Get<string>("UserID");
-				var accessToken = data.Get<string>("AccessToken");
-				var account = await Account.GetAsync<Account>(userID, cancellationToken).ConfigureAwait(false);
-				if (account != null)
-				{
-					if (account.Sessions == null)
-						await account.GetSessionsAsync().ConfigureAwait(false);
+			// clear related cache
+			else if (!isOnline)
+				await Utility.Cache.RemoveAsync($"Session#{session.SessionID}").ConfigureAwait(false);
 
-					await account.Sessions.ForEachAsync(async (session, token) =>
-					{
-						if (session.Online)
-						{
-							session.AccessToken = accessToken.Decrypt(this.EncryptionKey);
-							await Session.UpdateAsync(session, true, token).ConfigureAwait(false);
-
-							await this.SendInterCommunicateMessageAsync("APIGateway", new BaseMessage()
-							{
-								Type = "Session#Update",
-								Data = new JObject
-								{
-									{ "Session", session.ID },
-									{ "User", account.GetAccountJson() },
-									{ "Device", session.DeviceID },
-									{ "Verification", session.Verification },
-									{ "Token", accessToken }
-								}
-							}, token).ConfigureAwait(false);
-						}
-						else
-							await Session.DeleteAsync<Session>(session.ID, UtilityService.GetAppSetting("Users:SystemAccountID", "VIEAppsNGX-MMXVII-System-Account"), token).ConfigureAwait(false);
-					}, cancellationToken).ConfigureAwait(false);
-				}
-			}
+			return statusInfo;
 		}
 		#endregion
 
 		JObject RegisterSessionCaptcha(RequestInfo requestInfo)
 		{
-			if (!requestInfo.Verb.IsEquals("GET"))
-				throw new MethodNotAllowedException(requestInfo.Verb);
-
 			var code = CaptchaService.GenerateCode();
 			var uri = this.GetHttpURI("Files", "https://fs.vieapps.net")
 				+ "/captchas/" + code.Url64Encode() + "/"
