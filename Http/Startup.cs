@@ -140,11 +140,10 @@ namespace net.vieapps.Services.Users
 			Handler.OpenWAMPChannels();
 
 			// middleware
-			if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-				app.UseForwardedHeaders(new ForwardedHeadersOptions
-				{
-					ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
-				});
+			app.UseForwardedHeaders(new ForwardedHeadersOptions
+			{
+				ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
+			});
 			app.UseStatusCodeHandler();
 			app.UseResponseCompression();
 			app.UseCache();
