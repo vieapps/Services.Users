@@ -39,11 +39,16 @@ namespace net.vieapps.Services.Users
 
 		public async Task Invoke(HttpContext context)
 		{
+			// prepare
 			var requestUri = context.GetRequestUri();
 			var requestPath = requestUri.GetRequestPathSegments(true).First();
 
+			// load balancing health check
+			if (context.Request.Path.Value.IsEquals("/load-balancing-health-check"))
+				await context.WriteAsync("OK", "text/plain", null, 0, null, TimeSpan.Zero, null, Global.CancellationTokenSource.Token).ConfigureAwait(false);
+
 			// request to favicon.ico file
-			if (requestPath.IsEquals("favicon.ico"))
+			else if (requestPath.IsEquals("favicon.ico"))
 				context.ShowHttpError((int)HttpStatusCode.NotFound, "Not Found", "FileNotFoundException", context.GetCorrelationID());
 
 			// request to static segments
@@ -106,11 +111,7 @@ namespace net.vieapps.Services.Users
 				var userID = context.GetQueryParameter("u").ToBase64(false, true).Decrypt(Global.EncryptionKey).ToArray('|').Last();
 				var isAuthenticated = context.GetQueryParameter("s").ToBase64(false, true).Decrypt(Global.EncryptionKey).ToArray('|').Last().CastAs<bool>();
 
-				var needProcess = context.User.Identity.IsAuthenticated
-					? !isAuthenticated || !userID.Equals(context.User.Identity.Name)
-					: isAuthenticated;
-
-				if (needProcess)
+				if (context.User.Identity.IsAuthenticated ? !isAuthenticated || !userID.Equals(context.User.Identity.Name) : isAuthenticated)
 				{
 					var session = context.GetSession();
 					redirectUrl += $"&x-passport-token={session.GetAuthenticateToken(payload => payload["dev"] = session.DeviceID)}";
