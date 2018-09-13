@@ -38,6 +38,25 @@ namespace net.vieapps.Services.Users
 		BigInteger ECCKey => this.GetKey("ECC", "tRZMCCemDIshR6SBnltv/kZvamQfMuMyx+2DG+2Yuw+13xN4A7Kk+nmEM81kx6ISlaxGgJjr/xK9kWznIC3OWlF2yrdMKeeCPM8eVFIfkiGqIPnGPDJaWRbtGswNjMmfQhbQvQ9qa5306RLt9F94vrOQp2M9eojE3cSuTqNg4OTL+9Dddabgzl94F3gOJoPRxzHqyKWRUhQdP+hOsWSS2KTska2ddm/Zh/fGKXwY9lnnrLHY1wjSJqCS3OO7PCRfQtEWSJcvzzgm7bvJ18fOLuJ5CZVThS+XLNwZgkbcICepRCiVbsk6fmh0482BJesG55pVeyv7ZyKNW+RyMXNEyLn5VY/1lPLxz7lLS88Lvqo=").Base64ToBytes().Decrypt().ToUnsignedBigInteger();
 
 		string RSAKey => this.GetKey("RSA", "NihT0EJ2NLRhmGNbZ8A3jUdhZfO4jG4hfkwaHF1o00YoVx9S61TpmMiaZssOZB++UUyNsZZzxSfkh0i5O9Yr9us+/2zXhgR2zQVxOUrZnPpHpspyJzOegBpMMuTWF4WTl7st797BQ0AmUY1nEjfMTKVP+VSrrx0opTgi93MyvRGGa48vd7PosAM8uq+oMkhMZ/jTvasK6n3PKtb9XAm3hh4NFZBf7P2WuACXZ4Vbzd1MGtLHWfrYnWjGI9uhlo2QKueRLmHoqKM5pQFlB9M7/i2D/TXeWZSWNU+vW93xncUght3QtCwRJu7Kp8UGf8nnrFOshHgvMgsdDlvJt9ECN0/2uyUcWzB8cte5C9r6sP6ClUVSkKDvEOJVmuS2Isk72hbooPaAm7lS5NOzb2pHrxTKAZxaUyiZkFXH5rZxQ/5QjQ9PiAzm1AVdBE1tg1BzyGzY2z7RY/iQ5o22hhRSN3l49U4ftfXuL+LrGKnzxtVrQ15Vj9/pF7mz3lFy2ttTxJPccBiffi9LVtuUCo9BRgw7syn07gAqj1WXzuhPALwK6P6M1pPeFg6NEKLNWgRFE8GZ+dPhr2O0YCgDVuhJ+hDUxCDAEkZ0cQBiliHtjldJji1FnFMqg90QvFCuVCydq94Dnxdl9HSVMNC69i6H2GNfBuD9kTQ6gIOepc86YazDto8JljqEVOpkegusPENadLjpwOYCCslN1Y314B2g9vvZRwU3T+PcziBjym1ceagEEAObZ22Z/vhxBZ83Z2E1/RkbJqovIRKuHLCzU/4lBeTseJNlKPSACPuKAX08P4y5c+28WDrHv2+o7x9ISJe0SN1KmFMvv1xYtj/1NwOHQzfVjbpL46E0+Jr/IOOjh2CQhhUMm1GOEQAZ9n+b7a4diUPDG+BewAZvtd5gNX4zD0IKkJFwN+fBMWSHs0gs3jNz4RcYhH5IoHq27jrfM3cUlvBP9JpbZugNIh8ddZsUd4XQuCVZF+qlfRjY6lfEy4nXX48ianvdCqnBpkmRadG8qFLybkVS+s8RHcPwRkkzKQ4oGHdDeyiU8ZXnwvJ3IxDLoJV0xqKSRjhe9MxwdeN7VMSTNRAtQvqVvm6cL8KNbd2Hx1kPDEcqeUfVIeZ+zTIptO5GpjEMV+4gu338WG1RyEMAaiE536E+UR+0MqIe/Q==").Decrypt();
+
+		RSA _rsa = null;
+
+		RSA RSA
+		{
+			get
+			{
+				if (this._rsa == null)
+				{
+					this._rsa = CryptoService.CreateRSA(this.RSAKey);
+					if (this._rsa.KeySize != 2048)
+					{
+						this._rsa = RSA.Create();
+						this._rsa.KeySize = 2048;
+					}
+				}
+				return this._rsa;
+			}
+		}
 		#endregion
 
 		public override string ServiceName => "Users";
@@ -60,13 +79,13 @@ namespace net.vieapps.Services.Users
 					}
 			});
 
-		public override async Task<JObject> ProcessRequestAsync(RequestInfo requestInfo, CancellationToken cancellationToken = default(CancellationToken))
+		public override async Task<JToken> ProcessRequestAsync(RequestInfo requestInfo, CancellationToken cancellationToken = default(CancellationToken))
 		{
 			var stopwatch = Stopwatch.StartNew();
 			this.Logger.LogInformation($"Begin request ({requestInfo.Verb} {requestInfo.URI}) [{requestInfo.CorrelationID}]");
 			try
 			{
-				JObject json = null;
+				JToken json = null;
 				switch (requestInfo.ObjectName.ToLower())
 				{
 					case "session":
@@ -415,7 +434,7 @@ namespace net.vieapps.Services.Users
 			return new Tuple<string, string, string, string, Tuple<string, int, bool, string, string>>(subject, body, signature, sender, new Tuple<string, int, bool, string, string>(smtpServer, smtpServerPort, smtpServerEnableSsl, smtpUser, smtpUserPassword));
 		}
 
-		async Task<JObject> CallRelatedServiceAsync(RequestInfo requestInfo, User user, string objectName, string verb, string objectIdentity, Dictionary<string, string> extra, CancellationToken cancellationToken = default(CancellationToken))
+		async Task<JToken> CallRelatedServiceAsync(RequestInfo requestInfo, User user, string objectName, string verb, string objectIdentity, Dictionary<string, string> extra, CancellationToken cancellationToken = default(CancellationToken))
 		{
 			var correlationID = requestInfo.CorrelationID ?? UtilityService.NewUUID;
 			try
@@ -449,7 +468,7 @@ namespace net.vieapps.Services.Users
 			}
 		}
 
-		Task<JObject> CallRelatedServiceAsync(RequestInfo requestInfo, string objectName, string verb = "GET", string objectIdentity = null, CancellationToken cancellationToken = default(CancellationToken))
+		Task<JToken> CallRelatedServiceAsync(RequestInfo requestInfo, string objectName, string verb = "GET", string objectIdentity = null, CancellationToken cancellationToken = default(CancellationToken))
 			=> this.CallRelatedServiceAsync(requestInfo, requestInfo.Session.User, objectName, verb, objectIdentity, null, cancellationToken);
 		#endregion
 
@@ -715,7 +734,7 @@ namespace net.vieapps.Services.Users
 		}
 		#endregion
 
-		Task<JObject> ProcessOTPAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		Task<JToken> ProcessOTPAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			switch (requestInfo.Verb)
 			{
@@ -742,7 +761,7 @@ namespace net.vieapps.Services.Users
 		}
 
 		#region Validate an OTP
-		async Task<JObject> ValidateOTPAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		async Task<JToken> ValidateOTPAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// prepare
 			var body = requestInfo.GetBodyExpando();
@@ -813,7 +832,7 @@ namespace net.vieapps.Services.Users
 		#endregion
 
 		#region Get an OTP for provisioning
-		async Task<JObject> GetProvisioningOTPAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		async Task<JToken> GetProvisioningOTPAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// check
 			var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID, cancellationToken).ConfigureAwait(false);
@@ -857,12 +876,27 @@ namespace net.vieapps.Services.Users
 		#endregion
 
 		#region Update an OTP
-		async Task<JObject> UpdateOTPAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		async Task<JToken> UpdateOTPAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// prepare
 			var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID, cancellationToken);
 			if (account == null)
 				throw new InformationNotFoundException();
+
+			try
+			{
+				var password = this.RSA.Decrypt(requestInfo.Header["x-password"]);
+				if (!Account.GeneratePassword(account.ID, password).Equals(account.AccessKey))
+					throw new WrongAccountException();
+			}
+			catch (WrongAccountException)
+			{
+				throw;
+			}
+			catch (Exception ex)
+			{
+				throw new WrongAccountException(ex);
+			}
 
 			var body = requestInfo.GetBodyExpando();
 			var json = JObject.Parse(body.Get("Provisioning", "").Decrypt(this.AuthenticationKey));
@@ -882,7 +916,7 @@ namespace net.vieapps.Services.Users
 					{ "Stamp", stamp.Encrypt(this.EncryptionKey) },
 					{ "Password", body.Get("OTP", "").Encrypt(this.EncryptionKey) }
 				}
-			}, cancellationToken).ConfigureAwait(false);
+			}, cancellationToken).ConfigureAwait(false) as JObject;
 
 			// update settings
 			account.TwoFactorsAuthentication.Required = true;
@@ -964,12 +998,27 @@ namespace net.vieapps.Services.Users
 		#endregion
 
 		#region Delete an OTP
-		async Task<JObject> DeleteOTPAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		async Task<JToken> DeleteOTPAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// prepare
 			var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID, cancellationToken);
 			if (account == null)
 				throw new InformationNotFoundException();
+
+			try
+			{
+				var password = this.RSA.Decrypt(requestInfo.Header["x-password"]);
+				if (!Account.GeneratePassword(account.ID, password).Equals(account.AccessKey))
+					throw new WrongAccountException(password);
+			}
+			catch (WrongAccountException)
+			{
+				throw;
+			}
+			catch (Exception ex)
+			{
+				throw new WrongAccountException(ex);
+			}
 
 			var info = (requestInfo.Query.ContainsKey("Info") ? requestInfo.Query["Info"].Decrypt(this.AuthenticationKey, true) : "").ToArray('|');
 			var type = info[0].ToEnum<TwoFactorsAuthenticationType>();
@@ -1056,6 +1105,8 @@ namespace net.vieapps.Services.Users
 					throw new MethodNotAllowedException(requestInfo.Verb);
 			}
 		}
+
+		string ActivateURI => this.GetHttpURI("Portals", "https://portals.vieapps.net/") + "home?prego=activate&mode={mode}&code={code}";
 
 		#region Get an account
 		async Task<JObject> GetAccountAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
@@ -1211,7 +1262,7 @@ namespace net.vieapps.Services.Users
 				var code = codeData.ToString(Formatting.None).Encrypt(this.ActivationKey).ToBase64Url(true);
 				var uri = requestInfo.Query.ContainsKey("uri")
 					? requestInfo.Query["uri"].Url64Decode()
-					: "https://accounts.vieapps.net/#?prego=activate&mode={mode}&code={code}";
+					: this.ActivateURI;
 				uri = uri.Replace(StringComparison.OrdinalIgnoreCase, "{mode}", "account");
 				uri = uri.Replace(StringComparison.OrdinalIgnoreCase, "{code}", code);
 
@@ -1261,7 +1312,7 @@ namespace net.vieapps.Services.Users
 		#endregion
 
 		#region Get the privilege objects of an account
-		async Task<JObject> GetPrivilegesAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		async Task<JToken> GetPrivilegesAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			var serviceName = requestInfo.GetQueryParameter("related-service");
 			var gotRights = requestInfo.Session.User.IsSystemAdministrator;
@@ -1409,7 +1460,7 @@ namespace net.vieapps.Services.Users
 
 			var uri = requestInfo.Query.ContainsKey("uri")
 				? requestInfo.Query["uri"].Url64Decode()
-				: "https://accounts.vieapps.net/#?prego=activate&mode={mode}&code={code}";
+				: this.ActivateURI;
 			uri = uri.Replace(StringComparison.OrdinalIgnoreCase, "{mode}", "password");
 			uri = uri.Replace(StringComparison.OrdinalIgnoreCase, "{code}", code);
 
@@ -1682,7 +1733,7 @@ namespace net.vieapps.Services.Users
 			var profiles = new JArray();
 			await objects.ForEachAsync(async (profile, token) =>
 			{
-				profiles.Add(profile.GetProfileJson(await this.GetProfileRelatedJsonAsync(requestInfo, token).ConfigureAwait(false), !requestInfo.Session.User.IsSystemAdministrator));
+				profiles.Add(profile.GetProfileJson(await this.GetProfileRelatedJsonAsync(requestInfo, token).ConfigureAwait(false) as JObject, !requestInfo.Session.User.IsSystemAdministrator));
 			}, cancellationToken, true, false).ConfigureAwait(false);
 
 			pagination = new Tuple<long, int, int, int>(totalRecords, totalPages, pageSize, pageNumber);
@@ -1728,7 +1779,7 @@ namespace net.vieapps.Services.Users
 			var profiles = new JArray();
 			await objects.ForEachAsync(async (profile, token) =>
 			{
-				profiles.Add(profile.GetProfileJson(await this.GetProfileRelatedJsonAsync(requestInfo, token).ConfigureAwait(false), !requestInfo.Session.User.IsSystemAdministrator));
+				profiles.Add(profile.GetProfileJson(await this.GetProfileRelatedJsonAsync(requestInfo, token).ConfigureAwait(false) as JObject, !requestInfo.Session.User.IsSystemAdministrator));
 			}, cancellationToken, true, false).ConfigureAwait(false);
 
 			// return
@@ -1758,7 +1809,7 @@ namespace net.vieapps.Services.Users
 		#endregion
 
 		#region Get a profile
-		Task<JObject> GetProfileRelatedJsonAsync(RequestInfo requestInfo, CancellationToken cancellationToken = default(CancellationToken))
+		Task<JToken> GetProfileRelatedJsonAsync(RequestInfo requestInfo, CancellationToken cancellationToken = default(CancellationToken))
 			=> this.CallRelatedServiceAsync(requestInfo, "profile", "GET", requestInfo.Session.User.ID, cancellationToken);
 
 		async Task<JObject> GetProfileAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
@@ -1796,7 +1847,7 @@ namespace net.vieapps.Services.Users
 				throw new AccessDeniedException();
 
 			// response
-			return profile.GetProfileJson(await this.GetProfileRelatedJsonAsync(requestInfo, cancellationToken).ConfigureAwait(false), doNormalize);
+			return profile.GetProfileJson(await this.GetProfileRelatedJsonAsync(requestInfo, cancellationToken).ConfigureAwait(false) as JObject, doNormalize);
 		}
 		#endregion
 
@@ -1842,7 +1893,7 @@ namespace net.vieapps.Services.Users
 			).ConfigureAwait(false);
 
 			// send update message
-			var json = profile.GetProfileJson(await this.GetProfileRelatedJsonAsync(requestInfo, cancellationToken), false);
+			var json = profile.GetProfileJson(await this.GetProfileRelatedJsonAsync(requestInfo, cancellationToken).ConfigureAwait(false) as JObject, false);
 			await this.SendUpdateMessageAsync(new UpdateMessage
 			{
 				Type = "Users#Profile#Update",

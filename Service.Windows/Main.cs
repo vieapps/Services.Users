@@ -20,7 +20,7 @@ namespace net.vieapps.Services.Users.WindowsAD
 
 		public override string ServiceName => "WindowsAD";
 
-		public override async Task<JObject> ProcessRequestAsync(RequestInfo requestInfo, CancellationToken cancellationToken = default(CancellationToken))
+		public override async Task<JToken> ProcessRequestAsync(RequestInfo requestInfo, CancellationToken cancellationToken = default(CancellationToken))
 		{
 			try
 			{
