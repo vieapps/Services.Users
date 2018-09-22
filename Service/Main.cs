@@ -1386,16 +1386,23 @@ namespace net.vieapps.Services.Users
 				{
 					account.AccessRoles[systemID] = JArray.Parse(requestInfo.Extra["Roles"].Decrypt(this.EncryptionKey)).ToList<string>();
 				}
-				catch { }
+				catch (Exception ex)
+				{
+					this.Logger.LogError("Error while processing roles", ex);
+				}
 
 			// privileges of a service
 			if (!string.IsNullOrWhiteSpace(serviceName) && requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Privileges"))
 				try
 				{
-					account.AccessPrivileges = account.AccessPrivileges.Where(p => !p.ServiceName.IsEquals(serviceName))
-						.Concat(JArray.Parse(requestInfo.Extra["Privileges"].Decrypt(this.EncryptionKey)).ToList<Privilege>().Where(p => p.ServiceName.IsEquals(serviceName))).ToList();
+					var jsonPrivileges = JArray.Parse(requestInfo.Extra["Privileges"].Decrypt(this.EncryptionKey));
+					var pocoPrivileges = jsonPrivileges.ToList<Privilege>().Where(p => p.ServiceName.IsEquals(serviceName));
+					account.AccessPrivileges = account.AccessPrivileges.Where(p => !p.ServiceName.IsEquals(serviceName)).Concat(pocoPrivileges).ToList();
 				}
-				catch { }
+				catch (Exception ex)
+				{
+					this.Logger.LogError("Error while processing privileges", ex);
+				}
 
 			// sessions
 			var json = account.GetAccountJson(account.TwoFactorsAuthentication.Required, this.AuthenticationKey);
@@ -1403,14 +1410,19 @@ namespace net.vieapps.Services.Users
 			if (account.Sessions == null)
 				await account.GetSessionsAsync(cancellationToken).ConfigureAwait(false);
 
-			account.Sessions
-				.Where(session => session.ExpiredAt > DateTime.Now)
-				.ForEach(session =>
+			account.Sessions.Where(session => session.ExpiredAt > DateTime.Now).ForEach(session =>
+			{
+				try
 				{
 					session.RenewedAt = DateTime.Now;
 					session.ExpiredAt = DateTime.Now.AddDays(60);
 					session.AccessToken = user.GetAccessToken(this.ECCKey);
-				});
+				}
+				catch (Exception ex)
+				{
+					this.Logger.LogError("Error while preparing session when update privileges", ex);
+				}
+			});
 
 			// update database
 			await Task.WhenAll(
@@ -1422,7 +1434,7 @@ namespace net.vieapps.Services.Users
 			await this.SendInterCommunicateMessagesAsync("APIGateway", account.Sessions.Select(session => new BaseMessage
 			{
 				Type = "Session#Update",
-				Data = new JObject()
+				Data = new JObject
 				{
 					{ "Session", session.ID },
 					{ "User", json },
