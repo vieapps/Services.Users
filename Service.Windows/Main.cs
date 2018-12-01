@@ -16,7 +16,7 @@ namespace net.vieapps.Services.Users.WindowsAD
 	{
 		public ServiceComponent() { }
 
-		public override void Start(string[] args = null, bool initializeRepository = true, Func<ServiceBase, Task> nextAsync = null) => base.Start(args, false, nextAsync);
+		public override void Start(string[] args = null, bool initializeRepository = true, Func<IService, Task> nextAsync = null) => base.Start(args, false, nextAsync);
 
 		public override string ServiceName => "WindowsAD";
 
@@ -30,7 +30,7 @@ namespace net.vieapps.Services.Users.WindowsAD
 						return await UtilityService.ExecuteTask(() => this.SignIn(requestInfo), cancellationToken).ConfigureAwait(false);
 
 					default:
-						throw new InvalidRequestException($"The request is invalid [({requestInfo.Verb}): {requestInfo.URI}]");
+						throw new InvalidRequestException($"The request is invalid [({requestInfo.Verb}): {requestInfo.GetURI()}]");
 				}
 			}
 			catch (Exception ex)

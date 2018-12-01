@@ -61,8 +61,8 @@ namespace net.vieapps.Services.Users
 
 		public override string ServiceName => "Users";
 
-		public override void Start(string[] args = null, bool initializeRepository = true, Func<ServiceBase, Task> nextAsync = null)
-			=> base.Start(args, initializeRepository, async (service) =>
+		public override void Start(string[] args = null, bool initializeRepository = true, Func<IService, Task> nextAsync = null)
+			=> base.Start(args, initializeRepository, async service =>
 			{
 				// register timers
 				this.RegisterTimers(args);
@@ -82,7 +82,7 @@ namespace net.vieapps.Services.Users
 		public override async Task<JToken> ProcessRequestAsync(RequestInfo requestInfo, CancellationToken cancellationToken = default(CancellationToken))
 		{
 			var stopwatch = Stopwatch.StartNew();
-			this.Logger.LogInformation($"Begin request ({requestInfo.Verb} {requestInfo.URI}) [{requestInfo.CorrelationID}]");
+			this.Logger.LogInformation($"Begin request ({requestInfo.Verb} {requestInfo.GetURI()}) [{requestInfo.CorrelationID}]");
 			try
 			{
 				JToken json = null;
@@ -129,7 +129,7 @@ namespace net.vieapps.Services.Users
 						break;
 
 					default:
-						throw new InvalidRequestException($"The request is invalid ({requestInfo.Verb} {requestInfo.URI})");
+						throw new InvalidRequestException($"The request is invalid ({requestInfo.Verb} {requestInfo.GetURI()})");
 				}
 				stopwatch.Stop();
 				this.Logger.LogInformation($"Success response - Execution times: {stopwatch.GetElapsedTimes()} [{requestInfo.CorrelationID}]");
@@ -2181,11 +2181,11 @@ namespace net.vieapps.Services.Users
 					// update session
 					if (!string.IsNullOrWhiteSpace(sessionInfo.User.ID))
 					{
-						var session = await Session.GetAsync<Session>(sessionInfo.SessionID, cancellationToken);
+						var session = await Session.GetAsync<Session>((string)sessionInfo.SessionID, cancellationToken);
 						if (session != null && session.Online != isOnline)
 						{
 							session.Online = isOnline;
-							await Session.UpdateAsync(session, true, cancellationToken).ConfigureAwait(false);
+							await Session.UpdateAsync((Session)session, true, cancellationToken).ConfigureAwait(false);
 						}
 					}
 
@@ -2289,17 +2289,17 @@ namespace net.vieapps.Services.Users
 		void RegisterTimers(string[] args = null)
 		{
 			// timer to request client update state (5 minutes)
-			this.StartTimer(async () =>
+			this.StartTimer((System.Action)(async () =>
 			{
-				await this.SendUpdateMessageAsync(new UpdateMessage
+				await this.SendUpdateMessageAsync((UpdateMessage)new Services.UpdateMessage
 				{
 					Type = "OnlineStatus",
 					DeviceID = "*",
-				}, this.CancellationTokenSource.Token).ConfigureAwait(false);
+				}, (CancellationToken)this.CancellationTokenSource.Token).ConfigureAwait(false);
 #if DEBUG
 				await this.WriteLogsAsync(UtilityService.NewUUID, "Send message to request update online status successful").ConfigureAwait(false);
 #endif
-			}, 5 * 60);
+			}), 5 * 60);
 
 			// timer to clean expired sessions (13 hours)
 			this.StartTimer(async () =>
