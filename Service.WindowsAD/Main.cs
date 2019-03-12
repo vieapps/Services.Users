@@ -1,14 +1,10 @@
-﻿#region Related components
-using System;
+﻿using System;
 using System.Threading;
 using System.Threading.Tasks;
 using System.DirectoryServices.AccountManagement;
-
 using Newtonsoft.Json.Linq;
-
 using net.vieapps.Components.Utility;
 using net.vieapps.Components.Security;
-#endregion
 
 namespace net.vieapps.Services.Users.WindowsAD
 {
@@ -43,7 +39,7 @@ namespace net.vieapps.Services.Users.WindowsAD
 		JObject SignIn(RequestInfo requestInfo)
 		{
 			// verify
-			if (requestInfo.Extra == null || !requestInfo.Extra.ContainsKey("Signature") || !requestInfo.Extra["Signature"].Equals(requestInfo.Body.GetHMACSHA256(this.ValidationKey)))
+			if (requestInfo.Extra == null || !requestInfo.Extra.TryGetValue("Signature", out string signature) || !signature.Equals(requestInfo.Body.GetHMACSHA256(this.ValidationKey)))
 				throw new InformationInvalidException();
 
 			// prepare
@@ -65,7 +61,7 @@ namespace net.vieapps.Services.Users.WindowsAD
 		JObject ChangePassword(RequestInfo requestInfo)
 		{
 			// verify
-			if (requestInfo.Extra == null || !requestInfo.Extra.ContainsKey("Signature") || !requestInfo.Extra["Signature"].Equals(requestInfo.Body.GetHMACSHA256(this.ValidationKey)))
+			if (requestInfo.Extra == null || !requestInfo.Extra.TryGetValue("Signature", out string signature) || !signature.Equals(requestInfo.Body.GetHMACSHA256(this.ValidationKey)))
 				throw new InformationInvalidException();
 
 			// prepare

@@ -23,23 +23,9 @@ namespace net.vieapps.Services.Users
 {
 	public static class Utility
 	{
-		public static Cache Cache { get; } = new Cache("VIEApps-Services-Users", UtilityService.GetAppSetting("Cache:ExpirationTime", "30").CastAs<int>(), false, UtilityService.GetAppSetting("Cache:Provider"), Logger.GetLoggerFactory());
-
-		#region Files URI
-		static string _FilesHttpUri = null;
-
-		internal static string FilesHttpUri
-		{
-			get
-			{
-				if (string.IsNullOrWhiteSpace(Utility._FilesHttpUri))
-					Utility._FilesHttpUri = UtilityService.GetAppSetting("HttpUri:Files", "https://afs.vieapps.net");
-				while (Utility._FilesHttpUri.EndsWith("/"))
-					Utility._FilesHttpUri = Utility._FilesHttpUri.Left(Utility._FilesHttpUri.Length - 1);
-				return Utility._FilesHttpUri;
-			}
-		}
-		#endregion
+		public static Cache Cache { get; internal set; }
+		public static string FilesHttpURI { get; internal set; }
+		public static string ActivateHttpURI { get; internal set; }
 
 		#region Extensions for working with profile
 		internal static JObject GetProfileJson(this Profile profile, JObject relatedData = null, bool doNormalize = true, bool addRelated = true, bool useBriefInfo = false)
@@ -86,8 +72,8 @@ namespace net.vieapps.Services.Users
 
 		internal static string GetGravatarURI(this Profile profile)
 			=> string.IsNullOrWhiteSpace(profile.Email)
-				? Utility.FilesHttpUri + "/avatars/default.png"
-				: "https://secure.gravatar.com/avatar/" + profile.Email.ToLower().Trim().GetMD5() + "?s=300&d=" + (Utility.FilesHttpUri + "/avatars/default.png").UrlEncode();
+				? Utility.FilesHttpURI + "/avatars/default.png"
+				: "https://secure.gravatar.com/avatar/" + profile.Email.ToLower().Trim().GetMD5() + "?s=300&d=" + (Utility.FilesHttpURI + "/avatars/default.png").UrlEncode();
 		#endregion
 
 	}

@@ -3,22 +3,21 @@ using System;
 using System.Linq;
 using System.Dynamic;
 using System.Diagnostics;
+using System.Numerics;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Collections.Generic;
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
-using System.Numerics;
-using System.IO.Compression;
 
 using Microsoft.Extensions.Logging;
-
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
 using net.vieapps.Components.Utility;
 using net.vieapps.Components.Security;
 using net.vieapps.Components.Repository;
+using net.vieapps.Components.Caching;
 #endregion
 
 namespace net.vieapps.Services.Users
@@ -62,7 +61,17 @@ namespace net.vieapps.Services.Users
 		public override string ServiceName => "Users";
 
 		public override void Start(string[] args = null, bool initializeRepository = true, Func<IService, Task> nextAsync = null)
-			=> base.Start(args, initializeRepository, async service =>
+		{
+			// initialize static properties
+			Utility.Cache = new Cache($"VIEApps-Services-{this.ServiceName}", Components.Utility.Logger.GetLoggerFactory());
+			Utility.ActivateHttpURI = this.GetHttpURI("Portals", "https://portals.vieapps.net/");
+			Utility.ActivateHttpURI += (Utility.ActivateHttpURI.EndsWith("/") ? "" : "/") + "home?prego=activate&mode={mode}&code={code}";
+			Utility.FilesHttpURI = this.GetHttpURI("Files", "https://fs.vieapps.net");
+			while (Utility.FilesHttpURI.EndsWith("/"))
+				Utility.FilesHttpURI = Utility.FilesHttpURI.Left(Utility.FilesHttpURI.Length - 1);
+
+			// start the service
+			base.Start(args, initializeRepository, async service =>
 			{
 				// register timers
 				this.RegisterTimers(args);
@@ -78,6 +87,7 @@ namespace net.vieapps.Services.Users
 						this.Logger.LogError("Error occurred while invoking the next action", ex);
 					}
 			});
+		}
 
 		public override async Task<JToken> ProcessRequestAsync(RequestInfo requestInfo, CancellationToken cancellationToken = default(CancellationToken))
 		{
@@ -611,8 +621,8 @@ namespace net.vieapps.Services.Users
 			// prepare
 			var request = requestInfo.GetBodyExpando();
 			var type = request.Get("Type", "BuiltIn").ToEnum<AccountType>();
-			var email = request.Get<string>("Email").Decrypt(this.EncryptionKey).Trim().ToLower();
-			var password = request.Get<string>("Password").Decrypt(this.EncryptionKey);
+			var email = request.Get("Email", "").Decrypt(this.EncryptionKey).Trim().ToLower();
+			var password = request.Get("Password", "").Decrypt(this.EncryptionKey);
 			Account account = null;
 
 			// Windows account
@@ -1106,8 +1116,6 @@ namespace net.vieapps.Services.Users
 			}
 		}
 
-		string ActivateURI => this.GetHttpURI("Portals", "https://portals.vieapps.net/") + "home?prego=activate&mode={mode}&code={code}";
-
 		#region Get an account
 		async Task<JObject> GetAccountAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
@@ -1262,7 +1270,7 @@ namespace net.vieapps.Services.Users
 				var code = codeData.ToString(Formatting.None).Encrypt(this.ActivationKey).ToBase64Url(true);
 				var uri = requestInfo.Query.ContainsKey("uri")
 					? requestInfo.Query["uri"].Url64Decode()
-					: this.ActivateURI;
+					: Utility.ActivateHttpURI;
 				uri = uri.Replace(StringComparison.OrdinalIgnoreCase, "{mode}", "account");
 				uri = uri.Replace(StringComparison.OrdinalIgnoreCase, "{code}", code);
 
@@ -1472,7 +1480,7 @@ namespace net.vieapps.Services.Users
 
 			var uri = requestInfo.Query.ContainsKey("uri")
 				? requestInfo.Query["uri"].Url64Decode()
-				: this.ActivateURI;
+				: Utility.ActivateHttpURI;
 			uri = uri.Replace(StringComparison.OrdinalIgnoreCase, "{mode}", "password");
 			uri = uri.Replace(StringComparison.OrdinalIgnoreCase, "{code}", code);
 
@@ -1887,8 +1895,8 @@ namespace net.vieapps.Services.Users
 				profile.LastUpdated = DateTime.Now;
 				profile.Avatar = string.IsNullOrWhiteSpace(profile.Avatar)
 					? string.Empty
-					: profile.Avatar.IsStartsWith(Utility.FilesHttpUri)
-						? profile.Avatar.Right(profile.Avatar.Length - Utility.FilesHttpUri.Length)
+					: profile.Avatar.IsStartsWith(Utility.FilesHttpURI)
+						? profile.Avatar.Right(profile.Avatar.Length - Utility.FilesHttpURI.Length)
 						: profile.Avatar;
 
 				if (account.Type.Equals(AccountType.BuiltIn) && !profile.Email.Equals(account.AccessIdentity))
@@ -2274,10 +2282,8 @@ namespace net.vieapps.Services.Users
 		JObject RegisterSessionCaptcha(RequestInfo requestInfo)
 		{
 			var code = CaptchaService.GenerateCode();
-			var uri = this.GetHttpURI("Files", "https://fs.vieapps.net")
-				+ "/captchas/" + code.Url64Encode() + "/"
+			var uri = Utility.FilesHttpURI + "/captchas/" + code.Url64Encode() + "/"
 				+ (requestInfo.GetQueryParameter("register") ?? UtilityService.NewUUID.Encrypt(this.EncryptionKey, true)).Substring(UtilityService.GetRandomNumber(13, 43), 13).Reverse() + ".jpg";
-
 			return new JObject
 			{
 				{ "Code", code },
@@ -2289,17 +2295,17 @@ namespace net.vieapps.Services.Users
 		void RegisterTimers(string[] args = null)
 		{
 			// timer to request client update state (5 minutes)
-			this.StartTimer((System.Action)(async () =>
+			this.StartTimer(async () =>
 			{
-				await this.SendUpdateMessageAsync((UpdateMessage)new Services.UpdateMessage
+				await this.SendUpdateMessageAsync(new UpdateMessage
 				{
 					Type = "OnlineStatus",
 					DeviceID = "*",
-				}, (CancellationToken)this.CancellationTokenSource.Token).ConfigureAwait(false);
+				}, this.CancellationTokenSource.Token).ConfigureAwait(false);
 #if DEBUG
 				await this.WriteLogsAsync(UtilityService.NewUUID, "Send message to request update online status successful").ConfigureAwait(false);
 #endif
-			}), 5 * 60);
+			}, 5 * 60);
 
 			// timer to clean expired sessions (13 hours)
 			this.StartTimer(async () =>
