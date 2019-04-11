@@ -1363,9 +1363,10 @@ namespace net.vieapps.Services.Users
 			// prepare
 			var systemID = requestInfo.GetQueryParameter("related-system");
 			var serviceName = requestInfo.GetQueryParameter("related-service");
+			var isSystemAdministrator = requestInfo.Session.User.IsSystemAdministrator;
 
 			// system administrator can do
-			var gotRights = requestInfo.Session.User.IsSystemAdministrator;
+			var gotRights = isSystemAdministrator;
 
 			// check with related service
 			if (!gotRights && !string.IsNullOrWhiteSpace(serviceName))
@@ -1400,12 +1401,28 @@ namespace net.vieapps.Services.Users
 				}
 
 			// privileges of a service
-			if (!string.IsNullOrWhiteSpace(serviceName) && requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Privileges"))
+			if (requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Privileges"))
 				try
 				{
-					var jsonPrivileges = JArray.Parse(requestInfo.Extra["Privileges"].Decrypt(this.EncryptionKey));
-					var pocoPrivileges = jsonPrivileges.ToList<Privilege>().Where(p => p.ServiceName.IsEquals(serviceName));
-					account.AccessPrivileges = account.AccessPrivileges.Where(p => !p.ServiceName.IsEquals(serviceName)).Concat(pocoPrivileges).ToList();
+					var allPrivileges = requestInfo.Extra["Privileges"].Decrypt(this.EncryptionKey).ToJson().ToExpandoObject();
+					if (isSystemAdministrator)
+					{
+						(allPrivileges as IDictionary<string, object>).Keys.ForEach(svcName =>
+						{
+							var svcPrivileges = allPrivileges.Get<List<Privilege>>(svcName).Where(p => p.ServiceName.IsEquals(svcName)).ToList();
+							if (svcPrivileges.Count == 1 && svcPrivileges[0].ObjectName.Equals("") && svcPrivileges[0].Role.Equals(PrivilegeRole.Viewer.ToString()))
+								svcPrivileges = new List<Privilege>();
+							account.AccessPrivileges = account.AccessPrivileges.Where(p => !p.ServiceName.IsEquals(svcName)).Concat(svcPrivileges).ToList();
+						});
+					}
+					else if (!string.IsNullOrWhiteSpace(serviceName))
+					{
+						var svcPrivileges = allPrivileges.Get<List<Privilege>>(serviceName).Where(p => p.ServiceName.IsEquals(serviceName)).ToList();
+						if (svcPrivileges.Count == 1 && svcPrivileges[0].ObjectName.Equals("") && svcPrivileges[0].Role.Equals(PrivilegeRole.Viewer.ToString()))
+							svcPrivileges = new List<Privilege>();
+						account.AccessPrivileges = account.AccessPrivileges.Where(p => !p.ServiceName.IsEquals(serviceName)).Concat(svcPrivileges).ToList();
+					}
+					account.AccessPrivileges = account.AccessPrivileges.OrderBy(p => p.ServiceName).ThenBy(p => p.ObjectName).ToList();
 				}
 				catch (Exception ex)
 				{
@@ -2170,7 +2187,7 @@ namespace net.vieapps.Services.Users
 					}
 
 					if (this.IsDebugResultsEnabled)
-						await this.WriteLogsAsync(correlationID, $"Update online state of a session successful - Online sessions: {this.OnlineSessions.Count:#,##0} - Vistor sessions: {this.VisitorSessions.Count:#,##0} - User sessions: {(this.OnlineSessions.Count - this.VisitorSessions.Count):#,##0}", null, this.ServiceName, "RTU").ConfigureAwait(false);
+						await this.WriteLogsAsync(correlationID, $"Update online state of a session successful - Online sessions: {this.OnlineSessions.Count:#,##0} - Visitor sessions: {this.VisitorSessions.Count:#,##0} - User sessions: {this.OnlineSessions.Count - this.VisitorSessions.Count:#,##0}", null, this.ServiceName, "RTU").ConfigureAwait(false);
 				}
 				catch (Exception ex)
 				{
@@ -2294,20 +2311,7 @@ namespace net.vieapps.Services.Users
 		#region Timers for working with background workers & schedulers
 		void RegisterTimers(string[] args = null)
 		{
-			// timer to request client update state (5 minutes)
-			this.StartTimer(async () =>
-			{
-				await this.SendUpdateMessageAsync(new UpdateMessage
-				{
-					Type = "OnlineStatus",
-					DeviceID = "*",
-				}, this.CancellationTokenSource.Token).ConfigureAwait(false);
-#if DEBUG
-				await this.WriteLogsAsync(UtilityService.NewUUID, "Send message to request update online status successful").ConfigureAwait(false);
-#endif
-			}, 5 * 60);
-
-			// timer to clean expired sessions (13 hours)
+			// clean expired sessions (13 hours)
 			this.StartTimer(async () =>
 			{
 				var userID = UtilityService.GetAppSetting("Users:SystemAccountID", "VIEAppsNGX-MMXVII-System-Account");
@@ -2315,19 +2319,16 @@ namespace net.vieapps.Services.Users
 				await sessions.ForEachAsync((session, token) => Session.DeleteAsync<Session>(session.ID, userID, token), this.CancellationTokenSource.Token, true, false).ConfigureAwait(false);
 			}, 13 * 60 * 60);
 
-			// timer to refresh visitor sessions (1 hour)
-			this.StartTimer(async () =>
+			// refresh visitor sessions (1 hour)
+			this.StartTimer(async () => await this.VisitorSessions.Keys.ToList().ForEachAsync(async (id, token) =>
 			{
-				await this.VisitorSessions.Keys.ToList().ForEachAsync(async (id, token) =>
-				{
-					var key = $"Session#{id}";
-					var session = await Utility.Cache.GetAsync(key, token).ConfigureAwait(false);
-					if (session != null)
-						await Utility.Cache.SetAsync(key, session, 180, token).ConfigureAwait(false);
-					else
-						this.VisitorSessions.TryRemove(id, out bool state);
-				}, this.CancellationTokenSource.Token).ConfigureAwait(false);
-			}, 60 * 60);
+				var key = $"Session#{id}";
+				var session = await Utility.Cache.GetAsync(key, token).ConfigureAwait(false);
+				if (session != null)
+					await Utility.Cache.SetAsync(key, session, 180, token).ConfigureAwait(false);
+				else
+					this.VisitorSessions.TryRemove(id, out bool state);
+			}, this.CancellationTokenSource.Token).ConfigureAwait(false), 60 * 60);
 		}
 		#endregion
 

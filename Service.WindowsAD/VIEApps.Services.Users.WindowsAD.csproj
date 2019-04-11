@@ -9,10 +9,10 @@
 		<Authors>VIEApps.net</Authors>
 		<Company>VIEApps.net</Company>
 		<Product>VIEApps NGX</Product>
-		<Copyright>© 2018 VIEApps.net</Copyright>
-		<AssemblyVersion>10.2.1901.1</AssemblyVersion>
-		<FileVersion>10.2.1901.1</FileVersion>
-		<InformationalVersion>v10.2.netstandard-2+rev:2019.01.14-change.passwords</InformationalVersion>
+		<Copyright>© 2019 VIEApps.net</Copyright>
+		<AssemblyVersion>10.2.1904.3</AssemblyVersion>
+		<FileVersion>10.2.1904.3</FileVersion>
+		<InformationalVersion>v10.2.netstandard-2+rev:2019.04.11-latest.components</InformationalVersion>
 	</PropertyGroup>
 
 	<ItemGroup>
