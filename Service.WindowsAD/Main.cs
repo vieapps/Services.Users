@@ -1,7 +1,9 @@
 ﻿using System;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Diagnostics;
 using System.DirectoryServices.AccountManagement;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using net.vieapps.Components.Utility;
 using net.vieapps.Components.Security;
@@ -16,23 +18,36 @@ namespace net.vieapps.Services.Users.WindowsAD
 
 		public override async Task<JToken> ProcessRequestAsync(RequestInfo requestInfo, CancellationToken cancellationToken = default(CancellationToken))
 		{
+			var stopwatch = Stopwatch.StartNew();
+			this.WriteLogs(requestInfo, $"Begin request ({requestInfo.Verb} {requestInfo.GetURI()})");
 			try
 			{
+				JToken json = null;
 				switch (requestInfo.Verb)
 				{
 					case "POST":
-						return await UtilityService.ExecuteTask(() => this.SignIn(requestInfo), cancellationToken).ConfigureAwait(false);
+						json = await UtilityService.ExecuteTask(() => this.SignIn(requestInfo), cancellationToken).ConfigureAwait(false);
+						break;
 
 					case "PUT":
-						return await UtilityService.ExecuteTask(() => this.ChangePassword(requestInfo), cancellationToken).ConfigureAwait(false);
+						json = await UtilityService.ExecuteTask(() => this.ChangePassword(requestInfo), cancellationToken).ConfigureAwait(false);
+						break;
 
 					default:
 						throw new InvalidRequestException($"The request is invalid [({requestInfo.Verb}): {requestInfo.GetURI()}]");
 				}
+				stopwatch.Stop();
+				this.WriteLogs(requestInfo, $"Success response - Execution times: {stopwatch.GetElapsedTimes()}");
+				if (this.IsDebugResultsEnabled)
+					this.WriteLogs(requestInfo,
+						$"- Request: {requestInfo.ToJson().ToString(this.IsDebugLogEnabled ? Formatting.Indented : Formatting.None)}" + "\r\n" +
+						$"- Response: {json?.ToString(this.IsDebugLogEnabled ? Formatting.Indented : Formatting.None)}"
+					);
+				return json;
 			}
 			catch (Exception ex)
 			{
-				throw this.GetRuntimeException(requestInfo, ex);
+				throw this.GetRuntimeException(requestInfo, ex, stopwatch);
 			}
 		}
 
