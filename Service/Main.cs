@@ -26,9 +26,7 @@ namespace net.vieapps.Services.Users
 	{
 
 		#region Properties
-		ConcurrentDictionary<string, string> OnlineSessions { get; } = new ConcurrentDictionary<string, string>();
-
-		ConcurrentDictionary<string, bool> VisitorSessions { get; } = new ConcurrentDictionary<string, bool>();
+		ConcurrentDictionary<string, Tuple<DateTime, string>> Sessions { get; } = new ConcurrentDictionary<string, Tuple<DateTime, string>>();
 
 		string ActivationKey => this.GetKey("Activation", "VIEApps-56BA2999-NGX-A2E4-Services-4B54-Activation-83EB-Key-693C250DC95D");
 
@@ -64,6 +62,7 @@ namespace net.vieapps.Services.Users
 		{
 			// initialize static properties
 			Utility.Cache = new Cache($"VIEApps-Services-{this.ServiceName}", Components.Utility.Logger.GetLoggerFactory());
+			Utility.CacheTimeOfSessions = Int32.TryParse("Users:CacheTimeOfSessions", out int cacheTime) ? cacheTime : 180;
 			Utility.ActivateHttpURI = this.GetHttpURI("Portals", "https://portals.vieapps.net/");
 			Utility.ActivateHttpURI += (Utility.ActivateHttpURI.EndsWith("/") ? "" : "/") + "home?prego=activate&mode={mode}&code={code}";
 			Utility.FilesHttpURI = this.GetHttpURI("Files", "https://fs.vieapps.net");
@@ -124,12 +123,6 @@ namespace net.vieapps.Services.Users
 							: requestInfo.Verb.IsEquals("POST") || requestInfo.Verb.IsEquals("PUT")
 								? await this.SetPrivilegesAsync(requestInfo, cancellationToken).ConfigureAwait(false)
 								: throw new MethodNotAllowedException(requestInfo.Verb);
-						break;
-
-					case "status":
-						json = requestInfo.Verb.IsEquals("GET")
-							? await this.UpdateOnlineStatusAsync(requestInfo.Session, true, requestInfo.CorrelationID, cancellationToken).ConfigureAwait(false)
-							: throw new MethodNotAllowedException(requestInfo.Verb);
 						break;
 
 					case "captcha":
@@ -515,17 +508,13 @@ namespace net.vieapps.Services.Users
 		#region Check exists of a session
 		async Task<JObject> CheckSessionExistsAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
-			// got cached
-			var existed = await Utility.Cache.ExistsAsync<Session>(requestInfo.Session.SessionID, cancellationToken).ConfigureAwait(false);
-
-			// no cached
-			if (!existed && !requestInfo.Session.User.ID.Equals("") && !requestInfo.Session.User.IsSystemAccount)
-				existed = await Session.GetAsync<Session>(requestInfo.Session.SessionID, cancellationToken).ConfigureAwait(false) != null;
-
-			return new JObject()
+			var session = await Utility.Cache.GetAsync<Session>($"Session#{requestInfo.Session.SessionID}", cancellationToken).ConfigureAwait(false);
+			if (session == null && !requestInfo.Session.User.ID.Equals("") && !requestInfo.Session.User.IsSystemAccount)
+				session = await Session.GetAsync<Session>(requestInfo.Session.SessionID, cancellationToken).ConfigureAwait(false);
+			return new JObject
 			{
 				{ "ID", requestInfo.Session.SessionID },
-				{ "Existed", existed }
+				{ "Existed", session != null }
 			};
 		}
 		#endregion
@@ -566,7 +555,7 @@ namespace net.vieapps.Services.Users
 			{
 				// update cache of session
 				var session = request.Copy<Session>();
-				await Utility.Cache.SetAsync(session, 180, cancellationToken).ConfigureAwait(false);
+				await Utility.Cache.SetAsync(session, Utility.CacheTimeOfSessions, cancellationToken).ConfigureAwait(false);
 
 				// response
 				return session.ToJson();
@@ -592,7 +581,7 @@ namespace net.vieapps.Services.Users
 
 				// make sure the cache has updated && remove duplicated sessions
 				await Task.WhenAll(
-					Utility.Cache.SetAsync(session, 0, cancellationToken),
+					Utility.Cache.SetAsync(session, Utility.CacheTimeOfSessions, cancellationToken),
 					Session.DeleteManyAsync(Filters<Session>.And(
 							Filters<Session>.Equals("DeviceID", session.DeviceID),
 							Filters<Session>.NotEquals("ID", session.ID)
@@ -2119,147 +2108,6 @@ namespace net.vieapps.Services.Users
 		}
 		#endregion
 
-		#region Process inter-communicate messages
-		protected override async Task ProcessInterCommunicateMessageAsync(CommunicateMessage message, CancellationToken cancellationToken = default(CancellationToken))
-		{
-			var correlationID = UtilityService.NewUUID;
-			if (this.IsDebugResultsEnabled)
-				await this.WriteLogsAsync(correlationID, $"Begin process an inter-communicate message {message.ToJson().ToString(this.IsDebugLogEnabled ? Formatting.Indented : Formatting.None)}", null, this.ServiceName).ConfigureAwait(false);
-
-			// prepare
-			var data = message.Data?.ToExpandoObject();
-			if (data == null)
-				return;
-
-			// online status of a session (service instance)
-			if (message.Type.IsEquals("Session#State"))
-				try
-				{
-					var sessionID = data.Get<string>("SessionID");
-					var userID = data.Get<string>("UserID");
-					if (data.Get<bool>("IsOnline"))
-					{
-						this.OnlineSessions.TryAdd(sessionID, userID);
-						if (userID.Equals(""))
-							this.VisitorSessions.TryAdd(sessionID, true);
-					}
-					else
-					{
-						this.OnlineSessions.TryRemove(sessionID, out string val);
-						if (userID.Equals(""))
-							this.VisitorSessions.TryRemove(sessionID, out bool state);
-					}
-
-					if (this.IsDebugResultsEnabled)
-						await this.WriteLogsAsync(correlationID, $"Update online state of a session successful - Online sessions: {this.OnlineSessions.Count:#,##0} - Visitor sessions: {this.VisitorSessions.Count:#,##0} - User sessions: {this.OnlineSessions.Count - this.VisitorSessions.Count:#,##0}", null, this.ServiceName).ConfigureAwait(false);
-				}
-				catch (Exception ex)
-				{
-					await this.WriteLogsAsync(correlationID, $"Error occurred while updating online sessions: {ex.Message}", ex, this.ServiceName).ConfigureAwait(false); ;
-				}
-
-			// online status of a session
-			else if (message.Type.IsEquals("Session#Status"))
-				try
-				{
-					// update status
-					var sessionInfo = data.FromExpandoObject<Services.Session>();
-					var isOnline = data.Get("IsOnline", false);
-					await this.UpdateOnlineStatusAsync(sessionInfo, isOnline, correlationID, cancellationToken, false);
-
-					// update session
-					if (!string.IsNullOrWhiteSpace(sessionInfo.User.ID))
-					{
-						var session = await Session.GetAsync<Session>((string)sessionInfo.SessionID, cancellationToken);
-						if (session != null && session.Online != isOnline)
-						{
-							session.Online = isOnline;
-							await Session.UpdateAsync(session, true, cancellationToken).ConfigureAwait(false);
-						}
-					}
-
-					if (this.IsDebugResultsEnabled)
-						await this.WriteLogsAsync(correlationID, $"Update online status of a session successful ({sessionInfo.SessionID} - {isOnline})", null, this.ServiceName).ConfigureAwait(false);
-				}
-				catch (Exception ex)
-				{
-					await this.WriteLogsAsync(correlationID, $"Error occurred while updating online status: {ex.Message}", ex, this.ServiceName).ConfigureAwait(false); ;
-				}
-
-			// total of online users
-			else if (message.Type.IsEquals("Session#Online"))
-				await this.SendUpdateMessageAsync(new UpdateMessage
-				{
-					Type = "Users#Session#Online",
-					DeviceID = "*",
-					Data = new JObject
-					{
-						{ "TotalSessions", this.OnlineSessions.Count },
-						{ "VisitorSessions", this.VisitorSessions.Count },
-						{ "UserSessions", this.OnlineSessions.Count - this.VisitorSessions.Count }
-					}
-				}, cancellationToken).ConfigureAwait(false);
-
-			// unknown
-			else if (this.IsDebugResultsEnabled)
-				await this.WriteLogsAsync(correlationID, $"Don't known how to process ({message.Type})", null, this.ServiceName, "RTU", LogLevel.Warning).ConfigureAwait(false);
-		}
-
-		async Task<JObject> UpdateOnlineStatusAsync(Services.Session session, bool isOnline, string correlationID = null, CancellationToken cancellationToken = default(CancellationToken), bool updateLastAccess = true)
-		{
-			// send message to update all service instances
-			await this.SendInterCommunicateMessageAsync("Users", new BaseMessage
-			{
-				Type = "Session#State",
-				Data = new JObject
-				{
-					{ "SessionID", session.SessionID },
-					{ "UserID", session.User.ID },
-					{ "IsOnline", isOnline }
-				}
-			}, cancellationToken).ConfigureAwait(false);
-
-			// update last-access time
-			if (updateLastAccess && !session.User.IsSystemAccount && !session.User.ID.Equals(""))
-			{
-				var account = await Account.GetAsync<Account>(session.User.ID, cancellationToken).ConfigureAwait(false);
-				if (account != null)
-				{
-					account.LastAccess = DateTime.Now;
-					await Account.UpdateAsync(account, true, cancellationToken).ConfigureAwait(false);
-				}
-			}
-
-			// prepare
-			var statusInfo = new JObject
-			{
-				{ "SessionID", session.GetEncryptedID(session.SessionID, this.EncryptionKey, this.ValidationKey) },
-				{ "UserID", session.User.ID },
-				{ "DeviceID", session.DeviceID },
-				{ "AppName", session.AppName },
-				{ "AppPlatform", session.AppPlatform },
-				{ "Location", await session.GetLocationAsync(correlationID).ConfigureAwait(false) },
-				{ "IsOnline", isOnline }
-			};
-
-			// broadcast update to clients
-			if (!session.User.IsSystemAccount && !session.User.ID.Equals(""))
-				await this.SendUpdateMessageAsync(new UpdateMessage
-				{
-					Type = "Users#Session#Status",
-					DeviceID = "*",
-					ExcludedDeviceID = session.DeviceID,
-					Data = statusInfo
-				}, cancellationToken).ConfigureAwait(false);
-
-			// clear related cache
-			else if (!isOnline)
-				await Utility.Cache.RemoveAsync($"Session#{session.SessionID}").ConfigureAwait(false);
-
-			return statusInfo;
-		}
-		#endregion
-
 		JObject RegisterSessionCaptcha(RequestInfo requestInfo)
 		{
 			var code = CaptchaService.GenerateCode();
@@ -2272,6 +2120,98 @@ namespace net.vieapps.Services.Users
 			};
 		}
 
+		#region Process inter-communicate messages
+		protected override async Task ProcessInterCommunicateMessageAsync(CommunicateMessage message, CancellationToken cancellationToken = default(CancellationToken))
+		{
+			// prepare
+			var correlationID = UtilityService.NewUUID;
+			var request = message.Data?.ToExpandoObject();
+			if (request == null)
+				return;
+
+			// state of a session
+			if (message.Type.IsEquals("Session#State"))
+				try
+				{
+					var sessionID = request.Get<string>("SessionID");
+					var userID = request.Get<string>("UserID");
+					var key = $"Session#{sessionID}";
+					if (request.Get<bool>("IsOnline"))
+					{
+						var session = string.IsNullOrWhiteSpace(userID)
+							? await Utility.Cache.GetAsync<Session>(key, cancellationToken).ConfigureAwait(false)
+							: await Session.GetAsync<Session>(sessionID, cancellationToken).ConfigureAwait(false);
+						if (session != null)
+						{
+							if (this.Sessions.TryGetValue(sessionID, out Tuple<DateTime, string> info))
+								this.Sessions.TryUpdate(sessionID, new Tuple<DateTime, string>(DateTime.Now, userID), info);
+							else
+								this.Sessions.TryAdd(sessionID, new Tuple<DateTime, string>(DateTime.Now, userID));
+							if (string.IsNullOrWhiteSpace(userID))
+								await Utility.Cache.SetAsync(key, session, Utility.CacheTimeOfSessions, cancellationToken).ConfigureAwait(false);
+							else if (info == null || (DateTime.Now - info.Item1).TotalMinutes > 14)
+							{
+								var account = await Account.GetAsync<Account>(userID, cancellationToken).ConfigureAwait(false);
+								if (account != null)
+								{
+									account.LastAccess = DateTime.Now;
+									await Account.UpdateAsync(account, true, cancellationToken).ConfigureAwait(false);
+								}
+							}
+						}
+					}
+					else if (this.Sessions.TryRemove(sessionID, out Tuple<DateTime, string> info))
+					{
+						if (string.IsNullOrWhiteSpace(info.Item2))
+							await Utility.Cache.RemoveAsync(key, cancellationToken).ConfigureAwait(false);
+						else
+						{
+							var session = await Session.GetAsync<Session>(sessionID, cancellationToken).ConfigureAwait(false);
+							if (session != null)
+							{
+								session.Online = false;
+								await Session.UpdateAsync(session, true, cancellationToken).ConfigureAwait(false);
+							}
+							var account = string.IsNullOrWhiteSpace(info.Item2) ? null : await Account.GetAsync<Account>(info.Item2, cancellationToken).ConfigureAwait(false);
+							if (account != null)
+							{
+								account.LastAccess = DateTime.Now;
+								await Account.UpdateAsync(account, true, cancellationToken).ConfigureAwait(false);
+							}
+						}
+					}
+
+					if (this.IsDebugResultsEnabled)
+						await this.WriteLogsAsync(correlationID, $"Update online state of a session successful - Online sessions: {this.Sessions.Count:#,##0}").ConfigureAwait(false);
+				}
+				catch (Exception ex)
+				{
+					await this.WriteLogsAsync(correlationID, $"Error occurred while updating session state => {ex.Message}", ex).ConfigureAwait(false); ;
+				}
+
+			// status of sessions
+			else if (message.Type.IsEquals("Session#Status"))
+			{
+				var numberOfVisitorSessions = this.Sessions.Count(kvp => string.IsNullOrWhiteSpace(kvp.Value.Item2));
+				await this.SendUpdateMessageAsync(new UpdateMessage
+				{
+					Type = "Users#Session#Status",
+					DeviceID = "*",
+					Data = new JObject
+					{
+						{ "TotalSessions", this.Sessions.Count },
+						{ "VisitorSessions", numberOfVisitorSessions },
+						{ "UserSessions", this.Sessions.Count - numberOfVisitorSessions }
+					}
+				}, cancellationToken).ConfigureAwait(false);
+			}
+
+			// unknown
+			else if (this.IsDebugResultsEnabled)
+				await this.WriteLogsAsync(correlationID, $"Got an inter-communicate message => {message.ToJson().ToString(this.IsDebugLogEnabled ? Formatting.Indented : Formatting.None)})").ConfigureAwait(false);
+		}
+		#endregion
+
 		#region Timers for working with background workers & schedulers
 		void RegisterTimers(string[] args = null)
 		{
@@ -2283,16 +2223,38 @@ namespace net.vieapps.Services.Users
 				await sessions.ForEachAsync((session, token) => Session.DeleteAsync<Session>(session.ID, userID, token), this.CancellationTokenSource.Token, true, false).ConfigureAwait(false);
 			}, 13 * 60 * 60);
 
-			// refresh visitor sessions (1 hour)
-			this.StartTimer(async () => await this.VisitorSessions.Keys.ToList().ForEachAsync(async (id, token) =>
+			// refresh sessions (15 minutes)
+			this.StartTimer(async () =>
 			{
-				var key = $"Session#{id}";
-				var session = await Utility.Cache.GetAsync(key, token).ConfigureAwait(false);
-				if (session != null)
-					await Utility.Cache.SetAsync(key, session, 180, token).ConfigureAwait(false);
-				else
-					this.VisitorSessions.TryRemove(id, out bool state);
-			}, this.CancellationTokenSource.Token).ConfigureAwait(false), 60 * 60);
+				var userTimepoint = DateTime.Now.AddMinutes(-59);
+				var visitorTimepoint = DateTime.Now.AddMinutes(-15);
+				await this.Sessions.Select(kvp => new { SessionID = kvp.Key, LastActivity = kvp.Value.Item1, UserID = kvp.Value.Item2 })
+					.ToList()
+					.ForEachAsync(async (info, token) =>
+					{
+						if (info.LastActivity < (string.IsNullOrWhiteSpace(info.UserID) ? visitorTimepoint : userTimepoint))
+							await this.SendInterCommunicateMessageAsync(new CommunicateMessage("Users")
+							{
+								Type = "Session#State",
+								Data = new JObject
+								{
+									{ "SessionID", info.SessionID },
+									{ "UserID", info.UserID },
+									{ "IsOnline", false }
+								}
+							}, token).ConfigureAwait(false);
+						else if (string.IsNullOrWhiteSpace(info.UserID))
+						{
+							var key = $"Session#{info.SessionID}";
+							var session = await Utility.Cache.GetAsync<Session>(key, token).ConfigureAwait(false);
+							if (session != null)
+								await Utility.Cache.SetAsync(key, session, Utility.CacheTimeOfSessions, token).ConfigureAwait(false);
+							else
+								this.Sessions.TryRemove(info.SessionID, out Tuple<DateTime, string> sessioninfo);
+						}
+					}, this.CancellationTokenSource.Token)
+					.ConfigureAwait(false);
+			}, 15 * 60);
 		}
 		#endregion
 
