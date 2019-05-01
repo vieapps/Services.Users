@@ -63,8 +63,10 @@ namespace net.vieapps.Services.Users
 			// initialize static properties
 			Utility.Cache = new Cache($"VIEApps-Services-{this.ServiceName}", Components.Utility.Logger.GetLoggerFactory());
 			Utility.CacheTimeOfSessions = Int32.TryParse("Users:CacheTimeOfSessions", out int cacheTime) ? cacheTime : 180;
-			Utility.ActivateHttpURI = this.GetHttpURI("Portals", "https://portals.vieapps.net/");
-			Utility.ActivateHttpURI += (Utility.ActivateHttpURI.EndsWith("/") ? "" : "/") + "home?prego=activate&mode={mode}&code={code}";
+			Utility.ActivateHttpURI = this.GetHttpURI("Portals", "https://portals.vieapps.net");
+			while (Utility.ActivateHttpURI.EndsWith("/"))
+				Utility.ActivateHttpURI = Utility.ActivateHttpURI.Left(Utility.FilesHttpURI.Length - 1);
+			Utility.ActivateHttpURI += "home?prego=activate&mode={mode}&code={code}";
 			Utility.FilesHttpURI = this.GetHttpURI("Files", "https://fs.vieapps.net");
 			while (Utility.FilesHttpURI.EndsWith("/"))
 				Utility.FilesHttpURI = Utility.FilesHttpURI.Left(Utility.FilesHttpURI.Length - 1);
@@ -501,7 +503,7 @@ namespace net.vieapps.Services.Users
 
 				// unknown
 				default:
-					throw new MethodNotAllowedException(requestInfo.Verb);
+					return Task.FromException<JObject>(new MethodNotAllowedException(requestInfo.Verb));
 			}
 		}
 
@@ -755,7 +757,7 @@ namespace net.vieapps.Services.Users
 
 				// unknown
 				default:
-					throw new MethodNotAllowedException(requestInfo.Verb);
+					return Task.FromException<JToken>(new MethodNotAllowedException(requestInfo.Verb));
 			}
 		}
 
@@ -1071,7 +1073,7 @@ namespace net.vieapps.Services.Users
 
 				// unknown
 				default:
-					throw new MethodNotAllowedException(requestInfo.Verb);
+					return Task.FromException<JObject>(new MethodNotAllowedException(requestInfo.Verb));
 			}
 		}
 
@@ -1197,7 +1199,7 @@ namespace net.vieapps.Services.Users
 
 					await Task.WhenAll(
 						Profile.CreateAsync(profile, cancellationToken),
-						requestInfo.Query.ContainsKey("related-service") ? this.CallRelatedServiceAsync(requestInfo, json.FromJson<User>(), "profile", "POST", null, relatedInfo?.ToDictionary(kvp => kvp.Key, kvp => kvp.Value as string), cancellationToken) : Task.CompletedTask
+						requestInfo.Query.ContainsKey("related-service") ? this.CallRelatedServiceAsync(requestInfo, json.Copy<User>(), "profile", "POST", null, relatedInfo?.ToDictionary(kvp => kvp.Key, kvp => kvp.Value as string), cancellationToken) : Task.CompletedTask
 					).ConfigureAwait(false);
 				}
 
@@ -1227,9 +1229,7 @@ namespace net.vieapps.Services.Users
 				}
 
 				var code = codeData.ToString(Formatting.None).Encrypt(this.ActivationKey).ToBase64Url(true);
-				var uri = requestInfo.Query.ContainsKey("uri")
-					? requestInfo.Query["uri"].Url64Decode()
-					: Utility.ActivateHttpURI;
+				var uri = requestInfo.GetQueryParameter("uri")?.Url64Decode() ?? Utility.ActivateHttpURI;
 				uri = uri.Replace(StringComparison.OrdinalIgnoreCase, "{mode}", "account");
 				uri = uri.Replace(StringComparison.OrdinalIgnoreCase, "{code}", code);
 

@@ -14,9 +14,10 @@ namespace net.vieapps.Services.Users.WindowsAD
 	{
 		public override string ServiceName => "WindowsAD";
 
-		public override void Start(string[] args = null, bool initializeRepository = true, Func<IService, Task> nextAsync = null) => base.Start(args, false, nextAsync);
+		public override void Start(string[] args = null, bool initializeRepository = true, Func<IService, Task> nextAsync = null)
+			=> base.Start(args, false, nextAsync);
 
-		public override async Task<JToken> ProcessRequestAsync(RequestInfo requestInfo, CancellationToken cancellationToken = default(CancellationToken))
+		public override Task<JToken> ProcessRequestAsync(RequestInfo requestInfo, CancellationToken cancellationToken = default(CancellationToken))
 		{
 			var stopwatch = Stopwatch.StartNew();
 			this.WriteLogs(requestInfo, $"Begin request ({requestInfo.Verb} {requestInfo.GetURI()})");
@@ -26,11 +27,11 @@ namespace net.vieapps.Services.Users.WindowsAD
 				switch (requestInfo.Verb)
 				{
 					case "POST":
-						json = await UtilityService.ExecuteTask(() => this.SignIn(requestInfo), cancellationToken).ConfigureAwait(false);
+						json = this.SignIn(requestInfo);
 						break;
 
 					case "PUT":
-						json = await UtilityService.ExecuteTask(() => this.ChangePassword(requestInfo), cancellationToken).ConfigureAwait(false);
+						json = this.ChangePassword(requestInfo);
 						break;
 
 					default:
@@ -43,11 +44,11 @@ namespace net.vieapps.Services.Users.WindowsAD
 						$"- Request: {requestInfo.ToJson().ToString(this.IsDebugLogEnabled ? Formatting.Indented : Formatting.None)}" + "\r\n" +
 						$"- Response: {json?.ToString(this.IsDebugLogEnabled ? Formatting.Indented : Formatting.None)}"
 					);
-				return json;
+				return Task.FromResult(json);
 			}
 			catch (Exception ex)
 			{
-				throw this.GetRuntimeException(requestInfo, ex, stopwatch);
+				return Task.FromException<JToken>(this.GetRuntimeException(requestInfo, ex, stopwatch));
 			}
 		}
 
