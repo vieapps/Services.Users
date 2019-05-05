@@ -62,7 +62,6 @@ namespace net.vieapps.Services.Users
 		{
 			// initialize static properties
 			Utility.Cache = new Cache($"VIEApps-Services-{this.ServiceName}", Components.Utility.Logger.GetLoggerFactory());
-			Utility.CacheTimeOfSessions = Int32.TryParse("Users:CacheTimeOfSessions", out int cacheTime) ? cacheTime : 180;
 			Utility.ActivateHttpURI = this.GetHttpURI("Portals", "https://portals.vieapps.net");
 			while (Utility.ActivateHttpURI.EndsWith("/"))
 				Utility.ActivateHttpURI = Utility.ActivateHttpURI.Left(Utility.FilesHttpURI.Length - 1);
@@ -128,9 +127,14 @@ namespace net.vieapps.Services.Users
 						break;
 
 					case "captcha":
-						json = requestInfo.Verb.IsEquals("GET")
-							? this.RegisterSessionCaptcha(requestInfo)
-							: throw new MethodNotAllowedException(requestInfo.Verb);
+						if (!requestInfo.Verb.IsEquals("GET"))
+							throw new MethodNotAllowedException(requestInfo.Verb);
+						var captcha = CaptchaService.GenerateCode();
+						json = new JObject
+						{
+							{ "Code", captcha },
+							{ "Uri", $"{Utility.CaptchaURI}{captcha.Url64Encode()}/{(requestInfo.GetQueryParameter("register") ?? UtilityService.NewUUID.Encrypt(this.EncryptionKey, true)).Substring(UtilityService.GetRandomNumber(13, 43), 13).Reverse()}.jpg" }
+						};
 						break;
 
 					default:
@@ -477,7 +481,7 @@ namespace net.vieapps.Services.Users
 			=> this.CallRelatedServiceAsync(requestInfo, requestInfo.Session.User, objectName, verb, objectIdentity, null, cancellationToken);
 		#endregion
 
-		Task<JObject> ProcessSessionAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		Task<JToken> ProcessSessionAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			switch (requestInfo.Verb)
 			{
@@ -493,22 +497,22 @@ namespace net.vieapps.Services.Users
 				case "POST":
 					return this.RegisterSessionAsync(requestInfo, cancellationToken);
 
-				// sign a session in
+				// log a session in
 				case "PUT":
-					return this.SignSessionInAsync(requestInfo, cancellationToken);
+					return this.LogSessionInAsync(requestInfo, cancellationToken);
 
-				// sign a session out
+				// log a session out
 				case "DELETE":
-					return this.SignSessionOutAsync(requestInfo, cancellationToken);
+					return this.LogSessionOutAsync(requestInfo, cancellationToken);
 
 				// unknown
 				default:
-					return Task.FromException<JObject>(new MethodNotAllowedException(requestInfo.Verb));
+					return Task.FromException<JToken>(new MethodNotAllowedException(requestInfo.Verb));
 			}
 		}
 
 		#region Check exists of a session
-		async Task<JObject> CheckSessionExistsAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		async Task<JToken> CheckSessionExistsAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			var session = await Utility.Cache.GetAsync<Session>($"Session#{requestInfo.Session.SessionID}", cancellationToken).ConfigureAwait(false);
 			if (session == null && !requestInfo.Session.User.ID.Equals("") && !requestInfo.Session.User.IsSystemAccount)
@@ -522,7 +526,7 @@ namespace net.vieapps.Services.Users
 		#endregion
 
 		#region Get a session
-		async Task<JObject> GetSessionAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		async Task<JToken> GetSessionAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// verify
 			if (requestInfo.Extra == null || !requestInfo.Extra.ContainsKey("Signature") || !requestInfo.Extra["Signature"].Equals(requestInfo.Header["x-app-token"].GetHMACSHA256(this.ValidationKey)))
@@ -538,7 +542,7 @@ namespace net.vieapps.Services.Users
 		#endregion
 
 		#region Register a session
-		async Task<JObject> RegisterSessionAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		async Task<JToken> RegisterSessionAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// prepare
 			if (string.IsNullOrWhiteSpace(requestInfo.Session.SessionID))
@@ -557,7 +561,7 @@ namespace net.vieapps.Services.Users
 			{
 				// update cache of session
 				var session = request.Copy<Session>();
-				await Utility.Cache.SetAsync(session, Utility.CacheTimeOfSessions, cancellationToken).ConfigureAwait(false);
+				await Utility.Cache.SetAsync(session, 0, cancellationToken).ConfigureAwait(false);
 
 				// response
 				return session.ToJson();
@@ -583,7 +587,7 @@ namespace net.vieapps.Services.Users
 
 				// make sure the cache has updated && remove duplicated sessions
 				await Task.WhenAll(
-					Utility.Cache.SetAsync(session, Utility.CacheTimeOfSessions, cancellationToken),
+					Utility.Cache.SetAsync(session, 0, cancellationToken),
 					Session.DeleteManyAsync(Filters<Session>.And(
 							Filters<Session>.Equals("DeviceID", session.DeviceID),
 							Filters<Session>.NotEquals("ID", session.ID)
@@ -602,8 +606,8 @@ namespace net.vieapps.Services.Users
 		}
 		#endregion
 
-		#region Sign a session in
-		async Task<JObject> SignSessionInAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		#region Log a session in
+		async Task<JToken> LogSessionInAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// verify
 			if (requestInfo.Extra == null || !requestInfo.Extra.ContainsKey("Signature") || !requestInfo.Extra["Signature"].Equals(requestInfo.Body.GetHMACSHA256(this.ValidationKey)))
@@ -709,8 +713,8 @@ namespace net.vieapps.Services.Users
 		}
 		#endregion
 
-		#region Sign a session out
-		async Task<JObject> SignSessionOutAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		#region Log a session out
+		async Task<JToken> LogSessionOutAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// verify
 			if (requestInfo.Extra == null || !requestInfo.Extra.ContainsKey("Signature") || !requestInfo.Extra["Signature"].Equals(requestInfo.Header["x-app-token"].GetHMACSHA256(this.ValidationKey)))
@@ -933,7 +937,7 @@ namespace net.vieapps.Services.Users
 				await account.GetSessionsAsync(cancellationToken).ConfigureAwait(false);
 
 			// revoke all sessions that are not verified with two-factors authentication
-			var sessions = account.Sessions.Where(s => !s.ID.Equals(requestInfo.Session.SessionID) && !s.Verification).ToList();
+			var sessions = account.Sessions.Where(s => !s.ID.Equals(requestInfo.Session.SessionID) && !s.Verified).ToList();
 			var messages = sessions.Select(s => new BaseMessage
 			{
 				Type = "Session#Revoke",
@@ -946,9 +950,9 @@ namespace net.vieapps.Services.Users
 			// update current session
 			var session = account.Sessions.First(s => s.ID.Equals(requestInfo.Session.SessionID));
 			var needUpdate = false;
-			if (!session.Verification)
+			if (!session.Verified)
 			{
-				needUpdate = session.Verification = true;
+				needUpdate = session.Verified = true;
 				messages.Add(new BaseMessage
 				{
 					Type = "Session#Update",
@@ -956,7 +960,7 @@ namespace net.vieapps.Services.Users
 					{
 						{ "SessionID", session.ID },
 						{ "User", account.GetAccountJson() },
-						{ "Verification", session.Verification }
+						{ "Verified", session.Verified }
 					}
 				});
 			}
@@ -1021,7 +1025,7 @@ namespace net.vieapps.Services.Users
 				await account.GetSessionsAsync(cancellationToken).ConfigureAwait(false);
 
 			if (!account.TwoFactorsAuthentication.Required)
-				account.Sessions.ForEach(s => s.Verification = false);
+				account.Sessions.ForEach(s => s.Verified = false);
 
 			// run all tasks
 			await Task.WhenAll(
@@ -1043,7 +1047,7 @@ namespace net.vieapps.Services.Users
 		}
 		#endregion
 
-		Task<JObject> ProcessAccountAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		Task<JToken> ProcessAccountAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			switch (requestInfo.Verb)
 			{
@@ -1073,12 +1077,12 @@ namespace net.vieapps.Services.Users
 
 				// unknown
 				default:
-					return Task.FromException<JObject>(new MethodNotAllowedException(requestInfo.Verb));
+					return Task.FromException<JToken>(new MethodNotAllowedException(requestInfo.Verb));
 			}
 		}
 
 		#region Get an account
-		async Task<JObject> GetAccountAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		async Task<JToken> GetAccountAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// check to see the user in the request is system administrator or not
 			if (requestInfo.Extra != null && requestInfo.Extra.ContainsKey("IsSystemAdministrator"))
@@ -1103,7 +1107,7 @@ namespace net.vieapps.Services.Users
 		#endregion
 
 		#region Create an account
-		async Task<JObject> CreateAccountAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		async Task<JToken> CreateAccountAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// convert
 			if (requestInfo.Extra != null && requestInfo.Extra.ContainsKey("x-convert"))
@@ -1261,6 +1265,8 @@ namespace net.vieapps.Services.Users
 				};
 
 				// send an email
+				var from = instructions.Item4;
+				var to = name + " <" + email + ">";
 				var subject = instructions.Item1;
 				var body = instructions.Item2;
 				data.ForEach(info =>
@@ -1269,8 +1275,13 @@ namespace net.vieapps.Services.Users
 					body = body.Replace(StringComparison.OrdinalIgnoreCase, "{" + info.Key + "}", info.Value);
 				});
 
-				var smtp = instructions.Item5;
-				await this.SendEmailAsync(instructions.Item4, name + " <" + email + ">", subject, body, smtp.Item1, smtp.Item2, smtp.Item3, smtp.Item4, smtp.Item5, cancellationToken).ConfigureAwait(false);
+				var smtpServer = instructions.Item5.Item1;
+				var smtpServerPort = instructions.Item5.Item2;
+				var smtpServerEnableSsl = instructions.Item5.Item3;
+				var smtpServerUsername = instructions.Item5.Item4;
+				var smtpServerPassword = instructions.Item5.Item5;
+
+				await this.SendEmailAsync(from, to, subject, body, smtpServer, smtpServerPort, smtpServerEnableSsl, smtpServerUsername, smtpServerPassword, cancellationToken).ConfigureAwait(false);
 
 				// result
 				return json;
@@ -1317,7 +1328,7 @@ namespace net.vieapps.Services.Users
 		#endregion
 
 		#region Update the privileges of an account
-		async Task<JObject> SetPrivilegesAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		async Task<JToken> SetPrivilegesAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// prepare
 			var systemID = requestInfo.GetQueryParameter("related-system");
@@ -1422,7 +1433,7 @@ namespace net.vieapps.Services.Users
 				{
 					{ "SessionID", session.ID },
 					{ "User", json },
-					{ "Verification", session.Verification }
+					{ "Verification", session.Verified }
 				}
 			}).ToList(), cancellationToken).ConfigureAwait(false);
 
@@ -1432,7 +1443,7 @@ namespace net.vieapps.Services.Users
 		#endregion
 
 		#region Renew password of an account
-		async Task<JObject> ResetPasswordAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		async Task<JToken> ResetPasswordAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// get account
 			var email = requestInfo.Extra["Email"].Decrypt(this.EncryptionKey);
@@ -1496,7 +1507,7 @@ namespace net.vieapps.Services.Users
 		#endregion
 
 		#region Update password of an account
-		async Task<JObject> UpdatePasswordAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		async Task<JToken> UpdatePasswordAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// get account and check
 			var oldPassword = requestInfo.Extra["OldPassword"].Decrypt(this.EncryptionKey);
@@ -1543,7 +1554,7 @@ namespace net.vieapps.Services.Users
 		#endregion
 
 		#region Update email of an account
-		async Task<JObject> UpdateEmailAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		async Task<JToken> UpdateEmailAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// get account and check
 			var oldPassword = requestInfo.Extra["OldPassword"].Decrypt(this.EncryptionKey);
@@ -1603,7 +1614,7 @@ namespace net.vieapps.Services.Users
 		#endregion
 
 		#region Get the sessions of an account
-		async Task<JObject> GetAccountSessionsAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		async Task<JToken> GetAccountSessionsAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			var userID = requestInfo.GetObjectIdentity() ?? requestInfo.Session.User.ID;
 			var account = !userID.Equals("") && !requestInfo.Session.User.IsSystemAccount
@@ -1631,7 +1642,7 @@ namespace net.vieapps.Services.Users
 		}
 		#endregion
 
-		Task<JObject> ProcessProfileAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		Task<JToken> ProcessProfileAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			switch (requestInfo.Verb)
 			{
@@ -1660,12 +1671,12 @@ namespace net.vieapps.Services.Users
 
 				// unknown
 				default:
-					return Task.FromException<JObject>(new MethodNotAllowedException(requestInfo.Verb));
+					return Task.FromException<JToken>(new MethodNotAllowedException(requestInfo.Verb));
 			}
 		}
 
 		#region Search profiles
-		async Task<JObject> SearchProfilesAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		async Task<JToken> SearchProfilesAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// check permissions
 			if (!this.IsAuthenticated(requestInfo))
@@ -1752,7 +1763,7 @@ namespace net.vieapps.Services.Users
 		#endregion
 
 		#region Fetch profiles
-		async Task<JObject> FetchProfilesAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		async Task<JToken> FetchProfilesAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// prepare
 			if (!this.IsAuthenticated(requestInfo))
@@ -1781,7 +1792,7 @@ namespace net.vieapps.Services.Users
 		#endregion
 
 		#region Create a profile
-		async Task<JObject> CreateProfileAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		async Task<JToken> CreateProfileAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			if (requestInfo.Extra != null && requestInfo.Extra.ContainsKey("x-convert"))
 			{
@@ -1802,7 +1813,7 @@ namespace net.vieapps.Services.Users
 		Task<JToken> GetProfileRelatedJsonAsync(RequestInfo requestInfo, CancellationToken cancellationToken = default(CancellationToken))
 			=> this.CallRelatedServiceAsync(requestInfo, "profile", "GET", requestInfo.Session.User.ID, cancellationToken);
 
-		async Task<JObject> GetProfileAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		async Task<JToken> GetProfileAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// get information
 			var id = requestInfo.GetObjectIdentity() ?? requestInfo.Session.User.ID;
@@ -1842,7 +1853,7 @@ namespace net.vieapps.Services.Users
 		#endregion
 
 		#region Update a profile
-		async Task<JObject> UpdateProfileAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		async Task<JToken> UpdateProfileAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// check permissions
 			var id = requestInfo.GetObjectIdentity() ?? requestInfo.Session.User.ID;
@@ -1859,14 +1870,14 @@ namespace net.vieapps.Services.Users
 				throw new InformationNotFoundException();
 
 			// prepare
-			profile.CopyFrom(requestInfo.GetBodyJson(), "ID,Title,LastUpdated".ToHashSet(), prf =>
+			profile.CopyFrom(requestInfo.GetBodyJson(), "ID,Title,LastUpdated".ToHashSet(), accountprofile =>
 			{
 				profile.Title = null;
 				profile.LastUpdated = DateTime.Now;
 				profile.Avatar = string.IsNullOrWhiteSpace(profile.Avatar)
 					? string.Empty
-					: profile.Avatar.IsStartsWith(Utility.FilesHttpURI)
-						? profile.Avatar.Right(profile.Avatar.Length - Utility.FilesHttpURI.Length)
+					: profile.Avatar.IsStartsWith(Utility.AvatarURI)
+						? profile.Avatar.Replace(Utility.FilesHttpURI, "~~")
 						: profile.Avatar;
 
 				if (account.Type.Equals(AccountType.BuiltIn) && !profile.Email.Equals(account.AccessIdentity))
@@ -1897,7 +1908,7 @@ namespace net.vieapps.Services.Users
 		}
 		#endregion
 
-		async Task<JObject> ProcessActivationAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		async Task<JToken> ProcessActivationAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			if (!requestInfo.Verb.IsEquals("GET"))
 				throw new MethodNotAllowedException(requestInfo.Verb);
@@ -1958,7 +1969,7 @@ namespace net.vieapps.Services.Users
 		}
 
 		#region Activate new account
-		async Task<JObject> ActivateAccountAsync(RequestInfo requestInfo, ExpandoObject info, CancellationToken cancellationToken)
+		async Task<JToken> ActivateAccountAsync(RequestInfo requestInfo, ExpandoObject info, CancellationToken cancellationToken)
 		{
 			// prepare
 			var mode = info.Get<string>("Mode");
@@ -2086,7 +2097,7 @@ namespace net.vieapps.Services.Users
 		#endregion
 
 		#region Activate new password
-		async Task<JObject> ActivatePasswordAsync(RequestInfo requestInfo, ExpandoObject info, CancellationToken cancellationToken)
+		async Task<JToken> ActivatePasswordAsync(RequestInfo requestInfo, ExpandoObject info, CancellationToken cancellationToken)
 		{
 			// prepare
 			var id = info.Get<string>("ID");
@@ -2108,19 +2119,6 @@ namespace net.vieapps.Services.Users
 		}
 		#endregion
 
-		JObject RegisterSessionCaptcha(RequestInfo requestInfo)
-		{
-			var code = CaptchaService.GenerateCode();
-			var uri = Utility.FilesHttpURI + "/captchas/" + code.Url64Encode() + "/"
-				+ (requestInfo.GetQueryParameter("register") ?? UtilityService.NewUUID.Encrypt(this.EncryptionKey, true)).Substring(UtilityService.GetRandomNumber(13, 43), 13).Reverse() + ".jpg";
-			return new JObject
-			{
-				{ "Code", code },
-				{ "Uri", uri }
-			};
-		}
-
-		#region Process inter-communicate messages
 		protected override async Task ProcessInterCommunicateMessageAsync(CommunicateMessage message, CancellationToken cancellationToken = default(CancellationToken))
 		{
 			// prepare
@@ -2148,7 +2146,7 @@ namespace net.vieapps.Services.Users
 							else
 								this.Sessions.TryAdd(sessionID, new Tuple<DateTime, string>(DateTime.Now, userID));
 							if (string.IsNullOrWhiteSpace(userID))
-								await Utility.Cache.SetAsync(key, session, Utility.CacheTimeOfSessions, cancellationToken).ConfigureAwait(false);
+								await Utility.Cache.SetAsync(key, session, 0, cancellationToken).ConfigureAwait(false);
 							else if (info == null || (DateTime.Now - info.Item1).TotalMinutes > 14)
 							{
 								var account = await Account.GetAsync<Account>(userID, cancellationToken).ConfigureAwait(false);
@@ -2210,7 +2208,6 @@ namespace net.vieapps.Services.Users
 			else if (this.IsDebugResultsEnabled)
 				await this.WriteLogsAsync(correlationID, $"Got an inter-communicate message => {message.ToJson().ToString(this.IsDebugLogEnabled ? Formatting.Indented : Formatting.None)})").ConfigureAwait(false);
 		}
-		#endregion
 
 		#region Timers for working with background workers & schedulers
 		void RegisterTimers(string[] args = null)
@@ -2223,15 +2220,16 @@ namespace net.vieapps.Services.Users
 				await sessions.ForEachAsync((session, token) => Session.DeleteAsync<Session>(session.ID, userID, token), this.CancellationTokenSource.Token, true, false).ConfigureAwait(false);
 			}, 13 * 60 * 60);
 
-			// refresh sessions (15 minutes)
+			// refresh sessions (10 minutes)
 			this.StartTimer(async () =>
 			{
-				var userTimepoint = DateTime.Now.AddMinutes(-59);
-				var visitorTimepoint = DateTime.Now.AddMinutes(-15);
+				var userTimepoint = DateTime.Now.AddMinutes(-15);
+				var visitorTimepoint = DateTime.Now.AddMinutes(-10);
 				await this.Sessions.Select(kvp => new { SessionID = kvp.Key, LastActivity = kvp.Value.Item1, UserID = kvp.Value.Item2 })
 					.ToList()
 					.ForEachAsync(async (info, token) =>
 					{
+						// remove offline session
 						if (info.LastActivity < (string.IsNullOrWhiteSpace(info.UserID) ? visitorTimepoint : userTimepoint))
 							await this.SendInterCommunicateMessageAsync(new CommunicateMessage("Users")
 							{
@@ -2243,18 +2241,20 @@ namespace net.vieapps.Services.Users
 									{ "IsOnline", false }
 								}
 							}, token).ConfigureAwait(false);
+
+						// refresh anonymous session
 						else if (string.IsNullOrWhiteSpace(info.UserID))
 						{
 							var key = $"Session#{info.SessionID}";
 							var session = await Utility.Cache.GetAsync<Session>(key, token).ConfigureAwait(false);
 							if (session != null)
-								await Utility.Cache.SetAsync(key, session, Utility.CacheTimeOfSessions, token).ConfigureAwait(false);
+								await Utility.Cache.SetAsync(key, session, 0, token).ConfigureAwait(false);
 							else
 								this.Sessions.TryRemove(info.SessionID, out Tuple<DateTime, string> sessioninfo);
 						}
 					}, this.CancellationTokenSource.Token)
 					.ConfigureAwait(false);
-			}, 15 * 60);
+			}, 10 * 60);
 		}
 		#endregion
 

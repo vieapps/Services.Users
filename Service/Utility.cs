@@ -25,9 +25,11 @@ namespace net.vieapps.Services.Users
 	{
 		public static Cache Cache { get; internal set; }
 
-		public static int CacheTimeOfSessions { get; internal set; } = 180;
-
 		public static string FilesHttpURI { get; internal set; }
+
+		public static string CaptchaURI => $"{Utility.FilesHttpURI}/captchas/";
+
+		public static string AvatarURI => $"{Utility.FilesHttpURI}/avatars/";
 
 		public static string ActivateHttpURI { get; internal set; }
 

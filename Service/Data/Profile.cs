@@ -120,7 +120,7 @@ namespace net.vieapps.Services.Users
 		{
 			return base.ToJson(addTypeOfExtendedProperties, json =>
 			{
-				json["Avatar"] = string.IsNullOrWhiteSpace(this.Avatar) ? "" : this.Avatar.StartsWith("/") ? Utility.FilesHttpURI + this.Avatar : this.Avatar;
+				json["Avatar"] = string.IsNullOrWhiteSpace(this.Avatar) ? "" : this.Avatar.StartsWith("/") ? Utility.FilesHttpURI + this.Avatar : this.Avatar.Replace("~~/", Utility.FilesHttpURI + "/");
 				json["Gravatar"] = this.GetGravatarURI();
 				onPreCompleted?.Invoke(json);
 			});

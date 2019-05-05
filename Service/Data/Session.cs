@@ -27,7 +27,7 @@ namespace net.vieapps.Services.Users
 			this.DeviceID = "";
 			this.AppInfo = "";
 			this.OSInfo = "";
-			this.Verification = false;
+			this.Verified = false;
 			this.Online = false;
 		}
 
@@ -87,10 +87,10 @@ namespace net.vieapps.Services.Users
 		public string OSInfo { get; set; }
 
 		/// <summary>
-		/// Gets or sets two-factors verification status
+		/// Gets or sets the verification state of two-factors authentication
 		/// </summary>
 		[Sortable]
-		public bool Verification { get; set; }
+		public bool Verified { get; set; }
 
 		/// <summary>
 		/// Gets or sets online status
