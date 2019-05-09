@@ -1311,9 +1311,9 @@ namespace net.vieapps.Services.Users
 						Header = requestInfo.Header,
 						Query = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
 						{
-							{ "x-system", systemID },
-							{ "x-object", requestInfo.GetQueryParameter("related-object") },
-							{ "x-definition", requestInfo.GetQueryParameter("related-definition") },
+							{ "x-system-id", systemID },
+							{ "x-definition-id", requestInfo.GetQueryParameter("related-definition") },
+							{ "x-object-id", requestInfo.GetQueryParameter("related-object") },
 							{ "x-object-identity", objectIdentity }
 						},
 						CorrelationID = requestInfo.CorrelationID
