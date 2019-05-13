@@ -93,66 +93,67 @@ namespace net.vieapps.Services.Users
 		{
 			var stopwatch = Stopwatch.StartNew();
 			this.WriteLogs(requestInfo, $"Begin request ({requestInfo.Verb} {requestInfo.GetURI()})");
-			try
-			{
-				JToken json = null;
-				switch (requestInfo.ObjectName.ToLower())
+			using (var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, this.CancellationTokenSource.Token))
+				try
 				{
-					case "session":
-						json = await this.ProcessSessionAsync(requestInfo, cancellationToken).ConfigureAwait(false);
-						break;
+					JToken json = null;
+					switch (requestInfo.ObjectName.ToLower())
+					{
+						case "session":
+							json = await this.ProcessSessionAsync(requestInfo, cts.Token).ConfigureAwait(false);
+							break;
 
-					case "otp":
-						json = await this.ProcessOTPAsync(requestInfo, cancellationToken).ConfigureAwait(false);
-						break;
+						case "otp":
+							json = await this.ProcessOTPAsync(requestInfo, cts.Token).ConfigureAwait(false);
+							break;
 
-					case "account":
-						json = await this.ProcessAccountAsync(requestInfo, cancellationToken).ConfigureAwait(false);
-						break;
+						case "account":
+							json = await this.ProcessAccountAsync(requestInfo, cts.Token).ConfigureAwait(false);
+							break;
 
-					case "profile":
-						json = await this.ProcessProfileAsync(requestInfo, cancellationToken).ConfigureAwait(false);
-						break;
+						case "profile":
+							json = await this.ProcessProfileAsync(requestInfo, cts.Token).ConfigureAwait(false);
+							break;
 
-					case "activate":
-						json = await this.ProcessActivationAsync(requestInfo, cancellationToken).ConfigureAwait(false);
-						break;
+						case "activate":
+							json = await this.ProcessActivationAsync(requestInfo, cts.Token).ConfigureAwait(false);
+							break;
 
-					case "privileges":
-						json = requestInfo.Verb.IsEquals("GET")
-							? await this.GetPrivilegesAsync(requestInfo, cancellationToken).ConfigureAwait(false)
-							: requestInfo.Verb.IsEquals("POST") || requestInfo.Verb.IsEquals("PUT")
-								? await this.SetPrivilegesAsync(requestInfo, cancellationToken).ConfigureAwait(false)
-								: throw new MethodNotAllowedException(requestInfo.Verb);
-						break;
+						case "privileges":
+							json = requestInfo.Verb.IsEquals("GET")
+								? await this.GetPrivilegesAsync(requestInfo, cts.Token).ConfigureAwait(false)
+								: requestInfo.Verb.IsEquals("POST") || requestInfo.Verb.IsEquals("PUT")
+									? await this.SetPrivilegesAsync(requestInfo, cts.Token).ConfigureAwait(false)
+									: throw new MethodNotAllowedException(requestInfo.Verb);
+							break;
 
-					case "captcha":
-						if (!requestInfo.Verb.IsEquals("GET"))
-							throw new MethodNotAllowedException(requestInfo.Verb);
-						var captcha = CaptchaService.GenerateCode();
-						json = new JObject
-						{
-							{ "Code", captcha },
-							{ "Uri", $"{Utility.CaptchaURI}{captcha.Url64Encode()}/{(requestInfo.GetQueryParameter("register") ?? UtilityService.NewUUID.Encrypt(this.EncryptionKey, true)).Substring(UtilityService.GetRandomNumber(13, 43), 13).Reverse()}.jpg" }
-						};
-						break;
+						case "captcha":
+							if (!requestInfo.Verb.IsEquals("GET"))
+								throw new MethodNotAllowedException(requestInfo.Verb);
+							var captcha = CaptchaService.GenerateCode();
+							json = new JObject
+							{
+								{ "Code", captcha },
+								{ "Uri", $"{Utility.CaptchaURI}{captcha.Url64Encode()}/{(requestInfo.GetQueryParameter("register") ?? UtilityService.NewUUID.Encrypt(this.EncryptionKey, true)).Substring(UtilityService.GetRandomNumber(13, 43), 13).Reverse()}.jpg" }
+							};
+							break;
 
-					default:
-						throw new InvalidRequestException($"The request is invalid ({requestInfo.Verb} {requestInfo.GetURI()})");
+						default:
+							throw new InvalidRequestException($"The request is invalid ({requestInfo.Verb} {requestInfo.GetURI()})");
+					}
+					stopwatch.Stop();
+					this.WriteLogs(requestInfo, $"Success response - Execution times: {stopwatch.GetElapsedTimes()}");
+					if (this.IsDebugResultsEnabled)
+						this.WriteLogs(requestInfo,
+							$"- Request: {requestInfo.ToJson().ToString(this.IsDebugLogEnabled ? Formatting.Indented : Formatting.None)}" + "\r\n" +
+							$"- Response: {json?.ToString(this.IsDebugLogEnabled ? Formatting.Indented : Formatting.None)}"
+						);
+					return json;
 				}
-				stopwatch.Stop();
-				this.WriteLogs(requestInfo, $"Success response - Execution times: {stopwatch.GetElapsedTimes()}");
-				if (this.IsDebugResultsEnabled)
-					this.WriteLogs(requestInfo,
-						$"- Request: {requestInfo.ToJson().ToString(this.IsDebugLogEnabled ? Formatting.Indented : Formatting.None)}" + "\r\n" +
-						$"- Response: {json?.ToString(this.IsDebugLogEnabled ? Formatting.Indented : Formatting.None)}"
-					);
-				return json;
-			}
-			catch (Exception ex)
-			{
-				throw this.GetRuntimeException(requestInfo, ex, stopwatch);
-			}
+				catch (Exception ex)
+				{
+					throw this.GetRuntimeException(requestInfo, ex, stopwatch);
+				}
 		}
 
 		#region Working with related services
