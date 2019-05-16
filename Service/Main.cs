@@ -9,15 +9,13 @@ using System.Threading.Tasks;
 using System.Collections.Generic;
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
-
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
-
-using net.vieapps.Components.Utility;
 using net.vieapps.Components.Security;
 using net.vieapps.Components.Repository;
 using net.vieapps.Components.Caching;
+using net.vieapps.Components.Utility;
 #endregion
 
 namespace net.vieapps.Services.Users
@@ -156,26 +154,22 @@ namespace net.vieapps.Services.Users
 				}
 		}
 
-		#region Working with related services
+		#region Get instructions
 		async Task<Tuple<string, string, string, string, Tuple<string, int, bool, string, string>>> GetInstructionsOfRelatedServiceAsync(RequestInfo requestInfo, string mode = "reset", CancellationToken cancellationToken = default(CancellationToken))
 		{
-			var request = new RequestInfo()
+			var data = (await this.CallServiceAsync(new RequestInfo(requestInfo.Session, requestInfo.Query["related-service"], "Instruction", "GET")
 			{
-				Session = requestInfo.Session,
-				ServiceName = requestInfo.Query["related-service"],
-				ObjectName = "Instruction",
-				Query = new Dictionary<string, string>(requestInfo.Query ?? new Dictionary<string, string>())
+				Query = new Dictionary<string, string>(requestInfo.Query ?? new Dictionary<string, string>(), StringComparer.OrdinalIgnoreCase)
 				{
-					{ "object-identity", "account" }
+					["object-identity"] = "account"
 				},
 				Header = requestInfo.Header,
-				Extra = new Dictionary<string, string>(requestInfo.Extra ?? new Dictionary<string, string>())
+				Extra = new Dictionary<string, string>(requestInfo.Extra ?? new Dictionary<string, string>(), StringComparer.OrdinalIgnoreCase)
 				{
-					{ "mode", mode }
+					["mode"] = mode
 				},
 				CorrelationID = requestInfo.CorrelationID
-			};
-			var data = (await this.CallServiceAsync(request, cancellationToken).ConfigureAwait(false)).ToExpandoObject();
+			}, cancellationToken).ConfigureAwait(false)).ToExpandoObject();
 
 			var subject = data.Get<string>("Subject");
 			var body = data.Get<string>("Body");
@@ -443,8 +437,22 @@ namespace net.vieapps.Services.Users
 
 			return new Tuple<string, string, string, string, Tuple<string, int, bool, string, string>>(subject, body, signature, sender, new Tuple<string, int, bool, string, string>(smtpServer, smtpServerPort, smtpServerEnableSsl, smtpUser, smtpUserPassword));
 		}
+		#endregion
 
-		async Task<JToken> CallRelatedServiceAsync(RequestInfo requestInfo, User user, string objectName, string verb, string objectIdentity, Dictionary<string, string> extra, CancellationToken cancellationToken = default(CancellationToken))
+		#region Call related services
+		IService GetRelatedService(RequestInfo requestInfo)
+		{
+			try
+			{
+				return Router.GetService(requestInfo?.GetQueryParameter("related-service"));
+			}
+			catch
+			{
+				return null;
+			}
+		}
+
+		async Task<JToken> CallRelatedServiceAsync(RequestInfo requestInfo, User user, string objectName, string verb = "GET", string objectIdentity = null, Dictionary<string, string> extra = null, CancellationToken cancellationToken = default(CancellationToken))
 		{
 			var correlationID = requestInfo.CorrelationID ?? UtilityService.NewUUID;
 			try
@@ -452,7 +460,7 @@ namespace net.vieapps.Services.Users
 				var request = new RequestInfo(
 					new Services.Session(requestInfo.Session)
 					{
-						User = user ?? (requestInfo.Session.User ?? new User())
+						User = user ?? requestInfo.Session.User ?? User.GetDefault(requestInfo.Session.SessionID)
 					},
 					requestInfo.GetQueryParameter("related-service") ?? "",
 					objectName ?? "",
@@ -473,13 +481,11 @@ namespace net.vieapps.Services.Users
 			}
 			catch (Exception ex)
 			{
-				await this.WriteLogsAsync(correlationID, $"Error occurred while calling related service: {ex.Message}", ex).ConfigureAwait(false);
+				if (this.IsDebugLogEnabled)
+					await this.WriteLogsAsync(correlationID, $"Error occurred while calling the related service => {ex.Message}", ex).ConfigureAwait(false);
 				return new JObject();
 			}
 		}
-
-		Task<JToken> CallRelatedServiceAsync(RequestInfo requestInfo, string objectName, string verb = "GET", string objectIdentity = null, CancellationToken cancellationToken = default(CancellationToken))
-			=> this.CallRelatedServiceAsync(requestInfo, requestInfo.Session.User, objectName, verb, objectIdentity, null, cancellationToken);
 		#endregion
 
 		Task<JToken> ProcessSessionAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
@@ -1152,14 +1158,11 @@ namespace net.vieapps.Services.Users
 					throw new InformationExistedException("The email address (" + email + ") has been used for another account");
 
 				// related: privileges, service, extra info
-				var relatedService = requestInfo.Query.ContainsKey("related-service")
-					? requestInfo.Query["related-service"]
-					: null;
-
 				var privileges = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Privileges")
 					? JArray.Parse(requestInfo.Extra["Privileges"].Decrypt(this.EncryptionKey)).ToList<Privilege>()
 					: null;
 
+				var relatedService = requestInfo.GetQueryParameter("related-service");
 				var relatedInfo = !string.IsNullOrWhiteSpace(relatedService) && requestInfo.Extra != null && requestInfo.Extra.ContainsKey("RelatedInfo")
 					? requestInfo.Extra["RelatedInfo"].Decrypt(this.EncryptionKey).ToExpandoObject()
 					: null;
@@ -1169,8 +1172,10 @@ namespace net.vieapps.Services.Users
 				{
 					var gotRights = await this.IsSystemAdministratorAsync(requestInfo).ConfigureAwait(false);
 					if (!gotRights && !string.IsNullOrWhiteSpace(relatedService))
-						gotRights = await this.IsServiceAdministratorAsync(requestInfo.Session.User, relatedService).ConfigureAwait(false);
-
+					{
+						var relatedSvc = this.GetRelatedService(requestInfo);
+						gotRights = relatedSvc != null && await relatedSvc.CanManageAsync(requestInfo.Session.User, requestInfo.ObjectName, null, null, null, cancellationToken).ConfigureAwait(false);
+					}
 					if (!gotRights)
 					{
 						privileges = null;
@@ -1204,7 +1209,9 @@ namespace net.vieapps.Services.Users
 
 					await Task.WhenAll(
 						Profile.CreateAsync(profile, cancellationToken),
-						requestInfo.Query.ContainsKey("related-service") ? this.CallRelatedServiceAsync(requestInfo, json.Copy<User>(), "profile", "POST", null, relatedInfo?.ToDictionary(kvp => kvp.Key, kvp => kvp.Value as string), cancellationToken) : Task.CompletedTask
+						string.IsNullOrWhiteSpace(relatedService)
+							? Task.CompletedTask
+							: this.CallRelatedServiceAsync(requestInfo, json.Copy<User>(), "profile", "POST", null, relatedInfo?.ToDictionary(kvp => kvp.Key, kvp => kvp.Value as string), cancellationToken)
 					).ConfigureAwait(false);
 				}
 
@@ -1224,13 +1231,13 @@ namespace net.vieapps.Services.Users
 				};
 
 				if (privileges != null)
-					codeData.Add("Privileges", privileges.ToJsonArray());
+					codeData["Privileges"] = privileges.ToJsonArray();
 
 				if (!string.IsNullOrWhiteSpace(relatedService) && relatedInfo != null)
 				{
-					codeData.Add("RelatedService", new JValue(relatedService));
-					codeData.Add("RelatedUser", new JValue(requestInfo.Session.User.ID));
-					codeData.Add("RelatedInfo", relatedInfo.ToJson());
+					codeData["RelatedService"] = relatedService;
+					codeData["RelatedUser"] = requestInfo.Session.User.ID;
+					codeData["RelatedInfo"] = relatedInfo.ToJson();
 				}
 
 				var code = codeData.ToString(Formatting.None).Encrypt(this.ActivationKey).ToBase64Url(true);
@@ -1248,7 +1255,7 @@ namespace net.vieapps.Services.Users
 				}
 
 				var instructions = await this.GetActivateInstructionsAsync(requestInfo, mode, cancellationToken).ConfigureAwait(false);
-				var data = new Dictionary<string, string>
+				var data = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
 				{
 					{ "Host", requestInfo.GetQueryParameter("host") ?? "unknown" },
 					{ "Email", email },
@@ -1293,33 +1300,28 @@ namespace net.vieapps.Services.Users
 		#region Get the privilege objects of an account
 		async Task<JToken> GetPrivilegesAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
-			var serviceName = requestInfo.GetQueryParameter("related-service");
 			var gotRights = requestInfo.Session.User.IsSystemAdministrator;
-			if (!string.IsNullOrWhiteSpace(serviceName))
+			var relatedService = gotRights ? null : this.GetRelatedService(requestInfo);
+			if (!gotRights && relatedService != null)
 			{
+				var serviceName = requestInfo.GetQueryParameter("related-service");
+				var objectName = requestInfo.GetQueryParameter("related-object");
 				var systemID = requestInfo.GetQueryParameter("related-system");
-				var objectIdentity = requestInfo.GetQueryParameter("related-object-identity");
-				var service = await this.GetServiceAsync(serviceName).ConfigureAwait(false);
-				if (!gotRights)
-					gotRights = service != null
-						? string.IsNullOrWhiteSpace(systemID)
-							? await service.CanManageAsync(requestInfo.Session.User, requestInfo.GetQueryParameter("related-object"), objectIdentity).ConfigureAwait(false)
-							: await service.CanManageAsync(requestInfo.Session.User, systemID, requestInfo.GetQueryParameter("related-definition"), objectIdentity).ConfigureAwait(false)
-						: false;
-				return gotRights
-					? await this.CallServiceAsync(new RequestInfo(requestInfo.Session, serviceName, "Privileges", "GET")
+				var definitionID = requestInfo.GetQueryParameter("related-definition");
+				var objectID = requestInfo.GetQueryParameter("related-object-identity");
+				if (await relatedService.CanManageAsync(requestInfo.Session.User, objectName, systemID, definitionID, objectID, cancellationToken).ConfigureAwait(false))
+					return await this.CallServiceAsync(new RequestInfo(requestInfo.Session, serviceName, "Privileges", "GET")
 					{
 						Header = requestInfo.Header,
 						Query = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
 						{
+							{ "x-object-name", objectName },
 							{ "x-system-id", systemID },
-							{ "x-definition-id", requestInfo.GetQueryParameter("related-definition") },
-							{ "x-object-id", requestInfo.GetQueryParameter("related-object") },
-							{ "x-object-identity", objectIdentity }
+							{ "x-definition-id", definitionID },
+							{ "x-object-id", objectID }
 						},
 						CorrelationID = requestInfo.CorrelationID
-					}, cancellationToken).ConfigureAwait(false)
-					: throw new AccessDeniedException();
+					}, cancellationToken).ConfigureAwait(false);
 			}
 
 			return gotRights
@@ -1332,26 +1334,18 @@ namespace net.vieapps.Services.Users
 		async Task<JToken> SetPrivilegesAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// prepare
-			var systemID = requestInfo.GetQueryParameter("related-system");
 			var serviceName = requestInfo.GetQueryParameter("related-service");
+			var objectName = requestInfo.GetQueryParameter("related-object");
+			var systemID = requestInfo.GetQueryParameter("related-system");
+			var definitionID = requestInfo.GetQueryParameter("related-definition");
+			var objectID = requestInfo.GetQueryParameter("related-object-identity");
 			var isSystemAdministrator = requestInfo.Session.User.IsSystemAdministrator;
 
-			// system administrator can do
+			// check permission => only system administrator or manager of the specified service can do
 			var gotRights = isSystemAdministrator;
-
-			// check with related service
-			if (!gotRights && !string.IsNullOrWhiteSpace(serviceName))
-			{
-				var objectIdentity = requestInfo.GetQueryParameter("related-object-identity");
-				var service = await this.GetServiceAsync(serviceName).ConfigureAwait(false);
-				gotRights = service != null
-					? string.IsNullOrWhiteSpace(systemID)
-						? await service.CanManageAsync(requestInfo.Session.User, requestInfo.GetQueryParameter("related-object"), objectIdentity).ConfigureAwait(false)
-						: await service.CanManageAsync(requestInfo.Session.User, systemID, requestInfo.GetQueryParameter("related-definition"), objectIdentity).ConfigureAwait(false)
-					: false;
-			}
-
-			// stop if has no right to do
+			var relatedService = gotRights ? null : this.GetRelatedService(requestInfo);
+			if (!gotRights && relatedService != null)
+				gotRights = await relatedService.CanManageAsync(requestInfo, objectName, systemID, definitionID, objectID, cancellationToken).ConfigureAwait(false);
 			if (!gotRights)
 				throw new AccessDeniedException();
 
@@ -1811,8 +1805,8 @@ namespace net.vieapps.Services.Users
 		#endregion
 
 		#region Get a profile
-		Task<JToken> GetProfileRelatedJsonAsync(RequestInfo requestInfo, CancellationToken cancellationToken = default(CancellationToken))
-			=> this.CallRelatedServiceAsync(requestInfo, "profile", "GET", requestInfo.Session.User.ID, cancellationToken);
+		Task<JToken> GetProfileRelatedJsonAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+			=> this.CallRelatedServiceAsync(requestInfo, null, "Profile", "GET", requestInfo.Session.User.ID, null, cancellationToken);
 
 		async Task<JToken> GetProfileAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
@@ -1822,6 +1816,13 @@ namespace net.vieapps.Services.Users
 			if (profile == null)
 				throw new InformationNotFoundException();
 
+			// prepare
+			var serviceName = requestInfo.GetQueryParameter("related-service");
+			var objectName = requestInfo.GetQueryParameter("related-object");
+			var systemID = requestInfo.GetQueryParameter("related-system");
+			var definitionID = requestInfo.GetQueryParameter("related-definition");
+			var objectID = requestInfo.GetQueryParameter("related-object-identity");
+
 			// check permissions
 			var doNormalize = false;
 			var gotRights = this.IsAuthenticated(requestInfo) && requestInfo.Session.User.ID.IsEquals(id);
@@ -1830,21 +1831,12 @@ namespace net.vieapps.Services.Users
 				gotRights = requestInfo.Session.User.IsSystemAdministrator || await this.IsAuthorizedAsync(requestInfo, Components.Security.Action.View).ConfigureAwait(false);
 				doNormalize = !requestInfo.Session.User.IsSystemAdministrator;
 			}
-
-			if (!gotRights && requestInfo.Query.ContainsKey("related-service"))
+			var relatedService = gotRights ? null : this.GetRelatedService(requestInfo);
+			if (!gotRights && relatedService != null)
 			{
-				var systemID = requestInfo.GetQueryParameter("related-system");
-				var serviceName = requestInfo.GetQueryParameter("related-service");
-				var objectIdentity = requestInfo.GetQueryParameter("related-object-identity");
-				var service = await this.GetServiceAsync(serviceName).ConfigureAwait(false);
-				gotRights = service != null
-					? string.IsNullOrWhiteSpace(systemID)
-						? await service.CanManageAsync(requestInfo.Session.User, requestInfo.GetQueryParameter("related-object"), objectIdentity).ConfigureAwait(false)
-						: await service.CanManageAsync(requestInfo.Session.User, systemID, requestInfo.GetQueryParameter("related-definition"), objectIdentity).ConfigureAwait(false)
-					: false;
+				gotRights = await relatedService.CanManageAsync(requestInfo, objectName, systemID, definitionID, objectID, cancellationToken).ConfigureAwait(false);
 				doNormalize = false;
 			}
-
 			if (!gotRights)
 				throw new AccessDeniedException();
 
@@ -1891,7 +1883,9 @@ namespace net.vieapps.Services.Users
 			// update
 			await Task.WhenAll(
 				Profile.UpdateAsync(profile, requestInfo.Session.User.ID, cancellationToken),
-				requestInfo.Query.ContainsKey("related-service") ? this.CallRelatedServiceAsync(requestInfo, "profile", "PUT", profile.ID, cancellationToken) : Task.CompletedTask
+				requestInfo.Query.ContainsKey("related-service")
+					? this.CallRelatedServiceAsync(requestInfo, null, "Profile", "PUT", profile.ID, null, cancellationToken)
+					: Task.CompletedTask
 			).ConfigureAwait(false);
 
 			// send update message
@@ -2008,32 +2002,30 @@ namespace net.vieapps.Services.Users
 						var relatedAccount = await Account.GetAsync<Account>(relatedUser, cancellationToken).ConfigureAwait(false);
 						var relatedSession = new Services.Session(requestInfo.Session)
 						{
-							User = relatedAccount.GetAccountJson().FromJson<User>()
+							User = relatedAccount.GetAccountJson().Copy<User>()
 						};
 
 						// update privileges
 						try
 						{
 							account.AccessPrivileges = account.AccessPrivileges.Where(p => !p.ServiceName.IsEquals(relatedService))
-								.Concat(JArray.Parse(requestInfo.Extra["Privileges"].Decrypt(this.EncryptionKey)).ToList<Privilege>().Where(p => p.ServiceName.IsEquals(relatedService))).ToList();
+								.Concat(JArray.Parse(requestInfo.Extra["Privileges"].Decrypt(this.EncryptionKey)).ToList<Privilege>().Where(p => p.ServiceName.IsEquals(relatedService)))
+								.ToList();
 							await Account.UpdateAsync(account, true, cancellationToken).ConfigureAwait(false);
 						}
 						catch { }
 
 						// update related information
 						if (relatedInfo != null)
-						{
-							var relatedRequest = new RequestInfo(relatedSession, relatedService, "activate", "GET")
+							await this.CallServiceAsync(new RequestInfo(relatedSession, relatedService, "activate", "GET")
 							{
 								Query = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
 								{
 									{ "object-identity", account.ID }
 								},
+								Extra = relatedInfo.ToDictionary(kvp => kvp.Key, kvp => kvp.Value as string),
 								CorrelationID = requestInfo.CorrelationID
-							};
-							relatedInfo.ForEach(kvp => relatedRequest.Extra[kvp.Key] = kvp.Value as string);
-							await this.CallServiceAsync(relatedRequest, cancellationToken).ConfigureAwait(false);
-						}
+							}, cancellationToken).ConfigureAwait(false);
 					}
 					catch { }
 
@@ -2076,18 +2068,17 @@ namespace net.vieapps.Services.Users
 						var relatedAccount = await Account.GetAsync<Account>(relatedUser, cancellationToken).ConfigureAwait(false);
 						var relatedSession = new Services.Session(requestInfo.Session)
 						{
-							User = relatedAccount.GetAccountJson().FromJson<User>()
+							User = relatedAccount.GetAccountJson().Copy<User>()
 						};
-						var relatedRequest = new RequestInfo(relatedSession, relatedService, "activate", "GET")
+						await this.CallServiceAsync(new RequestInfo(relatedSession, relatedService, "activate", "GET")
 						{
 							Query = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
 							{
 								{ "object-identity", account.ID }
 							},
+							Extra = relatedInfo.ToDictionary(kvp => kvp.Key, kvp => kvp.Value as string),
 							CorrelationID = requestInfo.CorrelationID
-						};
-						relatedInfo.ForEach(kvp => relatedRequest.Extra[kvp.Key] = kvp.Value as string);
-						await this.CallServiceAsync(relatedRequest, cancellationToken).ConfigureAwait(false);
+						}, cancellationToken).ConfigureAwait(false);
 					}
 					catch { }
 
