@@ -488,6 +488,8 @@ namespace net.vieapps.Services.Users
 		}
 		#endregion
 
+		protected override Privileges Privileges => new Privileges();
+
 		Task<JToken> ProcessSessionAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			switch (requestInfo.Verb)
@@ -521,9 +523,23 @@ namespace net.vieapps.Services.Users
 		#region Check exists of a session
 		async Task<JToken> CheckSessionExistsAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
+			if (string.IsNullOrWhiteSpace(requestInfo.Session?.SessionID))
+				return new JObject
+				{
+					{ "ID", requestInfo.Session?.SessionID },
+					{ "Existed", false }
+				};
+			else if (this.Sessions.ContainsKey(requestInfo.Session.SessionID))
+				return new JObject
+				{
+					{ "ID", requestInfo.Session.SessionID },
+					{ "Existed", true }
+				};
+
 			var session = await Utility.Cache.GetAsync<Session>($"Session#{requestInfo.Session.SessionID}", cancellationToken).ConfigureAwait(false);
 			if (session == null && !requestInfo.Session.User.ID.Equals("") && !requestInfo.Session.User.IsSystemAccount)
 				session = await Session.GetAsync<Session>(requestInfo.Session.SessionID, cancellationToken).ConfigureAwait(false);
+
 			return new JObject
 			{
 				{ "ID", requestInfo.Session.SessionID },
@@ -596,9 +612,9 @@ namespace net.vieapps.Services.Users
 				await Task.WhenAll(
 					Utility.Cache.SetAsync(session, 0, cancellationToken),
 					Session.DeleteManyAsync(Filters<Session>.And(
-							Filters<Session>.Equals("DeviceID", session.DeviceID),
-							Filters<Session>.NotEquals("ID", session.ID)
-						), null, cancellationToken)
+						Filters<Session>.Equals("DeviceID", session.DeviceID),
+						Filters<Session>.NotEquals("ID", session.ID)
+					), null, cancellationToken)
 				).ConfigureAwait(false);
 
 				// update account information
@@ -1763,7 +1779,7 @@ namespace net.vieapps.Services.Users
 			// prepare
 			if (!this.IsAuthenticated(requestInfo))
 				throw new AccessDeniedException();
-			else if (!await this.IsAuthorizedAsync(requestInfo, Components.Security.Action.View).ConfigureAwait(false))
+			else if (!await this.IsAuthorizedAsync(requestInfo, "profile", Components.Security.Action.View, cancellationToken).ConfigureAwait(false))
 				throw new AccessDeniedException();
 
 			// fetch
@@ -1779,7 +1795,7 @@ namespace net.vieapps.Services.Users
 			}, cancellationToken, true, false).ConfigureAwait(false);
 
 			// return
-			return new JObject()
+			return new JObject
 			{
 				{ "Objects", profiles }
 			};
@@ -1828,7 +1844,7 @@ namespace net.vieapps.Services.Users
 			var gotRights = this.IsAuthenticated(requestInfo) && requestInfo.Session.User.ID.IsEquals(id);
 			if (!gotRights)
 			{
-				gotRights = requestInfo.Session.User.IsSystemAdministrator || await this.IsAuthorizedAsync(requestInfo, Components.Security.Action.View).ConfigureAwait(false);
+				gotRights = requestInfo.Session.User.IsSystemAdministrator || await this.IsAuthorizedAsync(requestInfo, "profile", Components.Security.Action.View, cancellationToken).ConfigureAwait(false);
 				doNormalize = !requestInfo.Session.User.IsSystemAdministrator;
 			}
 			var relatedService = gotRights ? null : this.GetRelatedService(requestInfo);
@@ -1852,7 +1868,7 @@ namespace net.vieapps.Services.Users
 			var id = requestInfo.GetObjectIdentity() ?? requestInfo.Session.User.ID;
 			var gotRights = requestInfo.Session.User.IsSystemAdministrator || (this.IsAuthenticated(requestInfo) && requestInfo.Session.User.ID.IsEquals(id));
 			if (!gotRights)
-				gotRights = await this.IsAuthorizedAsync(requestInfo, Components.Security.Action.Update).ConfigureAwait(false);
+				gotRights = await this.IsAuthorizedAsync(requestInfo, "profile", Components.Security.Action.Update, cancellationToken).ConfigureAwait(false);
 			if (!gotRights)
 				throw new AccessDeniedException();
 
