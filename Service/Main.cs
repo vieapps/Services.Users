@@ -1361,7 +1361,7 @@ namespace net.vieapps.Services.Users
 			var gotRights = isSystemAdministrator;
 			var relatedService = gotRights ? null : this.GetRelatedService(requestInfo);
 			if (!gotRights && relatedService != null)
-				gotRights = await relatedService.CanManageAsync(requestInfo, objectName, systemID, definitionID, objectID, cancellationToken).ConfigureAwait(false);
+				gotRights = await relatedService.CanManageAsync(requestInfo.Session.User, objectName, systemID, definitionID, objectID, cancellationToken).ConfigureAwait(false);
 			if (!gotRights)
 				throw new AccessDeniedException();
 
@@ -1850,7 +1850,7 @@ namespace net.vieapps.Services.Users
 			var relatedService = gotRights ? null : this.GetRelatedService(requestInfo);
 			if (!gotRights && relatedService != null)
 			{
-				gotRights = await relatedService.CanManageAsync(requestInfo, objectName, systemID, definitionID, objectID, cancellationToken).ConfigureAwait(false);
+				gotRights = await relatedService.CanManageAsync(requestInfo.Session.User, objectName, systemID, definitionID, objectID, cancellationToken).ConfigureAwait(false);
 				doNormalize = false;
 			}
 			if (!gotRights)
@@ -2188,11 +2188,11 @@ namespace net.vieapps.Services.Users
 					}
 
 					if (this.IsDebugResultsEnabled)
-						await this.WriteLogsAsync(correlationID, $"Update online state of a session successful - Online sessions: {this.Sessions.Count:#,##0}").ConfigureAwait(false);
+						await this.WriteLogsAsync(correlationID, $"Update online state of a session successful - Online sessions: {this.Sessions.Count:#,##0}", null, this.ServiceName, "Communicates").ConfigureAwait(false);
 				}
 				catch (Exception ex)
 				{
-					await this.WriteLogsAsync(correlationID, $"Error occurred while updating session state => {ex.Message}", ex).ConfigureAwait(false); ;
+					await this.WriteLogsAsync(correlationID, $"Error occurred while updating session state => {ex.Message}", ex, this.ServiceName, "Communicates", LogLevel.Error).ConfigureAwait(false); ;
 				}
 
 			// status of sessions
@@ -2214,7 +2214,7 @@ namespace net.vieapps.Services.Users
 
 			// unknown
 			else if (this.IsDebugResultsEnabled)
-				await this.WriteLogsAsync(correlationID, $"Got an inter-communicate message => {message.ToJson().ToString(this.IsDebugLogEnabled ? Formatting.Indented : Formatting.None)})").ConfigureAwait(false);
+				await this.WriteLogsAsync(correlationID, $"Got an inter-communicate message => {message.ToJson().ToString(this.IsDebugLogEnabled ? Formatting.Indented : Formatting.None)})", null, this.ServiceName, "Communicates", LogLevel.Warning).ConfigureAwait(false);
 		}
 
 		#region Timers for working with background workers & schedulers
