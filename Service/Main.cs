@@ -584,7 +584,7 @@ namespace net.vieapps.Services.Users
 			{
 				// update cache of session
 				var session = request.Copy<Session>();
-				await Utility.Cache.SetAsync(session, 0, cancellationToken).ConfigureAwait(false);
+				await Utility.Cache.SetAsync(session, cancellationToken).ConfigureAwait(false);
 
 				// response
 				return session.ToJson();
@@ -610,7 +610,7 @@ namespace net.vieapps.Services.Users
 
 				// make sure the cache has updated && remove duplicated sessions
 				await Task.WhenAll(
-					Utility.Cache.SetAsync(session, 0, cancellationToken),
+					Utility.Cache.SetAsync(session, cancellationToken),
 					Session.DeleteManyAsync(Filters<Session>.And(
 						Filters<Session>.Equals("DeviceID", session.DeviceID),
 						Filters<Session>.NotEquals("ID", session.ID)
@@ -729,7 +729,7 @@ namespace net.vieapps.Services.Users
 
 			// clear cached of current session when 2FA is not required
 			else
-				await Utility.Cache.RemoveAsync<Session>(requestInfo.Session.SessionID).ConfigureAwait(false);
+				await Utility.Cache.RemoveAsync<Session>(requestInfo.Session.SessionID, cancellationToken).ConfigureAwait(false);
 
 			// response
 			return results;
@@ -850,8 +850,8 @@ namespace net.vieapps.Services.Users
 
 			// update when success
 			await Task.WhenAll(
-				Utility.Cache.SetAsync(account),
-				Utility.Cache.RemoveAsync<Session>(requestInfo.Session.SessionID)
+				Utility.Cache.SetAsync(account, cancellationToken),
+				Utility.Cache.RemoveAsync<Session>(requestInfo.Session.SessionID, cancellationToken)
 			).ConfigureAwait(false);
 
 			return account.GetAccountJson();
