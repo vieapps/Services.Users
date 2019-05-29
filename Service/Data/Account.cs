@@ -131,17 +131,13 @@ namespace net.vieapps.Services.Users
 
 		public JObject GetAccountJson(bool addStatus = false, string authenticationKey = null)
 		{
-			var roles = (SystemRole.All.ToString()
-				+ "," + SystemRole.Authenticated.ToString()
-				+ (UserIdentity.SystemAdministrators.Contains(this.ID) ? "," + SystemRole.SystemAdministrator.ToString() : "")
-			).ToList();
+			var roles = $"{SystemRole.All},{SystemRole.Authenticated}{(UserIdentity.SystemAdministrators.Contains(this.ID) ? $",{SystemRole.SystemAdministrator}" : "")}".ToList();
 			this.AccessRoles?.ForEach(accessRoles => roles = roles.Concat(accessRoles).ToList());
-			roles = roles.Distinct().ToList();
 
 			var json = new JObject
 			{
 				{ "ID", this.ID },
-				{ "Roles", roles.ToJArray() },
+				{ "Roles", roles.Distinct(StringComparer.OrdinalIgnoreCase).ToJArray() },
 				{ "Privileges", (this.AccessPrivileges ?? new List<Privilege>()).ToJArray(privilege => privilege.ToJson()) }
 			};
 
