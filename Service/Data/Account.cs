@@ -174,9 +174,9 @@ namespace net.vieapps.Services.Users
 		/// <param name="password">The string that presents the password of an account</param>
 		/// <returns></returns>
 		public static string GeneratePassword(string id, string password)
-			=> string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(password) || !id.IsValidUUID()
+			=> string.IsNullOrWhiteSpace(id) || !id.IsValidUUID() || string.IsNullOrWhiteSpace(password)
 				? throw new InformationInvalidException()
-				: (id.Trim().ToLower().Left(13) + ":" + password).GetHMACSHA512(id.Trim().ToLower(), false).ToBase64Url(true);
+				: password.GenerateHashPassword(id.Trim(), password.Trim()).HexToBytes().ToBase64Url();
 
 		/// <summary>
 		/// Generates a random password
