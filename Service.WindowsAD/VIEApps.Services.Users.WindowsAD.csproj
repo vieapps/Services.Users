@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
-		<TargetFrameworks>netstandard2.0;netstandard2.1</TargetFrameworks>
+		<TargetFrameworks>netstandard2.0;netstandard2.1;netcoreapp2.0;netcoreapp2.1;netcoreapp2.2;netcoreapp3.0;netcoreapp3.1</TargetFrameworks>
 		<WarningLevel>3</WarningLevel>
 		<RootNamespace>net.vieapps.Services.Users.WindowsAD</RootNamespace>
 		<AssemblyName>VIEApps.Services.Users.WindowsAD</AssemblyName>
@@ -9,10 +9,14 @@
 		<Authors>VIEApps.net</Authors>
 		<Company>VIEApps.net</Company>
 		<Product>VIEApps NGX</Product>
-		<Copyright>© 2019 VIEApps.net</Copyright>
+		<Copyright>© 2020 VIEApps.net</Copyright>
 		<AssemblyVersion>10.3$(ReleaseVersion)</AssemblyVersion>
 		<FileVersion>10.3$(ReleaseVersion)</FileVersion>
 		<InformationalVersion>10.3@$(TargetFramework)-$(ReleaseRevision)</InformationalVersion>
+	</PropertyGroup>
+
+	<PropertyGroup Condition="'$(Configuration)'=='Release'">
+		<CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
 	</PropertyGroup>
 
 	<ItemGroup>
@@ -20,8 +24,8 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Include="System.DirectoryServices.AccountManagement" Version="4.6.0" />
-		<PackageReference Include="VIEApps.Services.Base" Version="10.3.1910.2" />
+		<PackageReference Include="System.DirectoryServices.AccountManagement" Version="4.7.0" />
+		<PackageReference Include="VIEApps.Services.Base" Version="10.3.2002.1" />
 	</ItemGroup>
 
 </Project>

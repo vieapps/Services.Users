@@ -15,88 +15,87 @@ namespace net.vieapps.Services.Users
 	[Entity(CollectionName = "Sessions", TableName = "T_Users_Sessions", CacheClass = typeof(Utility), CacheName = "Cache", CreateNewVersionWhenUpdated = false)]
 	public class Session : Repository<Session>
 	{
-		public Session()
-		{
-			this.ID = "";
-			this.IssuedAt = DateTime.Now;
-			this.RenewedAt = DateTime.Now;
-			this.ExpiredAt = DateTime.Now.AddDays(90);
-			this.UserID = "";
-			this.AccessToken = "";
-			this.IP = "";
-			this.DeviceID = "";
-			this.AppInfo = "";
-			this.OSInfo = "";
-			this.Verified = false;
-			this.Online = false;
-		}
+		public Session() : base()
+			=> this.ID = "";
 
 		#region Properties
 		/// <summary>
 		/// Gets or sets time when the session is issued
 		/// </summary>
 		[Sortable(IndexName = "Times")]
-		public DateTime IssuedAt { get; set; }
+		public DateTime IssuedAt { get; set; } = DateTime.Now;
 
 		/// <summary>
 		/// Gets or sets time when the session is renewed
 		/// </summary>
 		[Sortable(IndexName = "Times")]
-		public DateTime RenewedAt { get; set; }
+		public DateTime RenewedAt { get; set; } = DateTime.Now;
 
 		/// <summary>
 		/// Gets or sets time when the session is expired
 		/// </summary>
 		[Sortable(IndexName = "Times")]
-		public DateTime ExpiredAt { get; set; }
+		public DateTime ExpiredAt { get; set; } = DateTime.Now.AddDays(90);
 
 		/// <summary>
 		/// Gets or sets the identity of the user who performs the actions in this session
 		/// </summary>
 		[Property(MaxLength = 32, NotNull = true), Sortable]
-		public string UserID { get; set; }
+		public string UserID { get; set; } = "";
 
 		/// <summary>
 		/// Gets or sets the encrypted access token
 		/// </summary>
 		[Property(NotNull = true, IsCLOB = true)]
-		public string AccessToken { get; set; }
+		public string AccessToken { get; set; } = "";
 
 		/// <summary>
 		/// Gets or sets the IP address of the device that use to performs the actions in this session
 		/// </summary>
 		[Property(MaxLength = 50)]
-		public string IP { get; set; }
+		public string IP { get; set; } = "";
 
 		/// <summary>
 		/// Gets or sets the identity of the device that use to performs the actions in this session
 		/// </summary>
 		[Property(MaxLength = 128, NotNull = true), Sortable]
-		public string DeviceID { get; set; }
+		public string DeviceID { get; set; } = "";
+
+		/// <summary>
+		/// Gets or sets the identity of the developer that associates with this session
+		/// </summary>
+		[Property(MaxLength = 32), Sortable]
+		public string DeveloperID { get; set; }
+
+		/// <summary>
+		/// Gets or sets the identity of the app that associates with this session
+		/// </summary>
+		[Property(MaxLength = 32), Sortable]
+		public string AppID { get; set; }
 
 		/// <summary>
 		/// Gets or sets the platform info of the device that use to performs the actions in this session
 		/// </summary>
 		[Property(MaxLength = 250)]
-		public string AppInfo { get; set; }
+		public string AppInfo { get; set; } = "";
 
 		/// <summary>
 		/// Gets or sets the OS info of the device that use to performs the actions in this session
 		/// </summary>
 		[Property(MaxLength = 500)]
-		public string OSInfo { get; set; }
+		public string OSInfo { get; set; } = "";
 
 		/// <summary>
 		/// Gets or sets the verification state of two-factors authentication
 		/// </summary>
 		[Sortable]
-		public bool Verified { get; set; }
+		public bool Verified { get; set; } = false;
 
 		/// <summary>
 		/// Gets or sets online status
 		/// </summary>
 		[Sortable]
-		public bool Online { get; set; }
+		public bool Online { get; set; } = false;
 		#endregion
 
 		#region IBusinessEntity properties

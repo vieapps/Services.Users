@@ -87,7 +87,7 @@ namespace net.vieapps.Services.Users
 			});
 		}
 
-		public override async Task<JToken> ProcessRequestAsync(RequestInfo requestInfo, CancellationToken cancellationToken = default(CancellationToken))
+		public override async Task<JToken> ProcessRequestAsync(RequestInfo requestInfo, CancellationToken cancellationToken = default)
 		{
 			var stopwatch = Stopwatch.StartNew();
 			this.WriteLogs(requestInfo, $"Begin request ({requestInfo.Verb} {requestInfo.GetURI()})");
@@ -143,7 +143,7 @@ namespace net.vieapps.Services.Users
 					this.WriteLogs(requestInfo, $"Success response - Execution times: {stopwatch.GetElapsedTimes()}");
 					if (this.IsDebugResultsEnabled)
 						this.WriteLogs(requestInfo,
-							$"- Request: {requestInfo.ToJson().ToString(this.IsDebugLogEnabled ? Formatting.Indented : Formatting.None)}" + "\r\n" +
+							$"- Request: {requestInfo.ToString(this.IsDebugLogEnabled ? Formatting.Indented : Formatting.None)}" + "\r\n" +
 							$"- Response: {json?.ToString(this.IsDebugLogEnabled ? Formatting.Indented : Formatting.None)}"
 						);
 					return json;
@@ -155,7 +155,7 @@ namespace net.vieapps.Services.Users
 		}
 
 		#region Get instructions
-		async Task<Tuple<string, string, string, string, Tuple<string, int, bool, string, string>>> GetInstructionsOfRelatedServiceAsync(RequestInfo requestInfo, string mode = "reset", CancellationToken cancellationToken = default(CancellationToken))
+		async Task<Tuple<string, string, string, string, Tuple<string, int, bool, string, string>>> GetInstructionsOfRelatedServiceAsync(RequestInfo requestInfo, string mode = "reset", CancellationToken cancellationToken = default)
 		{
 			var data = (await this.CallServiceAsync(new RequestInfo(requestInfo.Session, requestInfo.Query["related-service"], "Instruction", "GET")
 			{
@@ -184,7 +184,7 @@ namespace net.vieapps.Services.Users
 			return new Tuple<string, string, string, string, Tuple<string, int, bool, string, string>>(subject, body, signature, sender, new Tuple<string, int, bool, string, string>(smtpServer, smtpServerPort, smtpServerEnableSsl, smtpUser, smtpUserPassword));
 		}
 
-		async Task<Tuple<string, string, string, string, Tuple<string, int, bool, string, string>>> GetActivateInstructionsAsync(RequestInfo requestInfo, string mode = "reset", CancellationToken cancellationToken = default(CancellationToken))
+		async Task<Tuple<string, string, string, string, Tuple<string, int, bool, string, string>>> GetActivateInstructionsAsync(RequestInfo requestInfo, string mode = "reset", CancellationToken cancellationToken = default)
 		{
 			string subject = "", body = "", signature = "", sender = "";
 			string smtpServer = "", smtpUser = "", smtpUserPassword = "";
@@ -345,7 +345,7 @@ namespace net.vieapps.Services.Users
 			return new Tuple<string, string, string, string, Tuple<string, int, bool, string, string>>(subject, body, signature, sender, new Tuple<string, int, bool, string, string>(smtpServer, smtpServerPort, smtpServerEnableSsl, smtpUser, smtpUserPassword));
 		}
 
-		async Task<Tuple<string, string, string, string, Tuple<string, int, bool, string, string>>> GetUpdateInstructionsAsync(RequestInfo requestInfo, string mode = "password", CancellationToken cancellationToken = default(CancellationToken))
+		async Task<Tuple<string, string, string, string, Tuple<string, int, bool, string, string>>> GetUpdateInstructionsAsync(RequestInfo requestInfo, string mode = "password", CancellationToken cancellationToken = default)
 		{
 			string subject = "", body = "", signature = "", sender = "";
 			string smtpServer = "", smtpUser = "", smtpUserPassword = "";
@@ -452,7 +452,7 @@ namespace net.vieapps.Services.Users
 			}
 		}
 
-		async Task<JToken> CallRelatedServiceAsync(RequestInfo requestInfo, User user, string objectName, string verb = "GET", string objectIdentity = null, Dictionary<string, string> extra = null, CancellationToken cancellationToken = default(CancellationToken))
+		async Task<JToken> CallRelatedServiceAsync(RequestInfo requestInfo, User user, string objectName, string verb = "GET", string objectIdentity = null, Dictionary<string, string> extra = null, CancellationToken cancellationToken = default)
 		{
 			var correlationID = requestInfo.CorrelationID ?? UtilityService.NewUUID;
 			try
@@ -1946,7 +1946,7 @@ namespace net.vieapps.Services.Users
 				throw new InvalidActivateInformationException(ex);
 			}
 
-			ExpandoObject info = null;
+			ExpandoObject info;
 			try
 			{
 				info = code.ToExpandoObject();
@@ -2127,7 +2127,7 @@ namespace net.vieapps.Services.Users
 		}
 		#endregion
 
-		protected override async Task ProcessInterCommunicateMessageAsync(CommunicateMessage message, CancellationToken cancellationToken = default(CancellationToken))
+		protected override async Task ProcessInterCommunicateMessageAsync(CommunicateMessage message, CancellationToken cancellationToken = default)
 		{
 			// prepare
 			var correlationID = UtilityService.NewUUID;

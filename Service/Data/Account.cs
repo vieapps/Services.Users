@@ -156,10 +156,10 @@ namespace net.vieapps.Services.Users
 		/// <param name="identity"></param>
 		/// <param name="cancellationToken"></param>
 		/// <returns></returns>
-		public static Task<Account> GetByIdentityAsync(string identity, AccountType type = AccountType.BuiltIn, CancellationToken cancellationToken = default(CancellationToken))
+		public static Task<Account> GetByIdentityAsync(string identity, AccountType type = AccountType.BuiltIn, CancellationToken cancellationToken = default)
 			=> Account.GetAsync<Account>(Filters<Account>.And(Filters<Account>.Equals("AccessIdentity", identity), Filters<Account>.Equals("Type", $"{type}")), null, null, cancellationToken);
 
-		public async Task<List<Session>> GetSessionsAsync(CancellationToken cancellationToken = default(CancellationToken))
+		public async Task<List<Session>> GetSessionsAsync(CancellationToken cancellationToken = default)
 			=> this.Sessions = await Session.FindAsync(Filters<Session>.Equals("UserID", this.ID), Sorts<Session>.Descending("ExpiredAt"), 0, 1, null, cancellationToken).ConfigureAwait(false);
 
 		#region Generate password
