@@ -55,7 +55,7 @@ namespace net.vieapps.Services.Users.WindowsAD
 		JObject SignIn(RequestInfo requestInfo)
 		{
 			// verify
-			if (requestInfo.Extra == null || !requestInfo.Extra.TryGetValue("Signature", out string signature) || !signature.Equals(requestInfo.Body.GetHMACSHA256(this.ValidationKey)))
+			if (requestInfo.Extra == null || !requestInfo.Extra.TryGetValue("Signature", out var signature) || !signature.Equals(requestInfo.Body.GetHMACSHA256(this.ValidationKey)))
 				throw new InformationInvalidException();
 
 			// prepare
@@ -77,7 +77,7 @@ namespace net.vieapps.Services.Users.WindowsAD
 		JObject ChangePassword(RequestInfo requestInfo)
 		{
 			// verify
-			if (requestInfo.Extra == null || !requestInfo.Extra.TryGetValue("Signature", out string signature) || !signature.Equals(requestInfo.Body.GetHMACSHA256(this.ValidationKey)))
+			if (requestInfo.Extra == null || !requestInfo.Extra.TryGetValue("Signature", out var signature) || !signature.Equals(requestInfo.Body.GetHMACSHA256(this.ValidationKey)))
 				throw new InformationInvalidException();
 
 			// prepare

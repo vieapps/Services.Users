@@ -1,6 +1,7 @@
 ﻿#region Related components
 using System;
 using System.Diagnostics;
+using System.Xml.Serialization;
 
 using Newtonsoft.Json;
 using MongoDB.Bson.Serialization.Attributes;
@@ -18,7 +19,6 @@ namespace net.vieapps.Services.Users
 		public Session() : base()
 			=> this.ID = "";
 
-		#region Properties
 		/// <summary>
 		/// Gets or sets time when the session is issued
 		/// </summary>
@@ -96,24 +96,21 @@ namespace net.vieapps.Services.Users
 		/// </summary>
 		[Sortable]
 		public bool Online { get; set; } = false;
-		#endregion
 
-		#region IBusinessEntity properties
-		[JsonIgnore, BsonIgnore, Ignore]
+		[Ignore, JsonIgnore, BsonIgnore, XmlIgnore]
 		public override string Title { get; set; }
 
-		[JsonIgnore, BsonIgnore, Ignore]
+		[Ignore, JsonIgnore, BsonIgnore, XmlIgnore]
 		public override string SystemID { get; set; }
 
-		[JsonIgnore, BsonIgnore, Ignore]
+		[Ignore, JsonIgnore, BsonIgnore, XmlIgnore]
 		public override string RepositoryID { get; set; }
 
-		[JsonIgnore, BsonIgnore, Ignore]
+		[Ignore, JsonIgnore, BsonIgnore, XmlIgnore]
 		public override string EntityID { get; set; }
 
-		[JsonIgnore, BsonIgnore, Ignore]
+		[Ignore, JsonIgnore, BsonIgnore, XmlIgnore]
 		public override Privileges OriginalPrivileges { get; set; }
-		#endregion
 
 	}
 }

@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Diagnostics;
+using System.Xml.Serialization;
 
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -24,9 +25,9 @@ namespace net.vieapps.Services.Users
 	[Entity(CollectionName = "Accounts", TableName = "T_Users_Accounts", CacheClass = typeof(Utility), CacheName = "Cache", CreateNewVersionWhenUpdated = false)]
 	public class Account : Repository<Account>
 	{
-		public Account() { }
+		public Account() : base()
+			=> this.ID = "";
 
-		#region Properties
 		/// <summary>
 		/// Gets or sets the status
 		/// </summary>
@@ -78,7 +79,7 @@ namespace net.vieapps.Services.Users
 		/// <summary>
 		/// Gets or sets the key of the user account in (hashed password when the user is built-in account or access token when the user is OAuth account)
 		/// </summary>
-		[Property(MaxLength = 250), JsonIgnore]
+		[Property(MaxLength = 250), JsonIgnore, XmlIgnore]
 		public string AccessKey { get; set; } = "";
 
 		/// <summary>
@@ -96,38 +97,29 @@ namespace net.vieapps.Services.Users
 		/// <summary>
 		/// Gets or sets the collection of sessions of the user account
 		/// </summary>
-		[JsonIgnore, BsonIgnore, Ignore]
+		[Ignore, JsonIgnore, BsonIgnore, XmlIgnore]
 		public List<Session> Sessions { get; set; }
 
 		[NonSerialized]
 		Profile _profile = null;
 
-		[JsonIgnore, BsonIgnore, Ignore]
-		public Profile Profile
-		{
-			get
-			{
-				return this._profile ?? (this._profile = Profile.Get<Profile>(this.ID));
-			}
-		}
-		#endregion
+		[Ignore, JsonIgnore, BsonIgnore, XmlIgnore]
+		public Profile Profile => this._profile ?? (this._profile = Profile.Get<Profile>(this.ID));
 
-		#region IBusinessEntity properties
-		[JsonIgnore, BsonIgnore, Ignore]
+		[Ignore, JsonIgnore, BsonIgnore, XmlIgnore]
 		public override string Title { get; set; }
 
-		[JsonIgnore, BsonIgnore, Ignore]
+		[Ignore, JsonIgnore, BsonIgnore, XmlIgnore]
 		public override string SystemID { get; set; }
 
-		[JsonIgnore, BsonIgnore, Ignore]
+		[Ignore, JsonIgnore, BsonIgnore, XmlIgnore]
 		public override string RepositoryID { get; set; }
 
-		[JsonIgnore, BsonIgnore, Ignore]
+		[Ignore, JsonIgnore, BsonIgnore, XmlIgnore]
 		public override string EntityID { get; set; }
 
-		[JsonIgnore, BsonIgnore, Ignore]
+		[Ignore, JsonIgnore, BsonIgnore, XmlIgnore]
 		public override Privileges OriginalPrivileges { get; set; }
-		#endregion
 
 		public JObject GetAccountJson(bool addStatus = false, string authenticationKey = null)
 		{
