@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
-		<TargetFrameworks>netstandard2.0;netstandard2.1;netcoreapp2.0;netcoreapp2.1;netcoreapp2.2;netcoreapp3.0;netcoreapp3.1</TargetFrameworks>
+		<TargetFrameworks>netstandard2.0;netstandard2.1;netcoreapp2.1;netcoreapp3.1</TargetFrameworks>
 		<WarningLevel>3</WarningLevel>
 		<RootNamespace>net.vieapps.Services.Users.WindowsAD</RootNamespace>
 		<AssemblyName>VIEApps.Services.Users.WindowsAD</AssemblyName>
@@ -25,7 +25,7 @@
 
 	<ItemGroup>
 		<PackageReference Include="System.DirectoryServices.AccountManagement" Version="4.7.0" />
-		<PackageReference Include="VIEApps.Services.Base" Version="10.3.2002.2" />
+		<PackageReference Include="VIEApps.Services.Base" Version="10.3.2002.4" />
 	</ItemGroup>
 
 </Project>
