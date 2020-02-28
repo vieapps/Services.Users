@@ -14,8 +14,8 @@ namespace net.vieapps.Services.Users.WindowsAD
 	{
 		public override string ServiceName => "WindowsAD";
 
-		public override void Start(string[] args = null, bool initializeRepository = true, Func<IService, Task> nextAsync = null)
-			=> base.Start(args, false, nextAsync);
+		public override void Start(string[] args = null, bool initializeRepository = true, Action<IService> next = null)
+			=> base.Start(args, false, next);
 
 		public override Task<JToken> ProcessRequestAsync(RequestInfo requestInfo, CancellationToken cancellationToken = default)
 		{

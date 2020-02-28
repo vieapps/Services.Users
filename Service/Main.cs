@@ -56,7 +56,7 @@ namespace net.vieapps.Services.Users
 
 		public override string ServiceName => "Users";
 
-		public override void Start(string[] args = null, bool initializeRepository = true, Func<IService, Task> nextAsync = null)
+		public override void Start(string[] args = null, bool initializeRepository = true, Action<IService> next = null)
 		{
 			// initialize static properties
 			Utility.Cache = new Cache($"VIEApps-Services-{this.ServiceName}", Components.Utility.Logger.GetLoggerFactory());
@@ -69,21 +69,13 @@ namespace net.vieapps.Services.Users
 				Utility.FilesHttpURI = Utility.FilesHttpURI.Left(Utility.FilesHttpURI.Length - 1);
 
 			// start the service
-			base.Start(args, initializeRepository, async service =>
+			base.Start(args, initializeRepository, _ =>
 			{
 				// register timers
 				this.RegisterTimers(args);
 
 				// last action
-				if (nextAsync != null)
-					try
-					{
-						await nextAsync(service).ConfigureAwait(false);
-					}
-					catch (Exception ex)
-					{
-						this.Logger.LogError("Error occurred while invoking the next action", ex);
-					}
+				next?.Invoke(this);
 			});
 		}
 
