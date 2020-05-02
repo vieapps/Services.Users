@@ -25,19 +25,22 @@ namespace net.vieapps.Services.Users
 	[Entity(CollectionName = "Accounts", TableName = "T_Users_Accounts", CacheClass = typeof(Utility), CacheName = "Cache", CreateNewVersionWhenUpdated = false)]
 	public class Account : Repository<Account>
 	{
-		public Account() : base()
-			=> this.ID = "";
+		public Account() : base() { }
 
 		/// <summary>
 		/// Gets or sets the status
 		/// </summary>
-		[JsonConverter(typeof(StringEnumConverter)), BsonRepresentation(BsonType.String), Property(NotNull = true), Sortable]
+		[JsonConverter(typeof(StringEnumConverter)), BsonRepresentation(BsonType.String)]
+		[Property(NotNull = true)]
+		[Sortable]
 		public AccountStatus Status { get; set; } = AccountStatus.Activated;
 
 		/// <summary>
 		/// Gets or sets the type
 		/// </summary>
-		[JsonConverter(typeof(StringEnumConverter)), BsonRepresentation(BsonType.String), Property(NotNull = true), Sortable]
+		[JsonConverter(typeof(StringEnumConverter)), BsonRepresentation(BsonType.String)]
+		[Property(NotNull = true)]
+		[Sortable]
 		public AccountType Type { get; set; } = AccountType.BuiltIn;
 
 		/// <summary>
@@ -61,25 +64,29 @@ namespace net.vieapps.Services.Users
 		/// <summary>
 		/// Gets or sets the type of the OAuth user account, must be string of <see cref="OAuthType">OAuthType</see> when the type of user account is OAuth
 		/// </summary>
-		[Property(MaxLength = 20, NotNull = true), Sortable(UniqueIndexName = "Account")]
+		[Property(MaxLength = 20, NotNull = true)]
+		[Sortable(UniqueIndexName = "Account")]
 		public string OAuthType { get; set; } = "";
 
 		/// <summary>
 		/// Gets or sets the identity of the mapped user account (when the user account is OAuth and mapped to a built-in user account)
 		/// </summary>
-		[Property(MaxLength = 32), Sortable(UniqueIndexName = "Account")]
-		public string AccessMapIdentity { get; set; } = "";
+		[Property(MaxLength = 32)]
+		[Sortable(UniqueIndexName = "Account")]
+		public string AccessMapIdentity { get; set; }
 
 		/// <summary>
 		/// Gets or sets the identiy of the user account (email address when the user is built-in account, OAuth ID if the user is OAuth account, account with full domain if the user is Windows account)
 		/// </summary>
-		[Property(MaxLength = 250, NotNull = true), Sortable(UniqueIndexName = "Account")]
-		public string AccessIdentity { get; set; } = "";
+		[Property(MaxLength = 250, NotNull = true)]
+		[Sortable(UniqueIndexName = "Account")]
+		public string AccessIdentity { get; set; }
 
 		/// <summary>
 		/// Gets or sets the key of the user account in (hashed password when the user is built-in account or access token when the user is OAuth account)
 		/// </summary>
-		[Property(MaxLength = 250), JsonIgnore, XmlIgnore]
+		[JsonIgnore, XmlIgnore]
+		[Property(MaxLength = 250)]
 		public string AccessKey { get; set; } = "";
 
 		/// <summary>
@@ -116,14 +123,16 @@ namespace net.vieapps.Services.Users
 		public override string RepositoryID { get; set; }
 
 		[Ignore, JsonIgnore, BsonIgnore, XmlIgnore]
-		public override string EntityID { get; set; }
+		public override string RepositoryEntityID { get; set; }
 
 		[Ignore, JsonIgnore, BsonIgnore, XmlIgnore]
 		public override Privileges OriginalPrivileges { get; set; }
 
 		public JObject GetAccountJson(bool addStatus = false, string authenticationKey = null)
 		{
-			var roles = $"{SystemRole.All},{SystemRole.Authenticated}{(UserIdentity.SystemAdministrators.Contains(this.ID) ? $",{SystemRole.SystemAdministrator}" : "")}".ToList();
+			var roles = $"{SystemRole.All},{SystemRole.Authenticated}".ToList();
+			if (UserIdentity.SystemAdministrators.Contains(this.ID))
+				roles.Add(SystemRole.SystemAdministrator.ToString());
 			this.AccessRoles?.ForEach(accessRoles => roles = roles.Concat(accessRoles).ToList());
 
 			var json = new JObject

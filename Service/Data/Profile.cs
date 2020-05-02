@@ -88,7 +88,7 @@ namespace net.vieapps.Services.Users
 		public override string RepositoryID { get; set; }
 
 		[Ignore, JsonIgnore, BsonIgnore, XmlIgnore]
-		public override string EntityID { get; set; }
+		public override string RepositoryEntityID { get; set; }
 
 		[Ignore, JsonIgnore, BsonIgnore, XmlIgnore]
 		public override Privileges OriginalPrivileges { get; set; }

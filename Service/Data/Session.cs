@@ -16,8 +16,7 @@ namespace net.vieapps.Services.Users
 	[Entity(CollectionName = "Sessions", TableName = "T_Users_Sessions", CacheClass = typeof(Utility), CacheName = "Cache", CreateNewVersionWhenUpdated = false)]
 	public class Session : Repository<Session>
 	{
-		public Session() : base()
-			=> this.ID = "";
+		public Session() : base() { }
 
 		/// <summary>
 		/// Gets or sets time when the session is issued
@@ -40,7 +39,8 @@ namespace net.vieapps.Services.Users
 		/// <summary>
 		/// Gets or sets the identity of the user who performs the actions in this session
 		/// </summary>
-		[Property(MaxLength = 32, NotNull = true), Sortable]
+		[Property(MaxLength = 32, NotNull = true)]
+		[Sortable]
 		public string UserID { get; set; } = "";
 
 		/// <summary>
@@ -58,19 +58,22 @@ namespace net.vieapps.Services.Users
 		/// <summary>
 		/// Gets or sets the identity of the device that use to performs the actions in this session
 		/// </summary>
-		[Property(MaxLength = 128, NotNull = true), Sortable]
+		[Property(MaxLength = 128, NotNull = true)]
+		[Sortable]
 		public string DeviceID { get; set; } = "";
 
 		/// <summary>
 		/// Gets or sets the identity of the developer that associates with this session
 		/// </summary>
-		[Property(MaxLength = 32), Sortable]
+		[Property(MaxLength = 32)]
+		[Sortable]
 		public string DeveloperID { get; set; }
 
 		/// <summary>
 		/// Gets or sets the identity of the app that associates with this session
 		/// </summary>
-		[Property(MaxLength = 32), Sortable]
+		[Property(MaxLength = 32)]
+		[Sortable]
 		public string AppID { get; set; }
 
 		/// <summary>
@@ -107,10 +110,9 @@ namespace net.vieapps.Services.Users
 		public override string RepositoryID { get; set; }
 
 		[Ignore, JsonIgnore, BsonIgnore, XmlIgnore]
-		public override string EntityID { get; set; }
+		public override string RepositoryEntityID { get; set; }
 
 		[Ignore, JsonIgnore, BsonIgnore, XmlIgnore]
 		public override Privileges OriginalPrivileges { get; set; }
-
 	}
 }

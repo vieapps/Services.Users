@@ -87,9 +87,5 @@ namespace net.vieapps.Services.Users
 	//  --------------------------------------------------------------------------------------------
 
 	[Serializable, Repository]
-	public abstract class Repository<T> : RepositoryBase<T> where T : class
-	{
-		[Ignore, JsonIgnore, BsonIgnore, XmlIgnore]
-		public override string ServiceName => ServiceBase.ServiceComponent.ServiceName;
-	}
+	public abstract class Repository<T> : RepositoryBase<T> where T : class { }
 }

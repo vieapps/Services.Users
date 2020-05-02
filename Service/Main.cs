@@ -57,27 +57,24 @@ namespace net.vieapps.Services.Users
 		public override string ServiceName => "Users";
 
 		public override void Start(string[] args = null, bool initializeRepository = true, Action<IService> next = null)
-		{
-			// initialize static properties
-			Utility.Cache = new Cache($"VIEApps-Services-{this.ServiceName}", Components.Utility.Logger.GetLoggerFactory());
-			Utility.ActivateHttpURI = this.GetHttpURI("Portals", "https://portals.vieapps.net");
-			while (Utility.ActivateHttpURI.EndsWith("/"))
-				Utility.ActivateHttpURI = Utility.ActivateHttpURI.Left(Utility.FilesHttpURI.Length - 1);
-			Utility.ActivateHttpURI += "home?prego=activate&mode={mode}&code={code}";
-			Utility.FilesHttpURI = this.GetHttpURI("Files", "https://fs.vieapps.net");
-			while (Utility.FilesHttpURI.EndsWith("/"))
-				Utility.FilesHttpURI = Utility.FilesHttpURI.Left(Utility.FilesHttpURI.Length - 1);
-
-			// start the service
-			base.Start(args, initializeRepository, _ =>
+			=> base.Start(args, initializeRepository, _ =>
 			{
+				// initialize static properties
+				Utility.Cache = new Cache($"VIEApps-Services-{this.ServiceName}", Components.Utility.Logger.GetLoggerFactory());
+				Utility.ActivateHttpURI = this.GetHttpURI("Portals", "https://portals.vieapps.net");
+				while (Utility.ActivateHttpURI.EndsWith("/"))
+					Utility.ActivateHttpURI = Utility.ActivateHttpURI.Left(Utility.FilesHttpURI.Length - 1);
+				Utility.ActivateHttpURI += "home?prego=activate&mode={mode}&code={code}";
+				Utility.FilesHttpURI = this.GetHttpURI("Files", "https://fs.vieapps.net");
+				while (Utility.FilesHttpURI.EndsWith("/"))
+					Utility.FilesHttpURI = Utility.FilesHttpURI.Left(Utility.FilesHttpURI.Length - 1);
+
 				// register timers
 				this.RegisterTimers(args);
 
 				// last action
 				next?.Invoke(this);
 			});
-		}
 
 		public override async Task<JToken> ProcessRequestAsync(RequestInfo requestInfo, CancellationToken cancellationToken = default)
 		{
@@ -149,7 +146,7 @@ namespace net.vieapps.Services.Users
 		#region Get instructions
 		async Task<Tuple<string, string, string, string, Tuple<string, int, bool, string, string>>> GetInstructionsOfRelatedServiceAsync(RequestInfo requestInfo, string mode = "reset", CancellationToken cancellationToken = default)
 		{
-			var data = (await this.CallServiceAsync(new RequestInfo(requestInfo.Session, requestInfo.Query["related-service"], "Instruction", "GET")
+			var data = (await this.CallServiceAsync(new RequestInfo(requestInfo.Session, requestInfo.Query["related-service"], "Instructions", "GET")
 			{
 				Query = new Dictionary<string, string>(requestInfo.Query ?? new Dictionary<string, string>(), StringComparer.OrdinalIgnoreCase)
 				{
@@ -447,6 +444,11 @@ namespace net.vieapps.Services.Users
 		async Task<JToken> CallRelatedServiceAsync(RequestInfo requestInfo, User user, string objectName, string verb = "GET", string objectIdentity = null, Dictionary<string, string> extra = null, CancellationToken cancellationToken = default)
 		{
 			var correlationID = requestInfo.CorrelationID ?? UtilityService.NewUUID;
+
+			var serviceName = requestInfo.GetQueryParameter("related-service") ?? "";
+			if (string.IsNullOrWhiteSpace(serviceName))
+				return new JObject();
+
 			try
 			{
 				var request = new RequestInfo(
@@ -454,7 +456,7 @@ namespace net.vieapps.Services.Users
 					{
 						User = user ?? requestInfo.Session.User ?? User.GetDefault(requestInfo.Session.SessionID)
 					},
-					requestInfo.GetQueryParameter("related-service") ?? "",
+					serviceName,
 					objectName ?? "",
 					verb ?? "GET",
 					new Dictionary<string, string>(requestInfo.Query ?? new Dictionary<string, string>(), StringComparer.OrdinalIgnoreCase),
@@ -474,7 +476,7 @@ namespace net.vieapps.Services.Users
 			catch (Exception ex)
 			{
 				if (this.IsDebugLogEnabled)
-					await this.WriteLogsAsync(correlationID, $"Error occurred while calling the related service => {ex.Message}", ex).ConfigureAwait(false);
+					await this.WriteLogsAsync(correlationID, $"Error occurred while calling the related service [{serviceName}] => {ex.Message}", ex).ConfigureAwait(false);
 				return new JObject();
 			}
 		}
@@ -630,7 +632,7 @@ namespace net.vieapps.Services.Users
 
 			// prepare
 			var request = requestInfo.GetBodyExpando();
-			var type = request.Get("Type", "BuiltIn").ToEnum<AccountType>();
+			var type = request.Get("Type", "BuiltIn").TryToEnum(out AccountType acctype) ? acctype : AccountType.BuiltIn;
 			var email = request.Get("Email", "").Decrypt(this.EncryptionKey).Trim().ToLower();
 			var password = request.Get("Password", "").Decrypt(this.EncryptionKey);
 			Account account = null;
@@ -674,7 +676,7 @@ namespace net.vieapps.Services.Users
 					{
 						account = new Account
 						{
-							ID = UtilityService.NewUUID,
+							ID = email.GenerateUUID(),
 							Type = AccountType.Windows,
 							AccessIdentity = email
 						};
@@ -1345,15 +1347,15 @@ namespace net.vieapps.Services.Users
 			var serviceName = requestInfo.GetQueryParameter("related-service");
 			var objectName = requestInfo.GetQueryParameter("related-object");
 			var systemID = requestInfo.GetQueryParameter("related-system");
-			var definitionID = requestInfo.GetQueryParameter("related-definition");
+			var entityInfo = requestInfo.GetQueryParameter("related-entity");
 			var objectID = requestInfo.GetQueryParameter("related-object-identity");
-			var isSystemAdministrator = requestInfo.Session.User.IsSystemAdministrator;
 
 			// check permission => only system administrator or manager of the specified service can do
+			var isSystemAdministrator = requestInfo.Session.User.IsSystemAdministrator;
 			var gotRights = isSystemAdministrator;
 			var relatedService = gotRights ? null : this.GetRelatedService(requestInfo);
 			if (!gotRights && relatedService != null)
-				gotRights = await relatedService.CanManageAsync(requestInfo.Session.User, objectName, systemID, definitionID, objectID, cancellationToken).ConfigureAwait(false);
+				gotRights = await relatedService.CanManageAsync(requestInfo.Session.User, objectName, systemID, entityInfo, objectID, cancellationToken).ConfigureAwait(false);
 			if (!gotRights)
 				throw new AccessDeniedException();
 
@@ -1363,14 +1365,21 @@ namespace net.vieapps.Services.Users
 				throw new InformationNotFoundException();
 
 			// roles of a system
-			if (!string.IsNullOrWhiteSpace(systemID) && requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Roles"))
+			if (!string.IsNullOrWhiteSpace(systemID) && requestInfo.Extra != null && (requestInfo.Extra.ContainsKey("Roles") || requestInfo.Extra.ContainsKey("AddedRoles") || requestInfo.Extra.ContainsKey("RemovedRoles")))
 				try
 				{
-					account.AccessRoles[systemID] = JArray.Parse(requestInfo.Extra["Roles"].Decrypt(this.EncryptionKey)).ToList<string>();
+					if (!account.AccessRoles.TryGetValue(systemID, out var roles))
+						roles = new List<string>();
+					if (requestInfo.Extra.ContainsKey("Roles"))
+						account.AccessRoles[systemID] = roles.Concat(JArray.Parse(requestInfo.Extra["Roles"].Decrypt(this.EncryptionKey)).ToList<string>()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+					else if (requestInfo.Extra.ContainsKey("AddedRoles"))
+						account.AccessRoles[systemID] = roles.Concat(JArray.Parse(requestInfo.Extra["AddedRoles"].Decrypt(this.EncryptionKey)).ToList<string>()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+					else if (requestInfo.Extra.ContainsKey("RemovedRoles"))
+						account.AccessRoles[systemID] = roles.Except(JArray.Parse(requestInfo.Extra["RemovedRoles"].Decrypt(this.EncryptionKey)).ToList<string>()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 				}
 				catch (Exception ex)
 				{
-					this.Logger.LogError("Error while processing roles", ex);
+					await this.WriteLogsAsync(requestInfo, $"Error while processing roles of an user account [{account.ID}] => {ex.Message}", ex, LogLevel.Error).ConfigureAwait(false);
 				}
 
 			// privileges of a service
@@ -1399,30 +1408,30 @@ namespace net.vieapps.Services.Users
 				}
 				catch (Exception ex)
 				{
-					this.Logger.LogError("Error while processing privileges", ex);
+					await this.WriteLogsAsync(requestInfo, $"Error while processing privileges of an user account [{account.ID}] => {ex.Message}", ex, LogLevel.Error).ConfigureAwait(false);
 				}
 
-			// sessions
+			// update sessions
 			var json = account.GetAccountJson(account.TwoFactorsAuthentication.Required, this.AuthenticationKey);
 			var user = json.FromJson<User>();
 			if (account.Sessions == null)
 				await account.GetSessionsAsync(cancellationToken).ConfigureAwait(false);
-
 			account.Sessions.Where(session => session.ExpiredAt > DateTime.Now).ForEach(session =>
 			{
 				try
 				{
+					user.SessionID = session.ID;
 					session.RenewedAt = DateTime.Now;
 					session.ExpiredAt = DateTime.Now.AddDays(60);
 					session.AccessToken = user.GetAccessToken(this.ECCKey);
 				}
 				catch (Exception ex)
 				{
-					this.Logger.LogError("Error while preparing session when update privileges", ex);
+					this.WriteLogs(requestInfo, $"Error while preparing session of an user account [{session.ID} @ {user.ID}] => {ex.Message}", ex, LogLevel.Error);
 				}
 			});
 
-			// update database
+			// update into repository
 			await Task.WhenAll(
 				Account.UpdateAsync(account, requestInfo.Session.User.ID, cancellationToken),
 				Task.WhenAll(account.Sessions.Select(session => Session.UpdateAsync(session, true, cancellationToken)))
@@ -1436,9 +1445,11 @@ namespace net.vieapps.Services.Users
 				{
 					{ "SessionID", session.ID },
 					{ "User", json },
-					{ "Verification", session.Verified }
+					{ "Verified", session.Verified }
 				}
 			}).ToList(), cancellationToken).ConfigureAwait(false);
+			if (this.IsDebugLogEnabled)
+				await this.WriteLogsAsync(requestInfo, $"Successfully send {account.Sessions.Count} message(s) to API Gateway to update new access token of an user account [{account.ID}]").ConfigureAwait(false);
 
 			// response
 			return json;
@@ -1623,6 +1634,7 @@ namespace net.vieapps.Services.Users
 			var account = !userID.Equals("") && !requestInfo.Session.User.IsSystemAccount
 				? await Account.GetAsync<Account>(userID, cancellationToken).ConfigureAwait(false)
 				: null;
+
 			if (account != null && account.Sessions == null)
 				await account.GetSessionsAsync(cancellationToken).ConfigureAwait(false);
 
@@ -1633,12 +1645,12 @@ namespace net.vieapps.Services.Users
 					"Sessions",
 					account != null
 						? account.Sessions.ToJArray(session => new JObject
-							{
-								{ "SessionID", session.ID },
-								{ "DeviceID", session.DeviceID },
-								{ "AppInfo", session.AppInfo },
-								{ "IsOnline", session.Online }
-							})
+						{
+							{ "SessionID", session.ID },
+							{ "DeviceID", session.DeviceID },
+							{ "AppInfo", session.AppInfo },
+							{ "IsOnline", session.Online }
+						})
 						: new JArray()
 				}
 			};
@@ -1825,7 +1837,6 @@ namespace net.vieapps.Services.Users
 				throw new InformationNotFoundException();
 
 			// prepare
-			var serviceName = requestInfo.GetQueryParameter("related-service");
 			var objectName = requestInfo.GetQueryParameter("related-object");
 			var systemID = requestInfo.GetQueryParameter("related-system");
 			var definitionID = requestInfo.GetQueryParameter("related-definition");
