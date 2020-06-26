@@ -16,6 +16,7 @@ using net.vieapps.Components.Security;
 using net.vieapps.Components.Repository;
 using net.vieapps.Components.Caching;
 using net.vieapps.Components.Utility;
+using net.vieapps.Services;
 #endregion
 
 namespace net.vieapps.Services.Users
@@ -64,7 +65,7 @@ namespace net.vieapps.Services.Users
 				Utility.ActivateHttpURI = this.GetHttpURI("Portals", "https://portals.vieapps.net");
 				while (Utility.ActivateHttpURI.EndsWith("/"))
 					Utility.ActivateHttpURI = Utility.ActivateHttpURI.Left(Utility.FilesHttpURI.Length - 1);
-				Utility.ActivateHttpURI += "home?prego=activate&mode={mode}&code={code}";
+				Utility.ActivateHttpURI += "home?prego=activate&mode={{mode}}&code={{code}}";
 				Utility.FilesHttpURI = this.GetHttpURI("Files", "https://fs.vieapps.net");
 				while (Utility.FilesHttpURI.EndsWith("/"))
 					Utility.FilesHttpURI = Utility.FilesHttpURI.Left(Utility.FilesHttpURI.Length - 1);
@@ -1123,187 +1124,168 @@ namespace net.vieapps.Services.Users
 		}
 		#endregion
 
-		#region Create an account
+		#region Create/Register an account
 		async Task<JToken> CreateAccountAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
-			// convert
-			if (requestInfo.Extra != null && requestInfo.Extra.ContainsKey("x-convert"))
-			{
-				if (!requestInfo.Session.User.IsSystemAdministrator)
-					throw new AccessDeniedException();
+			// prepare
+			var requestBody = requestInfo.GetBodyExpando();
 
-				var requestBody = requestInfo.GetBodyExpando();
-
-				var account = requestBody.Copy<Account>();
-				account.AccessKey = requestBody.Get<string>("AccessKey") ?? Account.GeneratePassword(account.AccessIdentity);
-
-				await Account.CreateAsync(account, cancellationToken).ConfigureAwait(false);
-				return account.ToJson();
-			}
-
-			// register
-			else
-			{
-				// prepare
-				var requestBody = requestInfo.GetBodyExpando();
-
-				var id = UtilityService.GetUUID();
-				var json = new JObject
+			var id = UtilityService.GetUUID();
+			var json = new JObject
 				{
 					{ "Message", "Please check email and follow the instructions" }
 				};
 
-				var name = requestBody.Get<string>("Name");
-				var email = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Email")
-					? requestInfo.Extra["Email"].Decrypt(this.EncryptionKey).Trim().ToLower()
-					: null;
-				var password = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Password")
-					? requestInfo.Extra["Password"].Decrypt(this.EncryptionKey)
-					: null;
-				if (string.IsNullOrWhiteSpace(password))
-					password = Account.GeneratePassword(email);
+			var name = requestBody.Get<string>("Name");
+			var email = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Email")
+				? requestInfo.Extra["Email"].Decrypt(this.EncryptionKey).Trim().ToLower()
+				: null;
+			var password = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Password")
+				? requestInfo.Extra["Password"].Decrypt(this.EncryptionKey)
+				: null;
+			if (string.IsNullOrWhiteSpace(password))
+				password = Account.GeneratePassword(email);
 
-				// check existing account
-				if (await Account.GetByIdentityAsync(email, AccountType.BuiltIn, cancellationToken).ConfigureAwait(false) != null)
-					throw new InformationExistedException("The email address (" + email + ") has been used for another account");
+			// check existing account
+			if (await Account.GetByIdentityAsync(email, AccountType.BuiltIn, cancellationToken).ConfigureAwait(false) != null)
+				throw new InformationExistedException("The email address (" + email + ") has been used for another account");
 
-				// related: privileges, service, extra info
-				var privileges = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Privileges")
-					? JArray.Parse(requestInfo.Extra["Privileges"].Decrypt(this.EncryptionKey)).ToList<Privilege>()
-					: null;
+			// related: privileges, service, extra info
+			var privileges = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Privileges")
+				? JArray.Parse(requestInfo.Extra["Privileges"].Decrypt(this.EncryptionKey)).ToList<Privilege>()
+				: null;
 
-				var relatedService = requestInfo.GetQueryParameter("related-service");
-				var relatedInfo = !string.IsNullOrWhiteSpace(relatedService) && requestInfo.Extra != null && requestInfo.Extra.ContainsKey("RelatedInfo")
-					? requestInfo.Extra["RelatedInfo"].Decrypt(this.EncryptionKey).ToExpandoObject()
-					: null;
+			var relatedService = requestInfo.GetQueryParameter("related-service");
+			var relatedInfo = !string.IsNullOrWhiteSpace(relatedService) && requestInfo.Extra != null && requestInfo.Extra.ContainsKey("RelatedInfo")
+				? requestInfo.Extra["RelatedInfo"].Decrypt(this.EncryptionKey).ToExpandoObject()
+				: null;
 
-				// permissions of privileges & related info
-				if (privileges != null || relatedInfo != null)
+			// permissions of privileges & related info
+			if (privileges != null || relatedInfo != null)
+			{
+				var gotRights = await this.IsSystemAdministratorAsync(requestInfo).ConfigureAwait(false);
+				if (!gotRights && !string.IsNullOrWhiteSpace(relatedService))
 				{
-					var gotRights = await this.IsSystemAdministratorAsync(requestInfo).ConfigureAwait(false);
-					if (!gotRights && !string.IsNullOrWhiteSpace(relatedService))
-					{
-						var relatedSvc = this.GetRelatedService(requestInfo);
-						gotRights = relatedSvc != null && await relatedSvc.CanManageAsync(requestInfo.Session.User, requestInfo.ObjectName, null, null, null, cancellationToken).ConfigureAwait(false);
-					}
-					if (!gotRights)
-					{
-						privileges = null;
-						relatedInfo = null;
-					}
+					var relatedSvc = this.GetRelatedService(requestInfo);
+					gotRights = relatedSvc != null && await relatedSvc.CanManageAsync(requestInfo.Session.User, requestInfo.ObjectName, null, null, null, cancellationToken).ConfigureAwait(false);
 				}
-
-				// create new account & profile
-				var isCreateNew = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("x-create");
-				if (isCreateNew)
+				if (!gotRights)
 				{
-					// create account
-					var account = new Account
-					{
-						ID = id,
-						Status = requestBody.Get("Status", "Registered").ToEnum<AccountStatus>(),
-						Type = requestBody.Get("Type", "BuiltIn").ToEnum<AccountType>(),
-						AccessIdentity = email,
-						AccessKey = password,
-						AccessPrivileges = privileges ?? new List<Privilege>()
-					};
-
-					await Account.CreateAsync(account, cancellationToken).ConfigureAwait(false);
-					json = account.GetAccountJson();
-
-					// create profile
-					var profile = requestBody.Copy<Profile>();
-					profile.ID = id;
-					profile.Name = name;
-					profile.Email = email;
-
-					await Task.WhenAll(
-						Profile.CreateAsync(profile, cancellationToken),
-						string.IsNullOrWhiteSpace(relatedService)
-							? Task.CompletedTask
-							: this.CallRelatedServiceAsync(requestInfo, json.Copy<User>(), "profile", "POST", null, relatedInfo?.ToDictionary(kvp => kvp.Key, kvp => kvp.Value as string), cancellationToken)
-					).ConfigureAwait(false);
+					privileges = null;
+					relatedInfo = null;
 				}
-
-				// send activation email
-				var mode = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("x-invite")
-					? "invite"
-					: "account";
-
-				var codeData = new JObject
-				{
-					{ "ID", id },
-					{ "Name", name },
-					{ "Email", email },
-					{ "Password", password },
-					{ "Time", DateTime.Now },
-					{ "Mode", isCreateNew ? "Status" : "Create"  }
-				};
-
-				if (privileges != null)
-					codeData["Privileges"] = privileges.ToJsonArray();
-
-				if (!string.IsNullOrWhiteSpace(relatedService) && relatedInfo != null)
-				{
-					codeData["RelatedService"] = relatedService;
-					codeData["RelatedUser"] = requestInfo.Session.User.ID;
-					codeData["RelatedInfo"] = relatedInfo.ToJson();
-				}
-
-				var code = codeData.ToString(Formatting.None).Encrypt(this.ActivationKey).ToBase64Url(true);
-				var uri = requestInfo.GetQueryParameter("uri")?.Url64Decode() ?? Utility.ActivateHttpURI;
-				uri = uri.Replace(StringComparison.OrdinalIgnoreCase, "{mode}", "account");
-				uri = uri.Replace(StringComparison.OrdinalIgnoreCase, "{code}", code);
-
-				// prepare activation email
-				string inviter = "", inviterEmail = "";
-				if (mode.Equals("invite"))
-				{
-					var profile = await Profile.GetAsync<Profile>(requestInfo.Session.User.ID, cancellationToken).ConfigureAwait(false);
-					inviter = profile.Name;
-					inviterEmail = profile.Email;
-				}
-
-				var instructions = await this.GetActivateInstructionsAsync(requestInfo, mode, cancellationToken).ConfigureAwait(false);
-				var data = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-				{
-					{ "Host", requestInfo.GetQueryParameter("host") ?? "unknown" },
-					{ "Email", email },
-					{ "Password", password },
-					{ "Name", name },
-					{ "Time", DateTime.Now.ToString("hh:mm tt @ dd/MM/yyyy") },
-					{ "AppPlatform", requestInfo.Session.AppName + " @ " + requestInfo.Session.AppPlatform },
-					{ "Location", await requestInfo.GetLocationAsync().ConfigureAwait(false) },
-					{ "IP", requestInfo.Session.IP },
-					{ "Uri", uri },
-					{ "Code", code },
-					{ "Inviter", inviter },
-					{ "InviterEmail", inviterEmail },
-					{ "Signature", instructions.Item3 }
-				};
-
-				// send an email
-				var from = instructions.Item4;
-				var to = name + " <" + email + ">";
-				var subject = instructions.Item1;
-				var body = instructions.Item2;
-				data.ForEach(info =>
-				{
-					subject = subject.Replace(StringComparison.OrdinalIgnoreCase, "{" + info.Key + "}", info.Value);
-					body = body.Replace(StringComparison.OrdinalIgnoreCase, "{" + info.Key + "}", info.Value);
-				});
-
-				var smtpServer = instructions.Item5.Item1;
-				var smtpServerPort = instructions.Item5.Item2;
-				var smtpServerEnableSsl = instructions.Item5.Item3;
-				var smtpServerUsername = instructions.Item5.Item4;
-				var smtpServerPassword = instructions.Item5.Item5;
-
-				await this.SendEmailAsync(from, to, subject, body, smtpServer, smtpServerPort, smtpServerEnableSsl, smtpServerUsername, smtpServerPassword, cancellationToken).ConfigureAwait(false);
-
-				// result
-				return json;
 			}
+
+			// create new account & profile
+			var isCreateNew = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("x-create");
+			if (isCreateNew)
+			{
+				// create account
+				var account = new Account
+				{
+					ID = id,
+					Status = requestBody.Get("Status", "Registered").ToEnum<AccountStatus>(),
+					Type = requestBody.Get("Type", "BuiltIn").ToEnum<AccountType>(),
+					AccessIdentity = email,
+					AccessKey = password,
+					AccessPrivileges = privileges ?? new List<Privilege>()
+				};
+
+				await Account.CreateAsync(account, cancellationToken).ConfigureAwait(false);
+				json = account.GetAccountJson();
+
+				// create profile
+				var profile = requestBody.Copy<Profile>();
+				profile.ID = id;
+				profile.Name = name;
+				profile.Email = email;
+
+				await Task.WhenAll(
+					Profile.CreateAsync(profile, cancellationToken),
+					string.IsNullOrWhiteSpace(relatedService)
+						? Task.CompletedTask
+						: this.CallRelatedServiceAsync(requestInfo, json.Copy<User>(), "profile", "POST", null, relatedInfo?.ToDictionary(kvp => kvp.Key, kvp => kvp.Value as string), cancellationToken)
+				).ConfigureAwait(false);
+			}
+
+			// send activation email
+			var mode = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("x-invite")
+				? "invite"
+				: "account";
+
+			var codeData = new JObject
+			{
+				{ "ID", id },
+				{ "Name", name },
+				{ "Email", email },
+				{ "Password", password },
+				{ "Time", DateTime.Now },
+				{ "Mode", isCreateNew ? "Status" : "Create"  }
+			};
+
+			if (privileges != null)
+				codeData["Privileges"] = privileges.ToJsonArray();
+
+			if (!string.IsNullOrWhiteSpace(relatedService) && relatedInfo != null)
+			{
+				codeData["RelatedService"] = relatedService;
+				codeData["RelatedUser"] = requestInfo.Session.User.ID;
+				codeData["RelatedInfo"] = relatedInfo.ToJson();
+			}
+
+			var code = codeData.ToString(Formatting.None).Encrypt(this.ActivationKey).ToBase64Url(true);
+			var uri = requestInfo.GetQueryParameter("uri")?.Url64Decode() ?? Utility.ActivateHttpURI;
+			uri = uri.Replace(StringComparison.OrdinalIgnoreCase, "{{mode}}", "account");
+			uri = uri.Replace(StringComparison.OrdinalIgnoreCase, "{{code}}", code);
+
+			// prepare activation email
+			string inviter = "", inviterEmail = "";
+			if (mode.Equals("invite"))
+			{
+				var profile = await Profile.GetAsync<Profile>(requestInfo.Session.User.ID, cancellationToken).ConfigureAwait(false);
+				inviter = profile.Name;
+				inviterEmail = profile.Email;
+			}
+
+			var instructions = await this.GetActivateInstructionsAsync(requestInfo, mode, cancellationToken).ConfigureAwait(false);
+			var data = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+			{
+				{ "Host", requestInfo.GetQueryParameter("host") ?? "unknown" },
+				{ "Email", email },
+				{ "Password", password },
+				{ "Name", name },
+				{ "Time", DateTime.Now.ToString("hh:mm tt @ dd/MM/yyyy") },
+				{ "AppPlatform", $"{requestInfo.Session.AppName} @ {requestInfo.Session.AppPlatform}" },
+				{ "Location", await requestInfo.GetLocationAsync().ConfigureAwait(false) },
+				{ "IP", requestInfo.Session.IP },
+				{ "Uri", uri },
+				{ "Code", code },
+				{ "Inviter", inviter },
+				{ "InviterEmail", inviterEmail },
+				{ "Signature", instructions.Item3 }
+			};
+
+			// send an email
+			var from = instructions.Item4;
+			var to = $"{name} <{email}>";
+			var subject = instructions.Item1;
+			var body = instructions.Item2;
+			data.ForEach(info =>
+			{
+				subject = subject.Replace(StringComparison.OrdinalIgnoreCase, "{{" + info.Key + "}}", info.Value);
+				body = body.Replace(StringComparison.OrdinalIgnoreCase, "{{" + info.Key + "}}", info.Value);
+			});
+
+			var smtpServer = instructions.Item5.Item1;
+			var smtpServerPort = instructions.Item5.Item2;
+			var smtpServerEnableSsl = instructions.Item5.Item3;
+			var smtpServerUsername = instructions.Item5.Item4;
+			var smtpServerPassword = instructions.Item5.Item5;
+
+			await this.SendEmailAsync(from, to, subject, body, smtpServer, smtpServerPort, smtpServerEnableSsl, smtpServerUsername, smtpServerPassword, cancellationToken).ConfigureAwait(false);
+
+			// result
+			return json;
 		}
 		#endregion
 
@@ -1676,10 +1658,6 @@ namespace net.vieapps.Services.Users
 					else
 						return this.GetProfileAsync(requestInfo, cancellationToken);
 
-				// create a profile
-				case "POST":
-					return this.CreateProfileAsync(requestInfo, cancellationToken);
-
 				// update a profile
 				case "PUT":
 					return this.UpdateProfileAsync(requestInfo, cancellationToken);
@@ -1803,24 +1781,6 @@ namespace net.vieapps.Services.Users
 			{
 				{ "Objects", profiles }
 			};
-		}
-		#endregion
-
-		#region Create a profile
-		async Task<JToken> CreateProfileAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
-		{
-			if (requestInfo.Extra != null && requestInfo.Extra.ContainsKey("x-convert"))
-			{
-				if (!requestInfo.Session.User.IsSystemAdministrator)
-					throw new AccessDeniedException();
-
-				var profile = requestInfo.GetBodyJson().Copy<Profile>();
-				await Profile.CreateAsync(profile, cancellationToken).ConfigureAwait(false);
-
-				return profile.GetProfileJson(null, false);
-			}
-
-			throw new InvalidRequestException();
 		}
 		#endregion
 
@@ -2127,6 +2087,93 @@ namespace net.vieapps.Services.Users
 
 			// response
 			return account.GetAccountJson();
+		}
+		#endregion
+
+		#region Sync (account & profile)
+		public override async Task<JToken> SyncAsync(RequestInfo requestInfo, CancellationToken cancellationToken = default)
+		{
+			var stopwatch = Stopwatch.StartNew();
+			this.WriteLogs(requestInfo, $"Start sync ({requestInfo.Verb} {requestInfo.GetURI()})");
+			using (var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, this.CancellationTokenSource.Token))
+				try
+				{
+					// validate
+					await base.SyncAsync(requestInfo, cancellationToken).ConfigureAwait(false);
+
+					// sync
+					JToken json = null;
+					switch (requestInfo.ObjectName.ToLower())
+					{
+						case "account":
+							json = await this.SyncAccountAsync(requestInfo, cts.Token).ConfigureAwait(false);
+							break;
+
+						case "profile":
+							json = await this.SyncProfileAsync(requestInfo, cts.Token).ConfigureAwait(false);
+							break;
+
+						default:
+							throw new InvalidRequestException($"The request for synchronizing is invalid ({requestInfo.Verb} {requestInfo.GetURI()})");
+					}
+
+					stopwatch.Stop();
+					this.WriteLogs(requestInfo, $"Sync success - Execution times: {stopwatch.GetElapsedTimes()}");
+					if (this.IsDebugResultsEnabled)
+						this.WriteLogs(requestInfo,
+							$"- Request: {requestInfo.ToString(this.IsDebugLogEnabled ? Formatting.Indented : Formatting.None)}" + "\r\n" +
+							$"- Response: {json?.ToString(this.IsDebugLogEnabled ? Formatting.Indented : Formatting.None)}"
+						);
+					return json;
+				}
+				catch (Exception ex)
+				{
+					throw this.GetRuntimeException(requestInfo, ex, stopwatch);
+				}
+		}
+
+		async Task<JToken> SyncAccountAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		{
+			var data = requestInfo.GetBodyExpando();
+			var account = await Account.GetAsync<Account>(data.Get<string>("ID"), cancellationToken).ConfigureAwait(false);
+			if (account == null)
+			{
+				account = Account.CreateInstance(data, null, acc => acc.AccessKey = acc.AccessKey ?? Account.GeneratePassword(acc.AccessIdentity));
+				await Account.CreateAsync(account, cancellationToken).ConfigureAwait(false);
+			}
+			else
+			{
+				account.Fill(data, null, acc => acc.AccessKey = acc.AccessKey ?? Account.GeneratePassword(acc.AccessIdentity));
+				await Account.UpdateAsync(account, true, cancellationToken).ConfigureAwait(false);
+			}
+			return new JObject
+			{
+				{ "Sync", "Success" },
+				{ "Type", typeof(Account).ToString() },
+				{ "ID", account.ID }
+			};
+		}
+
+		async Task<JToken> SyncProfileAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		{
+			var data = requestInfo.GetBodyExpando();
+			var profile = await Profile.GetAsync<Profile>(data.Get<string>("ID"), cancellationToken).ConfigureAwait(false);
+			if (profile == null)
+			{
+				profile = Profile.CreateInstance(data);
+				await Profile.CreateAsync(profile, cancellationToken).ConfigureAwait(false);
+			}
+			else
+			{
+				profile.Fill(data);
+				await Profile.UpdateAsync(profile, true, cancellationToken).ConfigureAwait(false);
+			}
+			return new JObject
+			{
+				{ "Sync", "Success" },
+				{ "Type", typeof(Profile).ToString() },
+				{ "ID", profile.ID }
+			};
 		}
 		#endregion
 
