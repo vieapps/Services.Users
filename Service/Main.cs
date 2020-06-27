@@ -2099,10 +2099,9 @@ namespace net.vieapps.Services.Users
 				try
 				{
 					// validate
-					await base.SyncAsync(requestInfo, cancellationToken).ConfigureAwait(false);
+					var json = await base.SyncAsync(requestInfo, cancellationToken).ConfigureAwait(false);
 
 					// sync
-					JToken json = null;
 					switch (requestInfo.ObjectName.ToLower())
 					{
 						case "account":
@@ -2121,8 +2120,8 @@ namespace net.vieapps.Services.Users
 					this.WriteLogs(requestInfo, $"Sync success - Execution times: {stopwatch.GetElapsedTimes()}");
 					if (this.IsDebugResultsEnabled)
 						this.WriteLogs(requestInfo,
-							$"- Request: {requestInfo.ToString(this.IsDebugLogEnabled ? Formatting.Indented : Formatting.None)}" + "\r\n" +
-							$"- Response: {json?.ToString(this.IsDebugLogEnabled ? Formatting.Indented : Formatting.None)}"
+							$"- Request: {requestInfo.ToString(this.JsonFormat)}" + "\r\n" +
+							$"- Response: {json?.ToString(this.JsonFormat)}"
 						);
 					return json;
 				}
@@ -2149,8 +2148,8 @@ namespace net.vieapps.Services.Users
 			return new JObject
 			{
 				{ "Sync", "Success" },
-				{ "Type", typeof(Account).ToString() },
-				{ "ID", account.ID }
+				{ "ID", account.ID },
+				{ "Type", account.GetTypeName(true) }
 			};
 		}
 
@@ -2171,9 +2170,14 @@ namespace net.vieapps.Services.Users
 			return new JObject
 			{
 				{ "Sync", "Success" },
-				{ "Type", typeof(Profile).ToString() },
-				{ "ID", profile.ID }
+				{ "ID", profile.ID },
+				{ "Type", profile.GetTypeName(true) }
 			};
+		}
+
+		protected override Task SendSyncRequestAsync(RequestInfo requestInfo, CancellationToken cancellationToken = default)
+		{
+			return base.SendSyncRequestAsync(requestInfo, cancellationToken);
 		}
 		#endregion
 
