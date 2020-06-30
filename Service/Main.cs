@@ -31,10 +31,6 @@ namespace net.vieapps.Services.Users
 
 		string AuthenticationKey => this.GetKey("Authentication", "VIEApps-65E47754-NGX-50C0-Services-4565-Authentication-BA55-Key-A8CC23879C5D");
 
-		BigInteger ECCKey => this.GetKey("ECC", "tRZMCCemDIshR6SBnltv/kZvamQfMuMyx+2DG+2Yuw+13xN4A7Kk+nmEM81kx6ISlaxGgJjr/xK9kWznIC3OWlF2yrdMKeeCPM8eVFIfkiGqIPnGPDJaWRbtGswNjMmfQhbQvQ9qa5306RLt9F94vrOQp2M9eojE3cSuTqNg4OTL+9Dddabgzl94F3gOJoPRxzHqyKWRUhQdP+hOsWSS2KTska2ddm/Zh/fGKXwY9lnnrLHY1wjSJqCS3OO7PCRfQtEWSJcvzzgm7bvJ18fOLuJ5CZVThS+XLNwZgkbcICepRCiVbsk6fmh0482BJesG55pVeyv7ZyKNW+RyMXNEyLn5VY/1lPLxz7lLS88Lvqo=").Base64ToBytes().Decrypt().ToUnsignedBigInteger();
-
-		string RSAKey => this.GetKey("RSA", "NihT0EJ2NLRhmGNbZ8A3jUdhZfO4jG4hfkwaHF1o00YoVx9S61TpmMiaZssOZB++UUyNsZZzxSfkh0i5O9Yr9us+/2zXhgR2zQVxOUrZnPpHpspyJzOegBpMMuTWF4WTl7st797BQ0AmUY1nEjfMTKVP+VSrrx0opTgi93MyvRGGa48vd7PosAM8uq+oMkhMZ/jTvasK6n3PKtb9XAm3hh4NFZBf7P2WuACXZ4Vbzd1MGtLHWfrYnWjGI9uhlo2QKueRLmHoqKM5pQFlB9M7/i2D/TXeWZSWNU+vW93xncUght3QtCwRJu7Kp8UGf8nnrFOshHgvMgsdDlvJt9ECN0/2uyUcWzB8cte5C9r6sP6ClUVSkKDvEOJVmuS2Isk72hbooPaAm7lS5NOzb2pHrxTKAZxaUyiZkFXH5rZxQ/5QjQ9PiAzm1AVdBE1tg1BzyGzY2z7RY/iQ5o22hhRSN3l49U4ftfXuL+LrGKnzxtVrQ15Vj9/pF7mz3lFy2ttTxJPccBiffi9LVtuUCo9BRgw7syn07gAqj1WXzuhPALwK6P6M1pPeFg6NEKLNWgRFE8GZ+dPhr2O0YCgDVuhJ+hDUxCDAEkZ0cQBiliHtjldJji1FnFMqg90QvFCuVCydq94Dnxdl9HSVMNC69i6H2GNfBuD9kTQ6gIOepc86YazDto8JljqEVOpkegusPENadLjpwOYCCslN1Y314B2g9vvZRwU3T+PcziBjym1ceagEEAObZ22Z/vhxBZ83Z2E1/RkbJqovIRKuHLCzU/4lBeTseJNlKPSACPuKAX08P4y5c+28WDrHv2+o7x9ISJe0SN1KmFMvv1xYtj/1NwOHQzfVjbpL46E0+Jr/IOOjh2CQhhUMm1GOEQAZ9n+b7a4diUPDG+BewAZvtd5gNX4zD0IKkJFwN+fBMWSHs0gs3jNz4RcYhH5IoHq27jrfM3cUlvBP9JpbZugNIh8ddZsUd4XQuCVZF+qlfRjY6lfEy4nXX48ianvdCqnBpkmRadG8qFLybkVS+s8RHcPwRkkzKQ4oGHdDeyiU8ZXnwvJ3IxDLoJV0xqKSRjhe9MxwdeN7VMSTNRAtQvqVvm6cL8KNbd2Hx1kPDEcqeUfVIeZ+zTIptO5GpjEMV+4gu338WG1RyEMAaiE536E+UR+0MqIe/Q==").Decrypt();
-
 		RSA _rsa = null;
 
 		RSA RSA
@@ -53,6 +49,8 @@ namespace net.vieapps.Services.Users
 				return this._rsa;
 			}
 		}
+
+		HashSet<string> WindowsAD { get; set; }
 		#endregion
 
 		public override string ServiceName => "Users";
@@ -614,9 +612,12 @@ namespace net.vieapps.Services.Users
 
 				// update account information
 				var account = await Account.GetAsync<Account>(session.UserID, cancellationToken).ConfigureAwait(false);
-				account.LastAccess = DateTime.Now;
-				await account.GetSessionsAsync(cancellationToken).ConfigureAwait(false);
-				await Account.UpdateAsync(account, true, cancellationToken).ConfigureAwait(false);
+				if (account != null)
+				{
+					account.LastAccess = DateTime.Now;
+					await account.GetSessionsAsync(cancellationToken).ConfigureAwait(false);
+					await Account.UpdateAsync(account, true, cancellationToken).ConfigureAwait(false);
+				}
 
 				// response
 				return session.ToJson();
@@ -633,9 +634,16 @@ namespace net.vieapps.Services.Users
 
 			// prepare
 			var request = requestInfo.GetBodyExpando();
-			var type = request.Get("Type", "BuiltIn").TryToEnum(out AccountType acctype) ? acctype : AccountType.BuiltIn;
 			var email = request.Get("Email", "").Decrypt(this.EncryptionKey).Trim().ToLower();
 			var password = request.Get("Password", "").Decrypt(this.EncryptionKey);
+
+			if (this.WindowsAD == null)
+				this.WindowsAD = UtilityService.GetAppSetting("Users:WindowsAD", "vieapps.net|vieapps.com").ToLower().ToHashSet("|", true);
+			var domain = email.Right(email.Length - email.PositionOf("@") - 1).Trim();
+			var type = this.WindowsAD.Contains(domain)
+				? AccountType.Windows
+				: request.Get("Type", "BuiltIn").TryToEnum(out AccountType acctype) ? acctype : AccountType.BuiltIn;
+
 			Account account = null;
 
 			// Windows account
@@ -645,7 +653,6 @@ namespace net.vieapps.Services.Users
 				username = username.PositionOf(@"\") > 0
 					? username.Right(username.Length - username.PositionOf(@"\") - 1).Trim()
 					: username.Trim();
-				var domain = email.Right(email.Length - email.PositionOf("@") - 1).Trim();
 
 				var body = new JObject
 				{
@@ -2090,7 +2097,7 @@ namespace net.vieapps.Services.Users
 		}
 		#endregion
 
-		#region Sync (account & profile)
+		#region Sync
 		public override async Task<JToken> SyncAsync(RequestInfo requestInfo, CancellationToken cancellationToken = default)
 		{
 			var stopwatch = Stopwatch.StartNew();
@@ -2137,12 +2144,12 @@ namespace net.vieapps.Services.Users
 			var account = await Account.GetAsync<Account>(data.Get<string>("ID"), cancellationToken).ConfigureAwait(false);
 			if (account == null)
 			{
-				account = Account.CreateInstance(data, null, acc => acc.AccessKey = acc.AccessKey ?? Account.GeneratePassword(acc.AccessIdentity));
+				account = Account.CreateInstance(data, null, acc => acc.AccessKey = acc.AccessKey ?? Account.GeneratePassword(acc.ID, Account.GeneratePassword(acc.AccessIdentity)));
 				await Account.CreateAsync(account, cancellationToken).ConfigureAwait(false);
 			}
 			else
 			{
-				account.Fill(data, null, acc => acc.AccessKey = acc.AccessKey ?? Account.GeneratePassword(acc.AccessIdentity));
+				account.Fill(data, null, acc => acc.AccessKey = acc.AccessKey ?? Account.GeneratePassword(acc.ID, Account.GeneratePassword(acc.AccessIdentity)));
 				await Account.UpdateAsync(account, true, cancellationToken).ConfigureAwait(false);
 			}
 			return new JObject
