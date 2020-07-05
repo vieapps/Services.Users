@@ -130,10 +130,7 @@ namespace net.vieapps.Services.Users
 					stopwatch.Stop();
 					this.WriteLogs(requestInfo, $"Success response - Execution times: {stopwatch.GetElapsedTimes()}");
 					if (this.IsDebugResultsEnabled)
-						this.WriteLogs(requestInfo,
-							$"- Request: {requestInfo.ToString(this.IsDebugLogEnabled ? Formatting.Indented : Formatting.None)}" + "\r\n" +
-							$"- Response: {json?.ToString(this.IsDebugLogEnabled ? Formatting.Indented : Formatting.None)}"
-						);
+						this.WriteLogs(requestInfo, $"- Request: {requestInfo.ToString(this.JsonFormat)}" + "\r\n" + $"- Response: {json?.ToString(this.JsonFormat)}");
 					return json;
 				}
 				catch (Exception ex)
@@ -576,7 +573,7 @@ namespace net.vieapps.Services.Users
 			if (requestInfo.Session.User.ID.Equals("") || requestInfo.Session.User.IsSystemAccount)
 			{
 				// update cache of session
-				var session = request.Copy<Session>();
+				var session = Session.CreateInstance(request);
 				await Utility.Cache.SetAsync(session, cancellationToken).ConfigureAwait(false);
 
 				// response
@@ -589,7 +586,7 @@ namespace net.vieapps.Services.Users
 				var session = await Session.GetAsync<Session>(requestInfo.Session.SessionID, cancellationToken, false).ConfigureAwait(false);
 				if (session == null)
 				{
-					session = request.Copy<Session>();
+					session = Session.CreateInstance(request);
 					await Session.CreateAsync(session, cancellationToken).ConfigureAwait(false);
 				}
 				else
@@ -597,17 +594,13 @@ namespace net.vieapps.Services.Users
 					if (!requestInfo.Session.SessionID.IsEquals(request.Get<string>("ID")) || !requestInfo.Session.User.ID.IsEquals(request.Get<string>("UserID")))
 						throw new InvalidSessionException();
 
-					session.CopyFrom(request);
-					await Session.UpdateAsync(session, true, cancellationToken).ConfigureAwait(false);
+					await Session.UpdateAsync(session.Fill(request), true, cancellationToken).ConfigureAwait(false);
 				}
 
 				// make sure the cache has updated && remove duplicated sessions
 				await Task.WhenAll(
 					Utility.Cache.SetAsync(session, cancellationToken),
-					Session.DeleteManyAsync(Filters<Session>.And(
-						Filters<Session>.Equals("DeviceID", session.DeviceID),
-						Filters<Session>.NotEquals("ID", session.ID)
-					), null, cancellationToken)
+					Session.DeleteManyAsync(Filters<Session>.And(Filters<Session>.Equals("DeviceID", session.DeviceID),Filters<Session>.NotEquals("ID", session.ID)), null, cancellationToken)
 				).ConfigureAwait(false);
 
 				// update account information
@@ -1753,7 +1746,7 @@ namespace net.vieapps.Services.Users
 			// update cache
 			if (!cacheKey.Equals(""))
 			{
-				json = result.ToString(this.IsDebugLogEnabled ? Formatting.Indented : Formatting.None);
+				json = result.ToString(this.JsonFormat);
 				await Utility.Cache.SetAsync($"{cacheKey }{pageNumber}:json", json, Utility.Cache.ExpirationTime / 2).ConfigureAwait(false);
 			}
 
@@ -2275,7 +2268,7 @@ namespace net.vieapps.Services.Users
 
 			// unknown
 			else if (this.IsDebugResultsEnabled)
-				await this.WriteLogsAsync(correlationID, $"Got an inter-communicate message => {message.ToJson().ToString(this.IsDebugLogEnabled ? Formatting.Indented : Formatting.None)})", null, this.ServiceName, "Communicates", LogLevel.Warning).ConfigureAwait(false);
+				await this.WriteLogsAsync(correlationID, $"Got an inter-communicate message => {message.ToJson().ToString(this.JsonFormat)})", null, this.ServiceName, "Communicates", LogLevel.Warning).ConfigureAwait(false);
 		}
 
 		#region Timers for working with background workers & schedulers

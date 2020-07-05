@@ -94,13 +94,11 @@ namespace net.vieapps.Services.Users
 		public override Privileges OriginalPrivileges { get; set; }
 
 		public override JObject ToJson(bool addTypeOfExtendedProperties = false, Action<JObject> onPreCompleted = null)
-		{
-			return base.ToJson(addTypeOfExtendedProperties, json =>
+			=> base.ToJson(addTypeOfExtendedProperties, json =>
 			{
 				json["Avatar"] = string.IsNullOrWhiteSpace(this.Avatar) ? "" : this.Avatar.StartsWith("/") ? Utility.FilesHttpURI + this.Avatar : this.Avatar.Replace("~~/", Utility.FilesHttpURI + "/");
 				json["Gravatar"] = this.GetGravatarURI();
 				onPreCompleted?.Invoke(json);
 			});
-		}
 	}
 }

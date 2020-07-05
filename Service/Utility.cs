@@ -48,9 +48,9 @@ namespace net.vieapps.Services.Users
 				{
 					if (addRelated)
 					{
-						var account = Account.Get<Account>(profile.ID);
-						obj["LastAccess"] = account.LastAccess;
-						obj["Joined"] = account.Joined;
+						var account = Account.Get<Account>(profile?.ID);
+						obj["LastAccess"] = account?.LastAccess;
+						obj["Joined"] = account?.Joined;
 
 						if (relatedData != null)
 							foreach (var kvp in relatedData)
