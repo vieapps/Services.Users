@@ -197,15 +197,15 @@ namespace net.vieapps.Services.Users
 				switch (mode)
 				{
 					case "account":
-						subject = "[{Host}] Kích hoạt tài khoản đăng nhập";
+						subject = "[{{Host}}] Kích hoạt tài khoản đăng nhập";
 						break;
 
 					case "invite":
-						subject = "[{Host}] Lời mời tham gia hệ thống";
+						subject = "[{{Host}}] Lời mời tham gia hệ thống";
 						break;
 
 					case "reset":
-						subject = "[{Host}] Kích hoạt mật khẩu đăng nhập mới";
+						subject = "[{{Host}}] Kích hoạt mật khẩu đăng nhập mới";
 						break;
 				}
 
@@ -214,28 +214,28 @@ namespace net.vieapps.Services.Users
 				{
 					case "account":
 						body = @"
-						Xin chào <b>{Name}</b>
+						Xin chào <b>{{Name}}</b>
 						<br/><br/>
 						Chào mừng bạn đã tham gia vào hệ thống cùng chúng tôi.
 						<br/><br/>
 						Tài khoản thành viên của bạn đã được khởi tạo với các thông tin sau:
 						<blockquote>
-							Email đăng nhập: <b>{Email}</b>
+							Email đăng nhập: <b>{{Email}}</b>
 							<br/>
-							Mật khẩu đăng nhập: <b>{Password}</b>
+							Mật khẩu đăng nhập: <b>{{Password}}</b>
 						</blockquote>
 						<br/>
 						Để hoàn tất quá trình đăng ký, bạn vui lòng kích hoạt tài khoản đã đăng ký bằng cách mở liên kết dưới:
 						<br/><br/>
 						<span style='display:inline-block;padding:15px;border-radius:5px;background-color:#eee;font-weight:bold'>
-						<a href='{Uri}' style='color:red'>Kích hoạt tài khoản</a>
+						<a href='{{Uri}}' style='color:red'>Kích hoạt tài khoản</a>
 						</span>
 						<br/><br/>
 						<br/>
 						<i>Thông tin thêm:</i>
 						<ul>
 							<li>
-								Hoạt động này được thực hiện lúc <b>{Time}</b>  tại <b>{Location}</b>
+								Hoạt động này được thực hiện lúc <b>{{Time}}</b>  tại <b>{{Location}}</b>
 							</li>
 							<li>
 								Mã kích hoạt chỉ có giá trị trong vòng 01 tháng kể từ thời điểm nhận được email này.
@@ -248,33 +248,33 @@ namespace net.vieapps.Services.Users
 							</li>
 						</ul>
 						<br/><br/>
-						{Signature}".Replace("\t", "");
+						{{Signature}}".Replace("\t", "");
 						break;
 
 					case "invite":
 						body = @"
-						Xin chào <b>{Name}</b>
+						Xin chào <b>{{Name}}</b>
 						<br/><br/>
-						Chào mừng bạn đến với hệ thống qua lời mời của <b>{Inviter}</b> ({InviterEmail}).
+						Chào mừng bạn đến với hệ thống qua lời mời của <b>{{Inviter}}</b> ({{InviterEmail}}).
 						<br/><br/>
 						Tài khoản thành viên của bạn sẽ được khởi tạo với các thông tin sau:
 						<blockquote>
-							Email đăng nhập: <b>{Email}</b>
+							Email đăng nhập: <b>{{Email}}</b>
 							<br/>
-							Mật khẩu đăng nhập: <b>{Password}</b>
+							Mật khẩu đăng nhập: <b>{{Password}}</b>
 						</blockquote>
 						<br/>
 						Để hoàn tất quá trình và trở thành thành viên của hệ thống, bạn vui lòng khởi tạo & kích hoạt tài khoản bằng cách mở liên kết dưới:
 						<br/><br/>
 						<span style='display:inline-block;padding:15px;border-radius:5px;background-color:#eee;font-weight:bold'>
-						<a href='{Uri}' style='color:red'>Khởi tạo &amp; Kích hoạt tài khoản</a>
+						<a href='{{Uri}}' style='color:red'>Khởi tạo &amp; Kích hoạt tài khoản</a>
 						</span>
 						<br/><br/>
 						<br/>
 						<i>Thông tin thêm:</i>
 						<ul>
 							<li>
-								Hoạt động này được thực hiện lúc <b>{Time}</b> với thiết bị <b>{AppPlatform}</b> tại <b>{Location}</b>
+								Hoạt động này được thực hiện lúc <b>{{Time}}</b> với thiết bị <b>{{AppPlatform}}</b> tại <b>{{Location}}</b>
 							</li>
 							<li>
 								Mã khởi tạo & kích hoạt chỉ có giá trị trong vòng 01 tháng kể từ thời điểm nhận được email này.
@@ -286,31 +286,31 @@ namespace net.vieapps.Services.Users
 							</li>
 						</ul>
 						<br/><br/>
-						{Signature}".Replace("\t", "");
+						{{Signature}}".Replace("\t", "");
 						break;
 
 					case "reset":
 						body = @"
-						Xin chào <b>{Name}</b>
+						Xin chào <b>{{Name}}</b>
 						<br/><br/>
 						Tài khoản đăng nhập của bạn đã được yêu cầu đặt lại thông tin đăng nhập như sau:
 						<blockquote>
-							Email đăng nhập: <b>{Email}</b>
+							Email đăng nhập: <b>{{Email}}</b>
 							<br/>
-							Mật khẩu đăng nhập (mới): <b>{Password}</b>
+							Mật khẩu đăng nhập (mới): <b>{{Password}}</b>
 						</blockquote>
 						<br/>
 						Để hoàn tất quá trình thay đổi mật khẩu mới, bạn vui lòng kích hoạt bằng cách mở liên kết dưới:
 						<br/><br/>
 						<span style='display:inline-block;padding:15px;border-radius:5px;background-color:#eee;font-weight:bold'>
-						<a href='{Uri}' style='color:red'>Kích hoạt mật khẩu đăng nhập mới</a>
+						<a href='{{Uri}}' style='color:red'>Kích hoạt mật khẩu đăng nhập mới</a>
 						</span>
 						<br/><br/>
 						<br/>
 						<i>Thông tin thêm:</i>
 						<ul>
 							<li>
-								Hoạt động này được thực hiện lúc <b>{Time}</b> với thiết bị <b>{AppPlatform}</b> tại <b>{Location}</b>
+								Hoạt động này được thực hiện lúc <b>{{Time}}</b> với thiết bị <b>{{AppPlatform}}</b> tại <b>{{Location}}</b>
 							</li>
 							<li>
 								Mã kích hoạt chỉ có giá trị trong vòng 01 ngày kể từ thời điểm nhận được email này.
@@ -323,7 +323,7 @@ namespace net.vieapps.Services.Users
 							</li>
 						</ul>
 						<br/><br/>
-						{Signature}".Replace("\t", "");
+						{{Signature}}".Replace("\t", "");
 						break;
 				}
 
@@ -358,11 +358,11 @@ namespace net.vieapps.Services.Users
 				switch (mode)
 				{
 					case "password":
-						subject = "[{Host}] Thông báo thông tin đăng nhập tài khoản thay đổi (mật khẩu)";
+						subject = "[{{Host}}] Thông báo thông tin đăng nhập tài khoản thay đổi (mật khẩu)";
 						break;
 
 					case "email":
-						subject = "[{Host}] Thông báo thông tin đăng nhập tài khoản thay đổi (email)";
+						subject = "[{{Host}}] Thông báo thông tin đăng nhập tài khoản thay đổi (email)";
 						break;
 				}
 
@@ -371,19 +371,19 @@ namespace net.vieapps.Services.Users
 				{
 					case "password":
 						body = @"
-						Xin chào <b>{Name}</b>
+						Xin chào <b>{{Name}}</b>
 						<br/><br/>
 						Tài khoản đăng nhập của bạn đã được cật nhật thông tin đăng nhập như sau:
 						<blockquote>
-							Email đăng nhập: <b>{Email}</b>
+							Email đăng nhập: <b>{{Email}}</b>
 							<br/>
-							Mật khẩu đăng nhập (mới): <b>{Password}</b>
+							Mật khẩu đăng nhập (mới): <b>{{Password}}</b>
 						</blockquote>
 						<br/>
 						<i>Thông tin thêm:</i>
 						<ul>
 							<li>
-								Hoạt động này được thực hiện lúc <b>{Time}</b> với thiết bị <b>{AppPlatform}</b> tại <b>{Location}</b>
+								Hoạt động này được thực hiện lúc <b>{{Time}}</b> với thiết bị <b>{{AppPlatform}}</b> tại <b>{{Location}}</b>
 							</li>
 							<li>
 								Nếu không phải bạn thực hiện hoạt động này, bạn nên kiểm tra lại thông tin đăng nhập cũng như email liên quan
@@ -391,24 +391,24 @@ namespace net.vieapps.Services.Users
 							</li>
 						</ul>
 						<br/><br/>
-						{Signature}".Replace("\t", "");
+						{{Signature}}".Replace("\t", "");
 						break;
 
 					case "email":
 						body = @"
-						Xin chào <b>{Name}</b>
+						Xin chào <b>{{Name}}</b>
 						<br/><br/>
 						Tài khoản đăng nhập của bạn đã được cật nhật thông tin đăng nhập như sau:
 						<blockquote>
-							Email đăng nhập (mới): <b>{Email}</b>
+							Email đăng nhập (mới): <b>{{Email}}</b>
 							<br/>
-							Email đăng nhập (cũ): <b>{OldEmail}</b>
+							Email đăng nhập (cũ): <b>{{OldEmail}}</b>
 						</blockquote>
 						<br/>
 						<i>Thông tin thêm:</i>
 						<ul>
 							<li>
-								Hoạt động này được thực hiện lúc <b>{Time}</b> với thiết bị <b>{AppPlatform}</b> tại <b>{Location}</b>
+								Hoạt động này được thực hiện lúc <b>{{Time}}</b> với thiết bị <b>{{AppPlatform}}</b> tại <b>{{Location}}</b>
 							</li>
 							<li>
 								Nếu không phải bạn thực hiện hoạt động này, bạn nên kiểm tra lại thông tin đăng nhập cũng như email liên quan
@@ -416,7 +416,7 @@ namespace net.vieapps.Services.Users
 							</li>
 						</ul>
 						<br/><br/>
-						{Signature}".Replace("\t", "");
+						{{Signature}}".Replace("\t", "");
 						break;
 				}
 
@@ -1234,9 +1234,7 @@ namespace net.vieapps.Services.Users
 			}
 
 			var code = codeData.ToString(Formatting.None).Encrypt(this.ActivationKey).ToBase64Url(true);
-			var uri = requestInfo.GetQueryParameter("uri")?.Url64Decode() ?? Utility.ActivateHttpURI;
-			uri = uri.Replace(StringComparison.OrdinalIgnoreCase, "{{mode}}", "account");
-			uri = uri.Replace(StringComparison.OrdinalIgnoreCase, "{{code}}", code);
+			var uri = (requestInfo.GetQueryParameter("uri")?.Url64Decode() ?? Utility.ActivateHttpURI).Format(new Dictionary<string, object> { ["mode"] = "account", ["code"] = code });
 
 			// prepare activation email
 			string inviter = "", inviterEmail = "";
@@ -1248,7 +1246,7 @@ namespace net.vieapps.Services.Users
 			}
 
 			var instructions = await this.GetActivateInstructionsAsync(requestInfo, mode, cancellationToken).ConfigureAwait(false);
-			var data = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+			var data = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase)
 			{
 				{ "Host", requestInfo.GetQueryParameter("host") ?? "unknown" },
 				{ "Email", email },
@@ -1268,13 +1266,8 @@ namespace net.vieapps.Services.Users
 			// send an email
 			var from = instructions.Item4;
 			var to = $"{name} <{email}>";
-			var subject = instructions.Item1;
-			var body = instructions.Item2;
-			data.ForEach(info =>
-			{
-				subject = subject.Replace(StringComparison.OrdinalIgnoreCase, "{{" + info.Key + "}}", info.Value);
-				body = body.Replace(StringComparison.OrdinalIgnoreCase, "{{" + info.Key + "}}", info.Value);
-			});
+			var subject = instructions.Item1.Format(data);
+			var body = instructions.Item2.Format(data);
 
 			var smtpServer = instructions.Item5.Item1;
 			var smtpServerPort = instructions.Item5.Item2;
@@ -1459,15 +1452,11 @@ namespace net.vieapps.Services.Users
 				{ "Time", DateTime.Now }
 			}.ToString(Formatting.None).Encrypt(this.ActivationKey).ToBase64Url(true);
 
-			var uri = requestInfo.Query.ContainsKey("uri")
-				? requestInfo.Query["uri"].Url64Decode()
-				: Utility.ActivateHttpURI;
-			uri = uri.Replace(StringComparison.OrdinalIgnoreCase, "{mode}", "password");
-			uri = uri.Replace(StringComparison.OrdinalIgnoreCase, "{code}", code);
+			var uri = (requestInfo.Query.ContainsKey("uri") ? requestInfo.Query["uri"].Url64Decode() : Utility.ActivateHttpURI).Format(new Dictionary<string, object> { ["mode"] = "password", ["code"] = code });
 
 			// prepare activation email
 			var instructions = await this.GetActivateInstructionsAsync(requestInfo, "reset", cancellationToken).ConfigureAwait(false);
-			var data = new Dictionary<string, string>
+			var data = new Dictionary<string, object>
 			{
 				{ "Host", requestInfo.GetQueryParameter("host") ?? "unknown" },
 				{ "Email", account.AccessIdentity },
@@ -1483,14 +1472,8 @@ namespace net.vieapps.Services.Users
 			};
 
 			// send an email
-			var subject = instructions.Item1;
-			var body = instructions.Item2;
-			data.ForEach(info =>
-			{
-				subject = subject.Replace(StringComparison.OrdinalIgnoreCase, "{" + info.Key + "}", info.Value);
-				body = body.Replace(StringComparison.OrdinalIgnoreCase, "{" + info.Key + "}", info.Value);
-			});
-
+			var subject = instructions.Item1.Format(data);
+			var body = instructions.Item2.Format(data);
 			var smtp = instructions.Item5;
 			await this.SendEmailAsync(instructions.Item4, account.Profile.Name + " <" + account.AccessIdentity + ">", subject, body, smtp.Item1, smtp.Item2, smtp.Item3, smtp.Item4, smtp.Item5, cancellationToken).ConfigureAwait(false);
 
@@ -1519,7 +1502,7 @@ namespace net.vieapps.Services.Users
 
 			// send alert email
 			var instructions = await this.GetUpdateInstructionsAsync(requestInfo, "password", cancellationToken).ConfigureAwait(false);
-			var data = new Dictionary<string, string>
+			var data = new Dictionary<string, object>
 			{
 				{ "Host", requestInfo.GetQueryParameter("host") ?? "unknown" },
 				{ "Email", account.AccessIdentity },
@@ -1533,14 +1516,8 @@ namespace net.vieapps.Services.Users
 			};
 
 			// send an email
-			var subject = instructions.Item1;
-			var body = instructions.Item2;
-			data.ForEach(info =>
-			{
-				subject = subject.Replace(StringComparison.OrdinalIgnoreCase, "{" + info.Key + "}", info.Value);
-				body = body.Replace(StringComparison.OrdinalIgnoreCase, "{" + info.Key + "}", info.Value);
-			});
-
+			var subject = instructions.Item1.Format(data);
+			var body = instructions.Item2.Format(data);
 			var smtp = instructions.Item5;
 			await this.SendEmailAsync(instructions.Item4, account.Profile.Name + " <" + account.AccessIdentity + ">", subject, body, smtp.Item1, smtp.Item2, smtp.Item3, smtp.Item4, smtp.Item5, cancellationToken).ConfigureAwait(false);
 
@@ -1579,7 +1556,7 @@ namespace net.vieapps.Services.Users
 
 			// send alert email
 			var instructions = await this.GetUpdateInstructionsAsync(requestInfo, "email", cancellationToken).ConfigureAwait(false);
-			var data = new Dictionary<string, string>
+			var data = new Dictionary<string, object>
 			{
 				{ "Host", requestInfo.GetQueryParameter("host") ?? "unknown" },
 				{ "Email", account.AccessIdentity },
@@ -1593,14 +1570,8 @@ namespace net.vieapps.Services.Users
 			};
 
 			// send an email
-			var subject = instructions.Item1;
-			var body = instructions.Item2;
-			data.ForEach(info =>
-			{
-				subject = subject.Replace(StringComparison.OrdinalIgnoreCase, "{" + info.Key + "}", info.Value);
-				body = body.Replace(StringComparison.OrdinalIgnoreCase, "{" + info.Key + "}", info.Value);
-			});
-
+			var subject = instructions.Item1.Format(data);
+			var body = instructions.Item2.Format(data);
 			var smtp = instructions.Item5;
 			await this.SendEmailAsync(instructions.Item4, account.Profile.Name + " <" + account.AccessIdentity + ">", subject, body, smtp.Item1, smtp.Item2, smtp.Item3, smtp.Item4, smtp.Item5, cancellationToken).ConfigureAwait(false);
 
