@@ -1148,7 +1148,7 @@ namespace net.vieapps.Services.Users
 
 			// check existing account
 			if (await Account.GetByIdentityAsync(email, AccountType.BuiltIn, cancellationToken).ConfigureAwait(false) != null)
-				throw new InformationExistedException("The email address (" + email + ") has been used for another account");
+				throw new InformationExistedException($"The email address ({email}) has been used for another account");
 
 			// related: privileges, service, extra info
 			var privileges = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Privileges")
@@ -1623,7 +1623,7 @@ namespace net.vieapps.Services.Users
 
 					// fetch
 					else if ("fetch".IsEquals(identity))
-						return this.FetchProfilesAsync(requestInfo, cancellationToken);
+						return this.FetchProfilesAsync(requestInfo, cancellationToken, requestInfo.Extra.TryGetValue("x-notifications-key", out var notificationsKey) && notificationsKey != null ? notificationsKey.IsEquals(this.GetKey("Notifications", null)) : false);
 
 					// get details of a profile
 					else
@@ -1727,27 +1727,56 @@ namespace net.vieapps.Services.Users
 		#endregion
 
 		#region Fetch profiles
-		async Task<JToken> FetchProfilesAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		async Task<JToken> FetchProfilesAsync(RequestInfo requestInfo, CancellationToken cancellationToken, bool isContactRequest = false)
 		{
-			// prepare
-			if (!this.IsAuthenticated(requestInfo))
-				throw new AccessDeniedException();
-			else if (!await this.IsAuthorizedAsync(requestInfo, "profile", Components.Security.Action.View, cancellationToken).ConfigureAwait(false))
-				throw new AccessDeniedException();
+			// check permissions
+			if (!isContactRequest)
+			{
+				if (!this.IsAuthenticated(requestInfo))
+					throw new AccessDeniedException();
+				else if (!await this.IsAuthorizedAsync(requestInfo, "profile", Components.Security.Action.View, cancellationToken).ConfigureAwait(false))
+					throw new AccessDeniedException();
+			}
 
 			// fetch
-			var request = requestInfo.GetRequestExpando();
-			var filter = Filters<Profile>.Or(request.Get("IDs", new List<string>()).Select(id => Filters<Profile>.Equals("ID", id)));
-			var objects = await Profile.FindAsync(filter, null, 0, 1, null, cancellationToken);
+			var filter = Filters<Profile>.Or(requestInfo.GetRequestExpando().Get("IDs", new List<string>()).Select(id => Filters<Profile>.Equals("ID", id)));
+			var objects = await Profile.FindAsync(filter, null, 0, 1, null, cancellationToken).ConfigureAwait(false);
 
-			// build result
+			// return as contacts
+			if (isContactRequest)
+			{
+				var sessions = new Dictionary<string, JArray>(StringComparer.OrdinalIgnoreCase);
+				await objects.ForEachAsync(async (profile, token) =>
+				{
+					var account = await Account.GetAsync<Account>(profile.ID, cancellationToken).ConfigureAwait(false);
+					if (account != null)
+					{
+						if (account.Sessions == null)
+							await account.GetSessionsAsync(cancellationToken).ConfigureAwait(false);
+						sessions[account.ID] = account.Sessions.ToJArray(session => new JObject
+						{
+							{ "SessionID", session.ID },
+							{ "DeviceID", session.DeviceID },
+							{ "AppInfo", session.AppInfo },
+							{ "IsOnline", session.Online }
+						});
+					}
+				}, cancellationToken).ConfigureAwait(false);
+				return objects.Select(profile => new JObject
+				{
+					{ "ID", profile.ID },
+					{ "Name", profile.Name },
+					{ "Email", profile.Email },
+					{ "Sessions", sessions.TryGetValue(profile.ID,  out var session) ? session : null }
+				}).ToJArray();
+			}
+
+			// return the normalized profiles
 			var profiles = new JArray();
 			await objects.ForEachAsync(async (profile, token) =>
 			{
 				profiles.Add(profile.GetProfileJson(await this.GetProfileRelatedJsonAsync(requestInfo, token).ConfigureAwait(false) as JObject, !requestInfo.Session.User.IsSystemAdministrator));
 			}, cancellationToken, true, false).ConfigureAwait(false);
-
-			// return
 			return new JObject
 			{
 				{ "Objects", profiles }
