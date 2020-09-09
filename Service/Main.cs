@@ -63,7 +63,7 @@ namespace net.vieapps.Services.Users
 				Utility.ActivateHttpURI = this.GetHttpURI("Portals", "https://portals.vieapps.net");
 				while (Utility.ActivateHttpURI.EndsWith("/"))
 					Utility.ActivateHttpURI = Utility.ActivateHttpURI.Left(Utility.FilesHttpURI.Length - 1);
-				Utility.ActivateHttpURI += "home?prego=activate&mode={{mode}}&code={{code}}";
+				Utility.ActivateHttpURI += "/home?prego=activate&mode={{mode}}&code={{code}}";
 				Utility.FilesHttpURI = this.GetHttpURI("Files", "https://fs.vieapps.net");
 				while (Utility.FilesHttpURI.EndsWith("/"))
 					Utility.FilesHttpURI = Utility.FilesHttpURI.Left(Utility.FilesHttpURI.Length - 1);
@@ -139,291 +139,6 @@ namespace net.vieapps.Services.Users
 				}
 		}
 
-		#region Get instructions
-		async Task<Tuple<string, string, string, string, Tuple<string, int, bool, string, string>>> GetInstructionsOfRelatedServiceAsync(RequestInfo requestInfo, string mode = "reset", CancellationToken cancellationToken = default)
-		{
-			var data = (await this.CallServiceAsync(new RequestInfo(requestInfo.Session, requestInfo.Query["related-service"], "Instructions", "GET")
-			{
-				Query = new Dictionary<string, string>(requestInfo.Query ?? new Dictionary<string, string>(), StringComparer.OrdinalIgnoreCase)
-				{
-					["object-identity"] = "account"
-				},
-				Header = requestInfo.Header,
-				Extra = new Dictionary<string, string>(requestInfo.Extra ?? new Dictionary<string, string>(), StringComparer.OrdinalIgnoreCase)
-				{
-					["mode"] = mode
-				},
-				CorrelationID = requestInfo.CorrelationID
-			}, cancellationToken).ConfigureAwait(false)).ToExpandoObject();
-
-			var subject = data.Get<string>("Subject");
-			var body = data.Get<string>("Body");
-			var signature = data.Get<string>("Signature");
-			var sender = data.Get<string>("Sender");
-			var smtpServer = data.Get<string>("SmtpServer");
-			var smtpServerPort = data.Get("SmtpServerPort", 25);
-			var smtpServerEnableSsl = data.Get<bool>("SmtpServerEnableSsl");
-			var smtpUser = data.Get<string>("SmtpUser");
-			var smtpUserPassword = data.Get<string>("SmtpUserPassword");
-
-			return new Tuple<string, string, string, string, Tuple<string, int, bool, string, string>>(subject, body, signature, sender, new Tuple<string, int, bool, string, string>(smtpServer, smtpServerPort, smtpServerEnableSsl, smtpUser, smtpUserPassword));
-		}
-
-		async Task<Tuple<string, string, string, string, Tuple<string, int, bool, string, string>>> GetActivateInstructionsAsync(RequestInfo requestInfo, string mode = "reset", CancellationToken cancellationToken = default)
-		{
-			string subject = "", body = "", signature = "", sender = "";
-			string smtpServer = "", smtpUser = "", smtpUserPassword = "";
-			var smtpServerPort = 25;
-			var smtpServerEnableSsl = false;
-
-			if (requestInfo.Query.ContainsKey("related-service"))
-				try
-				{
-					var data = await this.GetInstructionsOfRelatedServiceAsync(requestInfo, mode, cancellationToken).ConfigureAwait(false);
-
-					subject = data.Item1;
-					body = data.Item2;
-					signature = data.Item3;
-					sender = data.Item4;
-					smtpServer = data.Item5.Item1;
-					smtpServerPort = data.Item5.Item2;
-					smtpServerEnableSsl = data.Item5.Item3;
-					smtpUser = data.Item5.Item4;
-					smtpUserPassword = data.Item5.Item5;
-				}
-				catch { }
-
-			if (string.IsNullOrWhiteSpace(subject))
-				switch (mode)
-				{
-					case "account":
-						subject = "[{{Host}}] Kích hoạt tài khoản đăng nhập";
-						break;
-
-					case "invite":
-						subject = "[{{Host}}] Lời mời tham gia hệ thống";
-						break;
-
-					case "reset":
-						subject = "[{{Host}}] Kích hoạt mật khẩu đăng nhập mới";
-						break;
-				}
-
-			if (string.IsNullOrWhiteSpace(body))
-				switch (mode)
-				{
-					case "account":
-						body = @"
-						Xin chào <b>{{Name}}</b>
-						<br/><br/>
-						Chào mừng bạn đã tham gia vào hệ thống cùng chúng tôi.
-						<br/><br/>
-						Tài khoản thành viên của bạn đã được khởi tạo với các thông tin sau:
-						<blockquote>
-							Email đăng nhập: <b>{{Email}}</b>
-							<br/>
-							Mật khẩu đăng nhập: <b>{{Password}}</b>
-						</blockquote>
-						<br/>
-						Để hoàn tất quá trình đăng ký, bạn vui lòng kích hoạt tài khoản đã đăng ký bằng cách mở liên kết dưới:
-						<br/><br/>
-						<span style='display:inline-block;padding:15px;border-radius:5px;background-color:#eee;font-weight:bold'>
-						<a href='{{Uri}}' style='color:red'>Kích hoạt tài khoản</a>
-						</span>
-						<br/><br/>
-						<br/>
-						<i>Thông tin thêm:</i>
-						<ul>
-							<li>
-								Hoạt động này được thực hiện lúc <b>{{Time}}</b>  tại <b>{{Location}}</b>
-							</li>
-							<li>
-								Mã kích hoạt chỉ có giá trị trong vòng 01 tháng kể từ thời điểm nhận được email này.
-								<br/>
-								Sau thời gian đó, để gia nhập hệ thống bạn cần thực hiện  lại hoạt động đăng ký thành viên.
-							</li>
-							<li>
-								Nếu không phải bạn thực hiện hoạt động này, bạn cũng không phải bận tâm 
-								vì hệ thống sẽ tự động loại bỏ các thông tin không sử dụng sau thời gian đăng ký 01 tháng.
-							</li>
-						</ul>
-						<br/><br/>
-						{{Signature}}".Replace("\t", "");
-						break;
-
-					case "invite":
-						body = @"
-						Xin chào <b>{{Name}}</b>
-						<br/><br/>
-						Chào mừng bạn đến với hệ thống qua lời mời của <b>{{Inviter}}</b> ({{InviterEmail}}).
-						<br/><br/>
-						Tài khoản thành viên của bạn sẽ được khởi tạo với các thông tin sau:
-						<blockquote>
-							Email đăng nhập: <b>{{Email}}</b>
-							<br/>
-							Mật khẩu đăng nhập: <b>{{Password}}</b>
-						</blockquote>
-						<br/>
-						Để hoàn tất quá trình và trở thành thành viên của hệ thống, bạn vui lòng khởi tạo & kích hoạt tài khoản bằng cách mở liên kết dưới:
-						<br/><br/>
-						<span style='display:inline-block;padding:15px;border-radius:5px;background-color:#eee;font-weight:bold'>
-						<a href='{{Uri}}' style='color:red'>Khởi tạo &amp; Kích hoạt tài khoản</a>
-						</span>
-						<br/><br/>
-						<br/>
-						<i>Thông tin thêm:</i>
-						<ul>
-							<li>
-								Hoạt động này được thực hiện lúc <b>{{Time}}</b> với thiết bị <b>{{AppPlatform}}</b> tại <b>{{Location}}</b>
-							</li>
-							<li>
-								Mã khởi tạo & kích hoạt chỉ có giá trị trong vòng 01 tháng kể từ thời điểm nhận được email này.
-								<br/>
-								Sau thời gian đó, để gia nhập hệ thống bạn cần thực hiện  hoạt động đăng ký thành viên.
-							</li>
-							<li>
-								Nếu bạn không muốn tham gia vào hệ thống, bạn cũng không phải bận tâm  vì hệ thống sẽ chỉ khởi tạo tài khoản khi bạn thực hiện hoạt động này.
-							</li>
-						</ul>
-						<br/><br/>
-						{{Signature}}".Replace("\t", "");
-						break;
-
-					case "reset":
-						body = @"
-						Xin chào <b>{{Name}}</b>
-						<br/><br/>
-						Tài khoản đăng nhập của bạn đã được yêu cầu đặt lại thông tin đăng nhập như sau:
-						<blockquote>
-							Email đăng nhập: <b>{{Email}}</b>
-							<br/>
-							Mật khẩu đăng nhập (mới): <b>{{Password}}</b>
-						</blockquote>
-						<br/>
-						Để hoàn tất quá trình thay đổi mật khẩu mới, bạn vui lòng kích hoạt bằng cách mở liên kết dưới:
-						<br/><br/>
-						<span style='display:inline-block;padding:15px;border-radius:5px;background-color:#eee;font-weight:bold'>
-						<a href='{{Uri}}' style='color:red'>Kích hoạt mật khẩu đăng nhập mới</a>
-						</span>
-						<br/><br/>
-						<br/>
-						<i>Thông tin thêm:</i>
-						<ul>
-							<li>
-								Hoạt động này được thực hiện lúc <b>{{Time}}</b> với thiết bị <b>{{AppPlatform}}</b> tại <b>{{Location}}</b>
-							</li>
-							<li>
-								Mã kích hoạt chỉ có giá trị trong vòng 01 ngày kể từ thời điểm nhận được email này.
-							</li>
-							<li>
-								Nếu không phải bạn thực hiện hoạt động này, bạn nên kiểm tra lại thông tin đăng nhập cũng như email liên quan
-								vì có thể một điểm nào đó trong hệ thống thông tin bị rò rỉ (và có thể gây hại cho bạn).
-								<br/>
-								Khi bạn chưa kích hoạt thì mật khẩu đăng nhập mới là chưa có tác dụng.
-							</li>
-						</ul>
-						<br/><br/>
-						{{Signature}}".Replace("\t", "");
-						break;
-				}
-
-			return new Tuple<string, string, string, string, Tuple<string, int, bool, string, string>>(subject, body, signature, sender, new Tuple<string, int, bool, string, string>(smtpServer, smtpServerPort, smtpServerEnableSsl, smtpUser, smtpUserPassword));
-		}
-
-		async Task<Tuple<string, string, string, string, Tuple<string, int, bool, string, string>>> GetUpdateInstructionsAsync(RequestInfo requestInfo, string mode = "password", CancellationToken cancellationToken = default)
-		{
-			string subject = "", body = "", signature = "", sender = "";
-			string smtpServer = "", smtpUser = "", smtpUserPassword = "";
-			var smtpServerPort = 25;
-			var smtpServerEnableSsl = false;
-
-			if (requestInfo.Query.ContainsKey("related-service"))
-				try
-				{
-					var data = await this.GetInstructionsOfRelatedServiceAsync(requestInfo, mode, cancellationToken).ConfigureAwait(false);
-
-					subject = data.Item1;
-					body = data.Item2;
-					signature = data.Item3;
-					sender = data.Item4;
-					smtpServer = data.Item5.Item1;
-					smtpServerPort = data.Item5.Item2;
-					smtpServerEnableSsl = data.Item5.Item3;
-					smtpUser = data.Item5.Item4;
-					smtpUserPassword = data.Item5.Item5;
-				}
-				catch { }
-
-			if (string.IsNullOrWhiteSpace(subject))
-				switch (mode)
-				{
-					case "password":
-						subject = "[{{Host}}] Thông báo thông tin đăng nhập tài khoản thay đổi (mật khẩu)";
-						break;
-
-					case "email":
-						subject = "[{{Host}}] Thông báo thông tin đăng nhập tài khoản thay đổi (email)";
-						break;
-				}
-
-			if (string.IsNullOrWhiteSpace(body))
-				switch (mode)
-				{
-					case "password":
-						body = @"
-						Xin chào <b>{{Name}}</b>
-						<br/><br/>
-						Tài khoản đăng nhập của bạn đã được cật nhật thông tin đăng nhập như sau:
-						<blockquote>
-							Email đăng nhập: <b>{{Email}}</b>
-							<br/>
-							Mật khẩu đăng nhập (mới): <b>{{Password}}</b>
-						</blockquote>
-						<br/>
-						<i>Thông tin thêm:</i>
-						<ul>
-							<li>
-								Hoạt động này được thực hiện lúc <b>{{Time}}</b> với thiết bị <b>{{AppPlatform}}</b> tại <b>{{Location}}</b>
-							</li>
-							<li>
-								Nếu không phải bạn thực hiện hoạt động này, bạn nên kiểm tra lại thông tin đăng nhập cũng như email liên quan
-								vì có thể một điểm nào đó trong hệ thống thông tin bị rò rỉ (và có thể gây hại cho bạn).
-							</li>
-						</ul>
-						<br/><br/>
-						{{Signature}}".Replace("\t", "");
-						break;
-
-					case "email":
-						body = @"
-						Xin chào <b>{{Name}}</b>
-						<br/><br/>
-						Tài khoản đăng nhập của bạn đã được cật nhật thông tin đăng nhập như sau:
-						<blockquote>
-							Email đăng nhập (mới): <b>{{Email}}</b>
-							<br/>
-							Email đăng nhập (cũ): <b>{{OldEmail}}</b>
-						</blockquote>
-						<br/>
-						<i>Thông tin thêm:</i>
-						<ul>
-							<li>
-								Hoạt động này được thực hiện lúc <b>{{Time}}</b> với thiết bị <b>{{AppPlatform}}</b> tại <b>{{Location}}</b>
-							</li>
-							<li>
-								Nếu không phải bạn thực hiện hoạt động này, bạn nên kiểm tra lại thông tin đăng nhập cũng như email liên quan
-								vì có thể một điểm nào đó trong hệ thống thông tin bị rò rỉ (và có thể gây hại cho bạn).
-							</li>
-						</ul>
-						<br/><br/>
-						{{Signature}}".Replace("\t", "");
-						break;
-				}
-
-			return new Tuple<string, string, string, string, Tuple<string, int, bool, string, string>>(subject, body, signature, sender, new Tuple<string, int, bool, string, string>(smtpServer, smtpServerPort, smtpServerEnableSsl, smtpUser, smtpUserPassword));
-		}
-		#endregion
-
 		#region Call related services
 		IService GetRelatedService(RequestInfo requestInfo)
 		{
@@ -475,6 +190,87 @@ namespace net.vieapps.Services.Users
 					await this.WriteLogsAsync(correlationID, $"Error occurred while calling the related service [{serviceName}] => {ex.Message}", ex).ConfigureAwait(false);
 				return new JObject();
 			}
+		}
+
+		Task<JToken> CallRelatedServiceAsync(RequestInfo requestInfo, string objectName, string verb = "GET", string objectIdentity = null, Dictionary<string, string> extra = null, CancellationToken cancellationToken = default)
+			=> this.CallRelatedServiceAsync(requestInfo, null, objectName, verb, objectIdentity, extra, cancellationToken);
+
+		Task<JToken> CallRelatedServiceAsync(RequestInfo requestInfo, string objectName, Dictionary<string, string> extra = null, CancellationToken cancellationToken = default)
+			=> this.CallRelatedServiceAsync(requestInfo, objectName, null, null, extra, cancellationToken);
+		#endregion
+
+		#region Get instructions
+		async Task<Tuple<Tuple<string, string>, Tuple<string, string>, Tuple<string, int, bool, string, string>>> GetInstructionsOfRelatedServiceAsync(RequestInfo requestInfo, string mode = "reset", CancellationToken cancellationToken = default)
+		{
+			var data = await this.CallRelatedServiceAsync(requestInfo, "Instructions", new Dictionary<string, string> { ["mode"] = mode }, cancellationToken).ConfigureAwait(false);
+
+			var message = data.Get("Message", new JObject());
+			var subject = message.Get<string>("Subject");
+			var body = message.Get<string>("Body");
+
+			var email = data.Get("Email", new JObject());
+			var emailSender = email.Get<string>("Sender");
+			var emailSignature = email.Get<string>("Signature");
+
+			var smtp = email.Get<JObject>("Smtp", new JObject());
+			var smtpServerHost = smtp.Get<string>("Host");
+			var smtpServerPort = smtp.Get<int>("Port", 25);
+			var smtpServerEnableSsl = smtp.Get<bool>("EnableSsl", false);
+			var smtpUser = smtp.Get<string>("User");
+			var smtpUserPassword = smtp.Get<string>("UserPassword");
+
+			return new Tuple<Tuple<string, string>, Tuple<string, string>, Tuple<string, int, bool, string, string>>
+			(
+				new Tuple<string, string>(subject, body),
+				new Tuple<string, string>(emailSender, emailSignature),
+				new Tuple<string, int, bool, string, string>(smtpServerHost, smtpServerPort, smtpServerEnableSsl, smtpUser, smtpUserPassword)
+			);
+		}
+
+		async Task<Tuple<Tuple<string, string>, Tuple<string, string>, Tuple<string, int, bool, string, string>>> GetInstructionsAsync(RequestInfo requestInfo, string mode = "reset", CancellationToken cancellationToken = default)
+		{
+			string subject = "", body = "", emailSender = "", emailSignature = "";
+			string smtpServerHost = "", smtpUser = "", smtpUserPassword = "";
+			var smtpServerPort = 25;
+			var smtpServerEnableSsl = false;
+
+			if (requestInfo.Query.ContainsKey("related-service"))
+				try
+				{
+					var data = await this.GetInstructionsOfRelatedServiceAsync(requestInfo, mode, cancellationToken).ConfigureAwait(false);
+
+					subject = data.Item1.Item1;
+					body = data.Item1.Item2;
+					emailSender = data.Item2.Item1;
+					emailSignature = data.Item2.Item2;
+					smtpServerHost = data.Item3.Item1;
+					smtpServerPort = data.Item3.Item2;
+					smtpServerEnableSsl = data.Item3.Item3;
+					smtpUser = data.Item3.Item4;
+					smtpUserPassword = data.Item3.Item5;
+				}
+				catch { }
+
+			if (string.IsNullOrWhiteSpace(subject) || string.IsNullOrWhiteSpace(body))
+				try
+				{
+					var apisURI = this.GetHttpURI("APIs", "https://apis.vieapps.net");
+					var json = await UtilityService.FetchWebResourceAsync($"{apisURI}/statics/instructions/users/{requestInfo.GetQueryParameter("language") ?? "vi-VN"}.json", cancellationToken).ConfigureAwait(false);
+					var instruction = JObject.Parse(json).Get<JObject>(mode);
+					subject = string.IsNullOrWhiteSpace(subject) ? instruction?.Get<string>("subject") : subject;
+					body = string.IsNullOrWhiteSpace(body) ? instruction?.Get<string>("body") : body;
+				}
+				catch (Exception ex)
+				{
+					await this.WriteLogsAsync(requestInfo, $"Error occurred while fetching instructions => {ex.Message}", ex).ConfigureAwait(false);
+				}
+
+			return new Tuple<Tuple<string, string>, Tuple<string, string>, Tuple<string, int, bool, string, string>>
+			(
+				new Tuple<string, string>(subject, body.NormalizeHTMLBreaks()),
+				new Tuple<string, string>(emailSender, emailSignature),
+				new Tuple<string, int, bool, string, string>(smtpServerHost, smtpServerPort, smtpServerEnableSsl, smtpUser, smtpUserPassword)
+			);
 		}
 		#endregion
 
@@ -600,7 +396,7 @@ namespace net.vieapps.Services.Users
 				// make sure the cache has updated && remove duplicated sessions
 				await Task.WhenAll(
 					Utility.Cache.SetAsync(session, cancellationToken),
-					Session.DeleteManyAsync(Filters<Session>.And(Filters<Session>.Equals("DeviceID", session.DeviceID),Filters<Session>.NotEquals("ID", session.ID)), null, cancellationToken)
+					Session.DeleteManyAsync(Filters<Session>.And(Filters<Session>.Equals("DeviceID", session.DeviceID), Filters<Session>.NotEquals("ID", session.ID)), null, cancellationToken)
 				).ConfigureAwait(false);
 
 				// update account information
@@ -1132,9 +928,9 @@ namespace net.vieapps.Services.Users
 
 			var id = UtilityService.GetUUID();
 			var json = new JObject
-				{
-					{ "Message", "Please check email and follow the instructions" }
-				};
+			{
+				{ "Message", "Please check email and follow the instructions" }
+			};
 
 			var name = requestBody.Get<string>("Name");
 			var email = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Email")
@@ -1200,12 +996,9 @@ namespace net.vieapps.Services.Users
 				profile.Name = name;
 				profile.Email = email;
 
-				await Task.WhenAll(
-					Profile.CreateAsync(profile, cancellationToken),
-					string.IsNullOrWhiteSpace(relatedService)
-						? Task.CompletedTask
-						: this.CallRelatedServiceAsync(requestInfo, json.Copy<User>(), "profile", "POST", null, relatedInfo?.ToDictionary(kvp => kvp.Key, kvp => kvp.Value as string), cancellationToken)
-				).ConfigureAwait(false);
+				await Profile.CreateAsync(profile, cancellationToken).ConfigureAwait(false);
+				if (!string.IsNullOrWhiteSpace(relatedService))
+					await this.CallRelatedServiceAsync(requestInfo, json.Copy<User>(), "profile", "POST", null, relatedInfo?.ToDictionary(kvp => kvp.Key, kvp => kvp.Value as string), cancellationToken).ConfigureAwait(false);
 			}
 
 			// send activation email
@@ -1234,48 +1027,83 @@ namespace net.vieapps.Services.Users
 			}
 
 			var code = codeData.ToString(Formatting.None).Encrypt(this.ActivationKey).ToBase64Url(true);
-			var uri = (requestInfo.GetQueryParameter("uri")?.Url64Decode() ?? Utility.ActivateHttpURI).Format(new Dictionary<string, object> { ["mode"] = "account", ["code"] = code });
+			var uri = (requestInfo.GetQueryParameter("uri")?.Url64Decode() ?? Utility.ActivateHttpURI).Format(new Dictionary<string, object>
+			{
+				["mode"] = "account",
+				["code"] = code
+			});
 
 			// prepare activation email
-			string inviter = "", inviterEmail = "";
-			if (mode.Equals("invite"))
-			{
-				var profile = await Profile.GetAsync<Profile>(requestInfo.Session.User.ID, cancellationToken).ConfigureAwait(false);
-				inviter = profile.Name;
-				inviterEmail = profile.Email;
-			}
+			var instructions = await this.GetInstructionsAsync(requestInfo, mode, cancellationToken).ConfigureAwait(false);
 
-			var instructions = await this.GetActivateInstructionsAsync(requestInfo, mode, cancellationToken).ConfigureAwait(false);
-			var data = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase)
+			var from = instructions.Item2.Item1;
+			var to = $"{name} <{email}>";
+
+			var subject = instructions.Item1.Item1;
+			if (string.IsNullOrWhiteSpace(subject))
+				subject = @"[{{@request.Session(AppName)}}] Activate your account";
+
+			var body = instructions.Item1.Item2;
+			if (string.IsNullOrWhiteSpace(body))
+				body = @"Hi <b>{{@params(Name)}}</b>
+				<br/>
+				These are your account information:
+				<blockquote>
+					Email: <b>{{@params(Email)}}</b>
+					Password: <b>{{@params(Password)}}</b>
+				</blockquote>
+				Please click the link below to activate your account and complete the registration step:
+				<br/>
+				<span style='display:inline-block;padding:15px;border-radius:5px;background-color:#eee;font-weight:bold'>
+					<a href='{{@params(Uri)}}' style='color:red'>Activate your account</a>
+				</span>";
+
+			var smtpServerHost = instructions.Item3.Item1;
+			var smtpServerPort = instructions.Item3.Item2;
+			var smtpServerEnableSsl = instructions.Item3.Item3;
+			var smtpServerUsername = instructions.Item3.Item4;
+			var smtpServerPassword = instructions.Item3.Item5;
+
+			var requestExpando = requestInfo.ToExpandoObject(requestInfoAsExpandoObject =>
 			{
-				{ "Host", requestInfo.GetQueryParameter("host") ?? "unknown" },
+				requestInfoAsExpandoObject.Set("Body", requestInfo.BodyAsExpandoObject);
+				requestInfoAsExpandoObject.Get<ExpandoObject>("Header").Remove("x-app-token");
+			});
+
+			var inviter = mode.Equals("invite") ? await Profile.GetAsync<Profile>(requestInfo.Session.User.ID, cancellationToken).ConfigureAwait(false) : null;
+			var paramsExpando = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase)
+			{
 				{ "Email", email },
 				{ "Password", password },
 				{ "Name", name },
-				{ "Time", DateTime.Now.ToString("hh:mm tt @ dd/MM/yyyy") },
-				{ "AppPlatform", $"{requestInfo.Session.AppName} @ {requestInfo.Session.AppPlatform}" },
-				{ "Location", await requestInfo.GetLocationAsync().ConfigureAwait(false) },
-				{ "IP", requestInfo.Session.IP },
 				{ "Uri", uri },
 				{ "Code", code },
-				{ "Inviter", inviter },
-				{ "InviterEmail", inviterEmail },
-				{ "Signature", instructions.Item3 }
-			};
+				{ "Inviter", new JObject
+					{
+						{ "Name", inviter?.Name },
+						{ "Email", inviter?.Email }
+					}
+				},
+				{ "Time", DateTime.Now },
+				{ "Location", await requestInfo.GetLocationAsync().ConfigureAwait(false) },
+				{ "EmailSignature", instructions.Item2.Item2 }
+			}.ToExpandoObject();
+
+			var parameters = $"{subject}\r\n{body}"
+				.GetDoubleBracesTokens()
+				.Select(token => token.Item2)
+				.Distinct(StringComparer.OrdinalIgnoreCase)
+				.ToDictionary(token => token, token =>
+				{
+					return token.StartsWith("@[") && token.EndsWith("]")
+						? Extensions.JsEvaluate(token.GetJsExpression(requestExpando, null, paramsExpando))
+						: token.StartsWith("@")
+							? token.Evaluate(new Tuple<ExpandoObject, ExpandoObject, ExpandoObject>(requestExpando, null, paramsExpando))
+							: token;
+				});
 
 			// send an email
-			var from = instructions.Item4;
-			var to = $"{name} <{email}>";
-			var subject = instructions.Item1.Format(data);
-			var body = instructions.Item2.Format(data);
-
-			var smtpServer = instructions.Item5.Item1;
-			var smtpServerPort = instructions.Item5.Item2;
-			var smtpServerEnableSsl = instructions.Item5.Item3;
-			var smtpServerUsername = instructions.Item5.Item4;
-			var smtpServerPassword = instructions.Item5.Item5;
-
-			await this.SendEmailAsync(from, to, subject, body, smtpServer, smtpServerPort, smtpServerEnableSsl, smtpServerUsername, smtpServerPassword, cancellationToken).ConfigureAwait(false);
+			await this.SendEmailAsync(from, to, subject.Format(parameters), body.Format(parameters), smtpServerHost, smtpServerPort, smtpServerEnableSsl, smtpServerUsername, smtpServerPassword, cancellationToken).ConfigureAwait(false);
 
 			// result
 			return json;
@@ -1452,30 +1280,76 @@ namespace net.vieapps.Services.Users
 				{ "Time", DateTime.Now }
 			}.ToString(Formatting.None).Encrypt(this.ActivationKey).ToBase64Url(true);
 
-			var uri = (requestInfo.Query.ContainsKey("uri") ? requestInfo.Query["uri"].Url64Decode() : Utility.ActivateHttpURI).Format(new Dictionary<string, object> { ["mode"] = "password", ["code"] = code });
+			var uri = (requestInfo.Query.ContainsKey("uri") ? requestInfo.Query["uri"].Url64Decode() : Utility.ActivateHttpURI).Format(new Dictionary<string, object>
+			{
+				["mode"] = "password",
+				["code"] = code
+			});
 
 			// prepare activation email
-			var instructions = await this.GetActivateInstructionsAsync(requestInfo, "reset", cancellationToken).ConfigureAwait(false);
-			var data = new Dictionary<string, object>
+			var instructions = await this.GetInstructionsAsync(requestInfo, "reset", cancellationToken).ConfigureAwait(false);
+
+			var from = instructions.Item2.Item1;
+			var to = $"{account.Profile.Name} <{account.AccessIdentity}>";
+
+			var subject = instructions.Item1.Item1;
+			if (string.IsNullOrWhiteSpace(subject))
+				subject = @"[{{@request.Session(AppName)}}] Activate your new password";
+
+			var body = instructions.Item1.Item2;
+			if (string.IsNullOrWhiteSpace(body))
+				body = @"Hi <b>{{@params(Name)}}</b>
+				<br/>
+				These are your account information:
+				<blockquote>
+					Email: <b>{{@params(Email)}}</b>
+					Password (new): <b>{{@params(Password)}}</b>
+				</blockquote>
+				Please click the link below to activate your new password:
+				<br/>
+				<span style='display:inline-block;padding:15px;border-radius:5px;background-color:#eee;font-weight:bold'>
+					<a href='{{@params(Uri)}}' style='color:red'>Activate your new password</a>
+				</span>";
+
+			var smtpServerHost = instructions.Item3.Item1;
+			var smtpServerPort = instructions.Item3.Item2;
+			var smtpServerEnableSsl = instructions.Item3.Item3;
+			var smtpServerUsername = instructions.Item3.Item4;
+			var smtpServerPassword = instructions.Item3.Item5;
+
+			var requestExpando = requestInfo.ToExpandoObject(requestInfoAsExpandoObject =>
 			{
-				{ "Host", requestInfo.GetQueryParameter("host") ?? "unknown" },
+				requestInfoAsExpandoObject.Set("Body", requestInfo.BodyAsExpandoObject);
+				requestInfoAsExpandoObject.Get<ExpandoObject>("Header").Remove("x-app-token");
+			});
+
+			var paramsExpando = new Dictionary<string, object>
+			{
 				{ "Email", account.AccessIdentity },
 				{ "Password", password },
 				{ "Name", account.Profile.Name },
-				{ "Time", DateTime.Now.ToString("hh:mm tt @ dd/MM/yyyy") },
-				{ "AppPlatform", requestInfo.Session.AppName + " @ " + requestInfo.Session.AppPlatform },
-				{ "Location", await requestInfo.GetLocationAsync().ConfigureAwait(false) },
-				{ "IP", requestInfo.Session.IP },
 				{ "Uri", uri },
 				{ "Code", code },
-				{ "Signature", instructions.Item3 }
-			};
+				{ "Time", DateTime.Now },
+				{ "Location", await requestInfo.GetLocationAsync().ConfigureAwait(false) },
+				{ "EmailSignature", instructions.Item2.Item2 }
+			}.ToExpandoObject();
+
+			var parameters = $"{subject}\r\n{body}"
+				.GetDoubleBracesTokens()
+				.Select(token => token.Item2)
+				.Distinct(StringComparer.OrdinalIgnoreCase)
+				.ToDictionary(token => token, token =>
+				{
+					return token.StartsWith("@[") && token.EndsWith("]")
+						? Extensions.JsEvaluate(token.GetJsExpression(requestExpando, null, paramsExpando))
+						: token.StartsWith("@")
+							? token.Evaluate(new Tuple<ExpandoObject, ExpandoObject, ExpandoObject>(requestExpando, null, paramsExpando))
+							: token;
+				});
 
 			// send an email
-			var subject = instructions.Item1.Format(data);
-			var body = instructions.Item2.Format(data);
-			var smtp = instructions.Item5;
-			await this.SendEmailAsync(instructions.Item4, account.Profile.Name + " <" + account.AccessIdentity + ">", subject, body, smtp.Item1, smtp.Item2, smtp.Item3, smtp.Item4, smtp.Item5, cancellationToken).ConfigureAwait(false);
+			await this.SendEmailAsync(from, to, subject.Format(parameters), body.Format(parameters), smtpServerHost, smtpServerPort, smtpServerEnableSsl, smtpServerUsername, smtpServerPassword, cancellationToken).ConfigureAwait(false);
 
 			// response
 			return new JObject
@@ -1500,26 +1374,63 @@ namespace net.vieapps.Services.Users
 			account.LastAccess = DateTime.Now;
 			await Account.UpdateAsync(account, true, cancellationToken);
 
-			// send alert email
-			var instructions = await this.GetUpdateInstructionsAsync(requestInfo, "password", cancellationToken).ConfigureAwait(false);
-			var data = new Dictionary<string, object>
+			// prepare activation email
+			var instructions = await this.GetInstructionsAsync(requestInfo, "password", cancellationToken).ConfigureAwait(false);
+
+			var from = instructions.Item2.Item1;
+			var to = $"{account.Profile.Name} <{account.AccessIdentity}>";
+
+			var subject = instructions.Item1.Item1;
+			if (string.IsNullOrWhiteSpace(subject))
+				subject = @"[{{@request.Session(AppName)}}] Your account has been updated";
+
+			var body = instructions.Item1.Item2;
+			if (string.IsNullOrWhiteSpace(body))
+				body = @"Hi <b>{{@params(Name)}}</b>
+				<br/>
+				These are your account information:
+				<blockquote>
+					Email: <b>{{@params(Email)}}</b>
+					Password (new): <b>{{@params(Password)}}</b>
+				</blockquote>";
+
+			var smtpServerHost = instructions.Item3.Item1;
+			var smtpServerPort = instructions.Item3.Item2;
+			var smtpServerEnableSsl = instructions.Item3.Item3;
+			var smtpServerUsername = instructions.Item3.Item4;
+			var smtpServerPassword = instructions.Item3.Item5;
+
+			var requestExpando = requestInfo.ToExpandoObject(requestInfoAsExpandoObject =>
 			{
-				{ "Host", requestInfo.GetQueryParameter("host") ?? "unknown" },
+				requestInfoAsExpandoObject.Set("Body", requestInfo.BodyAsExpandoObject);
+				requestInfoAsExpandoObject.Get<ExpandoObject>("Header").Remove("x-app-token");
+			});
+
+			var paramsExpando = new Dictionary<string, object>
+			{
 				{ "Email", account.AccessIdentity },
 				{ "Password", password },
 				{ "Name", account.Profile.Name },
-				{ "Time", DateTime.Now.ToString("hh:mm tt @ dd/MM/yyyy") },
-				{ "AppPlatform", requestInfo.Session.AppName + " @ " + requestInfo.Session.AppPlatform },
+				{ "Time", DateTime.Now },
 				{ "Location", await requestInfo.GetLocationAsync().ConfigureAwait(false) },
-				{ "IP", requestInfo.Session.IP },
-				{ "Signature", instructions.Item3 }
-			};
+				{ "EmailSignature", instructions.Item2.Item2 }
+			}.ToExpandoObject();
+
+			var parameters = $"{subject}\r\n{body}"
+				.GetDoubleBracesTokens()
+				.Select(token => token.Item2)
+				.Distinct(StringComparer.OrdinalIgnoreCase)
+				.ToDictionary(token => token, token =>
+				{
+					return token.StartsWith("@[") && token.EndsWith("]")
+						? Extensions.JsEvaluate(token.GetJsExpression(requestExpando, null, paramsExpando))
+						: token.StartsWith("@")
+							? token.Evaluate(new Tuple<ExpandoObject, ExpandoObject, ExpandoObject>(requestExpando, null, paramsExpando))
+							: token;
+				});
 
 			// send an email
-			var subject = instructions.Item1.Format(data);
-			var body = instructions.Item2.Format(data);
-			var smtp = instructions.Item5;
-			await this.SendEmailAsync(instructions.Item4, account.Profile.Name + " <" + account.AccessIdentity + ">", subject, body, smtp.Item1, smtp.Item2, smtp.Item3, smtp.Item4, smtp.Item5, cancellationToken).ConfigureAwait(false);
+			await this.SendEmailAsync(from, to, subject.Format(parameters), body.Format(parameters), smtpServerHost, smtpServerPort, smtpServerEnableSsl, smtpServerUsername, smtpServerPassword, cancellationToken).ConfigureAwait(false);
 
 			// response
 			return account.Profile.ToJson();
@@ -1554,26 +1465,64 @@ namespace net.vieapps.Services.Users
 				Profile.UpdateAsync(account.Profile, requestInfo.Session.User.ID, cancellationToken)
 			).ConfigureAwait(false);
 
-			// send alert email
-			var instructions = await this.GetUpdateInstructionsAsync(requestInfo, "email", cancellationToken).ConfigureAwait(false);
-			var data = new Dictionary<string, object>
+			// prepare activation email
+			var instructions = await this.GetInstructionsAsync(requestInfo, "email", cancellationToken).ConfigureAwait(false);
+
+			var from = instructions.Item2.Item1;
+			var to = $"{account.Profile.Name} <{account.AccessIdentity}>";
+
+			var subject = instructions.Item1.Item1;
+			if (string.IsNullOrWhiteSpace(subject))
+				subject = @"[{{@request.Session(AppName)}}] Your account has been updated";
+
+			var body = instructions.Item1.Item2;
+			if (string.IsNullOrWhiteSpace(body))
+				body = @"Hi <b>{{@params(Name)}}</b>
+				<br/>
+				These are your account information:
+				<blockquote>
+					Your new login  email: <b>{{@params(Email)}}</b>
+					Old login email: <b>{{@params(OldEmail)}}</b>
+				</blockquote>";
+
+			var smtpServerHost = instructions.Item3.Item1;
+			var smtpServerPort = instructions.Item3.Item2;
+			var smtpServerEnableSsl = instructions.Item3.Item3;
+			var smtpServerUsername = instructions.Item3.Item4;
+			var smtpServerPassword = instructions.Item3.Item5;
+
+			var requestExpando = requestInfo.ToExpandoObject(requestInfoAsExpandoObject =>
+			{
+				requestInfoAsExpandoObject.Set("Body", requestInfo.BodyAsExpandoObject);
+				requestInfoAsExpandoObject.Get<ExpandoObject>("Header").Remove("x-app-token");
+			});
+
+			var paramsExpando = new Dictionary<string, object>
 			{
 				{ "Host", requestInfo.GetQueryParameter("host") ?? "unknown" },
 				{ "Email", account.AccessIdentity },
 				{ "OldEmail", oldEmail },
 				{ "Name", account.Profile.Name },
-				{ "Time", DateTime.Now.ToString("hh:mm tt @ dd/MM/yyyy") },
-				{ "AppPlatform", requestInfo.Session.AppName + " @ " + requestInfo.Session.AppPlatform },
+				{ "Time", DateTime.Now },
 				{ "Location", await requestInfo.GetLocationAsync().ConfigureAwait(false) },
-				{ "IP", requestInfo.Session.IP },
-				{ "Signature", instructions.Item3 }
-			};
+				{ "EmailSignature", instructions.Item2.Item2 }
+			}.ToExpandoObject();
+
+			var parameters = $"{subject}\r\n{body}"
+				.GetDoubleBracesTokens()
+				.Select(token => token.Item2)
+				.Distinct(StringComparer.OrdinalIgnoreCase)
+				.ToDictionary(token => token, token =>
+				{
+					return token.StartsWith("@[") && token.EndsWith("]")
+						? Extensions.JsEvaluate(token.GetJsExpression(requestExpando, null, paramsExpando))
+						: token.StartsWith("@")
+							? token.Evaluate(new Tuple<ExpandoObject, ExpandoObject, ExpandoObject>(requestExpando, null, paramsExpando))
+							: token;
+				});
 
 			// send an email
-			var subject = instructions.Item1.Format(data);
-			var body = instructions.Item2.Format(data);
-			var smtp = instructions.Item5;
-			await this.SendEmailAsync(instructions.Item4, account.Profile.Name + " <" + account.AccessIdentity + ">", subject, body, smtp.Item1, smtp.Item2, smtp.Item3, smtp.Item4, smtp.Item5, cancellationToken).ConfigureAwait(false);
+			await this.SendEmailAsync(from, to, subject.Format(parameters), body.Format(parameters), smtpServerHost, smtpServerPort, smtpServerEnableSsl, smtpServerUsername, smtpServerPassword, cancellationToken).ConfigureAwait(false);
 
 			// response
 			return account.Profile.ToJson();
