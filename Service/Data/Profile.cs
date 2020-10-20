@@ -70,10 +70,13 @@ namespace net.vieapps.Services.Users
 		public string Alias { get; set; } = "";
 
 		[Property(MaxLength = 250), Searchable]
-		public string Bio { get; set; } = "";
+		public string Bio { get; set; }
 
 		[Searchable]
-		public string Notes { get; set; } = "";
+		public string Notes { get; set; }
+
+		[Property(IsCLOB = true), FormControl(Excluded = true)]
+		public string Options { get; set; }
 
 		[Sortable]
 		public DateTime LastUpdated { get; set; } = DateTime.Now;
@@ -98,6 +101,7 @@ namespace net.vieapps.Services.Users
 			{
 				json["Avatar"] = string.IsNullOrWhiteSpace(this.Avatar) ? "" : this.Avatar.StartsWith("/") ? Utility.FilesHttpURI + this.Avatar : this.Avatar.Replace("~~/", Utility.FilesHttpURI + "/");
 				json["Gravatar"] = this.GetGravatarURI();
+				json["Options"] = string.IsNullOrWhiteSpace(this.Options) ? null : JObject.Parse(this.Options);
 				onPreCompleted?.Invoke(json);
 			});
 	}

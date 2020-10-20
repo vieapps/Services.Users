@@ -1791,9 +1791,11 @@ namespace net.vieapps.Services.Users
 				throw new InformationNotFoundException();
 
 			// prepare
-			profile.CopyFrom(requestInfo.GetBodyJson(), "ID,Title,LastUpdated".ToHashSet(), accountprofile =>
+			var bodyJson = requestInfo.BodyAsJson;
+			profile.CopyFrom(bodyJson, "ID,Title,LastUpdated,Options".ToHashSet(), accountprofile =>
 			{
 				profile.Title = null;
+				profile.Options = bodyJson.Get<JObject>("Options")?.ToString(Formatting.None);
 				profile.LastUpdated = DateTime.Now;
 				profile.Avatar = string.IsNullOrWhiteSpace(profile.Avatar)
 					? string.Empty
