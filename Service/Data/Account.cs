@@ -6,14 +6,12 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Diagnostics;
 using System.Xml.Serialization;
-
+using MsgPack.Serialization;
+using MongoDB.Bson;
+using MongoDB.Bson.Serialization.Attributes;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Newtonsoft.Json.Converters;
-
-using MongoDB.Bson;
-using MongoDB.Bson.Serialization.Attributes;
-
 using net.vieapps.Components.Utility;
 using net.vieapps.Components.Security;
 using net.vieapps.Components.Repository;
@@ -21,7 +19,7 @@ using net.vieapps.Components.Repository;
 
 namespace net.vieapps.Services.Users
 {
-	[Serializable, BsonIgnoreExtraElements, DebuggerDisplay("ID = {ID}, Identity = {AccessIdentity}, Type = {Type}")]
+	[BsonIgnoreExtraElements, DebuggerDisplay("ID = {ID}, Identity = {AccessIdentity}, Type = {Type}")]
 	[Entity(CollectionName = "Accounts", TableName = "T_Users_Accounts", CacheClass = typeof(Utility), CacheName = "Cache", CreateNewVersionWhenUpdated = false)]
 	public class Account : Repository<Account>
 	{
@@ -107,9 +105,10 @@ namespace net.vieapps.Services.Users
 		[Ignore, JsonIgnore, BsonIgnore, XmlIgnore]
 		public List<Session> Sessions { get; set; }
 
-		[NonSerialized]
+		[MessagePackIgnore]
 		Profile _profile = null;
 
+		[MessagePackIgnore]
 		[Ignore, JsonIgnore, BsonIgnore, XmlIgnore]
 		public Profile Profile => this._profile ?? (this._profile = Profile.Get<Profile>(this.ID));
 
@@ -196,7 +195,6 @@ namespace net.vieapps.Services.Users
 	}
 
 	#region Two-Factors Authentication
-	[Serializable]
 	public class TwoFactorsAuthentication
 	{
 		public TwoFactorsAuthentication()
@@ -223,7 +221,6 @@ namespace net.vieapps.Services.Users
 		public List<TwoFactorsAuthenticationSetting> Settings { get; set; }
 	}
 
-	[Serializable]
 	public class TwoFactorsAuthenticationSetting
 	{
 		public TwoFactorsAuthenticationSetting()

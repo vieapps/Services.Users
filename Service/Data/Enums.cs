@@ -19,7 +19,6 @@ namespace net.vieapps.Services.Users
 	/// <summary>
 	/// Available gender of an user's account profile
 	/// </summary>
-	[Serializable]
 	public enum Gender
 	{
 		/// <summary>
@@ -43,7 +42,6 @@ namespace net.vieapps.Services.Users
 	/// <summary>
 	/// Available type of an user's account
 	/// </summary>
-	[Serializable]
 	public enum AccountType
 	{
 		/// <summary>
@@ -67,7 +65,6 @@ namespace net.vieapps.Services.Users
 	/// <summary>
 	/// Available status of an user's account
 	/// </summary>
-	[Serializable]
 	public enum AccountStatus
 	{
 		/// <summary>
@@ -96,7 +93,6 @@ namespace net.vieapps.Services.Users
 	/// <summary>
 	/// Available type of an OAuth's account
 	/// </summary>
-	[Serializable]
 	public enum OAuthType
 	{
 		/// <summary>
@@ -130,7 +126,6 @@ namespace net.vieapps.Services.Users
 	/// <summary>
 	/// Available type of two-factors authentication
 	/// </summary>
-	[Serializable]
 	public enum TwoFactorsAuthenticationType
 	{
 		/// <summary>

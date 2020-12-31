@@ -86,6 +86,6 @@ namespace net.vieapps.Services.Users
 
 	//  --------------------------------------------------------------------------------------------
 
-	[Serializable, Repository]
+	[Repository]
 	public abstract class Repository<T> : RepositoryBase<T> where T : class { }
 }
