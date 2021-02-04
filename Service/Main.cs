@@ -1765,11 +1765,19 @@ namespace net.vieapps.Services.Users
 				gotRights = await relatedService.CanManageAsync(requestInfo.Session.User, objectName, systemID, definitionID, objectID, cancellationToken).ConfigureAwait(false);
 				doNormalize = false;
 			}
-			if (!gotRights)
+			if (!gotRights && requestInfo.GetHeaderParameter("x-app") == null)
 				throw new AccessDeniedException();
 
 			// response
-			return profile.GetProfileJson(await this.GetProfileRelatedJsonAsync(requestInfo, cancellationToken).ConfigureAwait(false) as JObject, doNormalize);
+			var response = profile.GetProfileJson(await this.GetProfileRelatedJsonAsync(requestInfo, cancellationToken).ConfigureAwait(false) as JObject, doNormalize);
+			if (requestInfo.GetHeaderParameter("x-app") != null)
+				await this.SendUpdateMessageAsync(new UpdateMessage
+				{
+					Type = $"{this.ServiceName}#Profile",
+					Data = response,
+					DeviceID = requestInfo.Session.DeviceID
+				}, cancellationToken).ConfigureAwait(false);
+			return response;
 		}
 		#endregion
 
