@@ -1644,7 +1644,7 @@ namespace net.vieapps.Services.Users
 			var objects = totalRecords > 0
 				? string.IsNullOrWhiteSpace(query)
 					? await Profile.FindAsync(filter, sort, pageSize, pageNumber, $"{cacheKey}{pageNumber}", cancellationToken).ConfigureAwait(false)
-					: await Profile.SearchAsync(query, filter, pageSize, pageNumber, cancellationToken).ConfigureAwait(false)
+					: await Profile.SearchAsync(query, filter, null, pageSize, pageNumber, cancellationToken).ConfigureAwait(false)
 				: new List<Profile>();
 
 			// build result
