@@ -17,10 +17,10 @@ namespace net.vieapps.Services.Users.WindowsAD
 		public override void Start(string[] args = null, bool initializeRepository = true, Action<IService> next = null)
 			=> base.Start(args, false, next);
 
-		public override Task<JToken> ProcessRequestAsync(RequestInfo requestInfo, CancellationToken cancellationToken = default)
+		public override async Task<JToken> ProcessRequestAsync(RequestInfo requestInfo, CancellationToken cancellationToken = default)
 		{
 			var stopwatch = Stopwatch.StartNew();
-			this.WriteLogs(requestInfo, $"Begin request ({requestInfo.Verb} {requestInfo.GetURI()})");
+			await this.WriteLogsAsync(requestInfo, $"Begin request ({requestInfo.Verb} {requestInfo.GetURI()})").ConfigureAwait(false);
 			try
 			{
 				JToken json = null;
@@ -37,18 +37,20 @@ namespace net.vieapps.Services.Users.WindowsAD
 					default:
 						throw new InvalidRequestException($"The request is invalid [({requestInfo.Verb}): {requestInfo.GetURI()}]");
 				}
+
 				stopwatch.Stop();
-				this.WriteLogs(requestInfo, $"Success response - Execution times: {stopwatch.GetElapsedTimes()}");
+				await this.WriteLogsAsync(requestInfo, $"Success response - Execution times: {stopwatch.GetElapsedTimes()}").ConfigureAwait(false);
 				if (this.IsDebugResultsEnabled)
-					this.WriteLogs(requestInfo,
+					await this.WriteLogsAsync(requestInfo,
 						$"- Request: {requestInfo.ToString(this.IsDebugLogEnabled ? Formatting.Indented : Formatting.None)}" + "\r\n" +
 						$"- Response: {json?.ToString(this.IsDebugLogEnabled ? Formatting.Indented : Formatting.None)}"
-					);
-				return Task.FromResult(json);
+					).ConfigureAwait(false);
+
+				return json;
 			}
 			catch (Exception ex)
 			{
-				return Task.FromException<JToken>(this.GetRuntimeException(requestInfo, ex, stopwatch));
+				throw this.GetRuntimeException(requestInfo, ex, stopwatch);
 			}
 		}
 

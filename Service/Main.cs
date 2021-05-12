@@ -3,7 +3,6 @@ using System;
 using System.Linq;
 using System.Dynamic;
 using System.Diagnostics;
-using System.Numerics;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Collections.Generic;
@@ -78,8 +77,8 @@ namespace net.vieapps.Services.Users
 		public override async Task<JToken> ProcessRequestAsync(RequestInfo requestInfo, CancellationToken cancellationToken = default)
 		{
 			var stopwatch = Stopwatch.StartNew();
-			this.WriteLogs(requestInfo, $"Begin request ({requestInfo.Verb} {requestInfo.GetURI()})");
-			using (var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, this.CancellationTokenSource.Token))
+			await this.WriteLogsAsync(requestInfo, $"Begin request ({requestInfo.Verb} {requestInfo.GetURI()})").ConfigureAwait(false);
+			using (var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, this.CancellationToken))
 				try
 				{
 					JToken json = null;
@@ -128,9 +127,9 @@ namespace net.vieapps.Services.Users
 							throw new InvalidRequestException($"The request is invalid ({requestInfo.Verb} {requestInfo.GetURI()})");
 					}
 					stopwatch.Stop();
-					this.WriteLogs(requestInfo, $"Success response - Execution times: {stopwatch.GetElapsedTimes()}");
+					await this.WriteLogsAsync(requestInfo, $"Success response - Execution times: {stopwatch.GetElapsedTimes()}").ConfigureAwait(false);
 					if (this.IsDebugResultsEnabled)
-						this.WriteLogs(requestInfo, $"- Request: {requestInfo.ToString(this.JsonFormat)}" + "\r\n" + $"- Response: {json?.ToString(this.JsonFormat)}");
+						await this.WriteLogsAsync(requestInfo, $"- Request: {requestInfo.ToString(this.JsonFormat)}" + "\r\n" + $"- Response: {json?.ToString(this.JsonFormat)}").ConfigureAwait(false);
 					return json;
 				}
 				catch (Exception ex)
@@ -2212,7 +2211,7 @@ namespace net.vieapps.Services.Users
 			else if (message.Type.IsEquals("Session#Status"))
 			{
 				var numberOfVisitorSessions = this.Sessions.Count(kvp => string.IsNullOrWhiteSpace(kvp.Value.Item2));
-				await this.SendUpdateMessageAsync(new UpdateMessage
+				new UpdateMessage
 				{
 					Type = "Users#Session#Status",
 					DeviceID = "*",
@@ -2222,7 +2221,7 @@ namespace net.vieapps.Services.Users
 						{ "VisitorSessions", numberOfVisitorSessions },
 						{ "UserSessions", this.Sessions.Count - numberOfVisitorSessions }
 					}
-				}, cancellationToken).ConfigureAwait(false);
+				}.Send();
 			}
 
 			// unknown
