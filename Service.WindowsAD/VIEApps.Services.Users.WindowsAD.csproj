@@ -3,7 +3,7 @@
 	<PropertyGroup>
 		<TargetFrameworks>net5.0;netstandard2.0</TargetFrameworks>
 		<WarningLevel>3</WarningLevel>
-		<NoWarn>CA1416,1573,1591</NoWarn>
+		<NoWarn>1573,1591,IDE0066,CA1416</NoWarn>
 		<CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
 		<RootNamespace>net.vieapps.Services.Users.WindowsAD</RootNamespace>
 		<AssemblyName>VIEApps.Services.Users.WindowsAD</AssemblyName>
@@ -23,7 +23,7 @@
 
 	<ItemGroup>
 		<PackageReference Include="System.DirectoryServices.AccountManagement" Version="5.0.0" />
-		<PackageReference Include="VIEApps.Services.Base" Version="10.4.2105.1" />
+		<PackageReference Include="VIEApps.Services.Base" Version="10.4.2107.2" />
 	</ItemGroup>
 
 </Project>

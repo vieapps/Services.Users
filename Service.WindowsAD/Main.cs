@@ -3,7 +3,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Diagnostics;
 using System.DirectoryServices.AccountManagement;
-using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using net.vieapps.Components.Utility;
 using net.vieapps.Components.Security;
@@ -41,10 +40,7 @@ namespace net.vieapps.Services.Users.WindowsAD
 				stopwatch.Stop();
 				await this.WriteLogsAsync(requestInfo, $"Success response - Execution times: {stopwatch.GetElapsedTimes()}").ConfigureAwait(false);
 				if (this.IsDebugResultsEnabled)
-					await this.WriteLogsAsync(requestInfo,
-						$"- Request: {requestInfo.ToString(this.IsDebugLogEnabled ? Formatting.Indented : Formatting.None)}" + "\r\n" +
-						$"- Response: {json?.ToString(this.IsDebugLogEnabled ? Formatting.Indented : Formatting.None)}"
-					).ConfigureAwait(false);
+					await this.WriteLogsAsync(requestInfo, $"- Request: {requestInfo.ToString(this.JsonFormat)}" + "\r\n" + $"- Response: {json?.ToString(this.JsonFormat)}").ConfigureAwait(false);
 
 				return json;
 			}
@@ -61,10 +57,10 @@ namespace net.vieapps.Services.Users.WindowsAD
 				throw new InformationInvalidException();
 
 			// prepare
-			var body = requestInfo.GetBodyExpando();
-			var domain = body.Get<string>("Domain").Decrypt(this.EncryptionKey).Trim();
-			var username = body.Get<string>("Username").Decrypt(this.EncryptionKey).Trim();
-			var password = body.Get<string>("Password").Decrypt(this.EncryptionKey);
+			var requestBody = requestInfo.GetBodyExpando();
+			var domain = requestBody.Get<string>("Domain").Decrypt(this.EncryptionKey).Trim();
+			var username = requestBody.Get<string>("Username").Decrypt(this.EncryptionKey).Trim();
+			var password = requestBody.Get<string>("Password").Decrypt(this.EncryptionKey);
 
 			// perform sign-in with Windows Directory Service (when domain doesn't got dot (.) in the name, means local machine)
 			using (var context = new PrincipalContext(domain.PositionOf(".") < 0 ? ContextType.Machine : ContextType.Domain, domain))
@@ -83,11 +79,11 @@ namespace net.vieapps.Services.Users.WindowsAD
 				throw new InformationInvalidException();
 
 			// prepare
-			var body = requestInfo.GetBodyExpando();
-			var domain = body.Get<string>("Domain").Decrypt(this.EncryptionKey).Trim();
-			var username = body.Get<string>("Username").Decrypt(this.EncryptionKey).Trim();
-			var password = body.Get<string>("Password").Decrypt(this.EncryptionKey);
-			var oldPassword = body.Get<string>("OldPassword").Decrypt(this.EncryptionKey);
+			var requestBody = requestInfo.GetBodyExpando();
+			var domain = requestBody.Get<string>("Domain").Decrypt(this.EncryptionKey).Trim();
+			var username = requestBody.Get<string>("Username").Decrypt(this.EncryptionKey).Trim();
+			var password = requestBody.Get<string>("Password").Decrypt(this.EncryptionKey);
+			var oldPassword = requestBody.Get<string>("OldPassword").Decrypt(this.EncryptionKey);
 
 			// perform sign-in and change password with Windows Directory Service (when domain doesn't got dot (.) in the name, means local machine)
 			using (var context = new PrincipalContext(domain.PositionOf(".") < 0 ? ContextType.Machine : ContextType.Domain, domain))

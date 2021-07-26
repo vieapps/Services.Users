@@ -3,7 +3,7 @@
 	<PropertyGroup>
 		<TargetFrameworks>net5.0;netstandard2.0</TargetFrameworks>
 		<WarningLevel>3</WarningLevel>
-		<NoWarn>1573,1591</NoWarn>
+		<NoWarn>1573,1591,IDE0054,IDE0063,IDE0066,IDE0074,IDE0090,CA1068,CA1507,CA1822</NoWarn>
 		<RootNamespace>net.vieapps.Services.Users</RootNamespace>
 		<AssemblyName>VIEApps.Services.Users</AssemblyName>
 		<AssemblyTitle>VIEApps NGX Users</AssemblyTitle>
@@ -21,7 +21,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Include="VIEApps.Services.Base" Version="10.4.2105.1" />
+		<PackageReference Include="VIEApps.Services.Base" Version="10.4.2107.2" />
 	</ItemGroup>
 
 </Project>
