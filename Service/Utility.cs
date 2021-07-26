@@ -27,9 +27,9 @@ namespace net.vieapps.Services.Users
 
 		public static string FilesHttpURI { get; internal set; }
 
-		public static string CaptchaURI => $"{Utility.FilesHttpURI}/captchas/";
+		public static string CaptchaHttpURI { get; internal set; } = $"{Utility.FilesHttpURI}/captchas/";
 
-		public static string AvatarURI => $"{Utility.FilesHttpURI}/avatars/";
+		public static string AvatarHttpURI { get; internal set; } = $"{Utility.FilesHttpURI}/avatars/";
 
 		public static string ActivateHttpURI { get; internal set; }
 
