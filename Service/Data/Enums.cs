@@ -118,7 +118,12 @@ namespace net.vieapps.Services.Users
 		/// <summary>
 		/// Presents the account that are authenticated by LinkedIn OAuth
 		/// </summary>
-		LinkedIn
+		LinkedIn,
+
+		/// <summary>
+		/// Presents the account that are authenticated by GitHub OAuth
+		/// </summary>
+		GitHub
 	}
 
 	//  --------------------------------------------------------------------------------------------
@@ -134,13 +139,8 @@ namespace net.vieapps.Services.Users
 		App,
 
 		/// <summary>
-		/// Presents the complex integrated SMS
+		/// Presents the authenticating SMS message (OTP) via mobile phone
 		/// </summary>
-		SMS,
-
-		/// <summary>
-		/// Presents the simple mobile phone number
-		/// </summary>
-		Phone
+		SMS
 	}
 }
