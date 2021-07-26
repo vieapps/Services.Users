@@ -7,7 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Collections.Generic;
 using System.Collections.Concurrent;
-using System.Security.Cryptography;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -30,26 +30,9 @@ namespace net.vieapps.Services.Users
 
 		string AuthenticationKey => this.GetKey("Authentication", "VIEApps-65E47754-NGX-50C0-Services-4565-Authentication-BA55-Key-A8CC23879C5D");
 
-		RSA _rsa = null;
+		HashSet<string> WindowsAD { get; set; } = UtilityService.GetAppSetting("Users:WindowsAD", "vieapps.net|vieapps.com").ToLower().ToHashSet("|", true);
 
-		RSA RSA
-		{
-			get
-			{
-				if (this._rsa == null)
-				{
-					this._rsa = CryptoService.CreateRSA(this.RSAKey);
-					if (this._rsa.KeySize != 2048)
-					{
-						this._rsa = RSA.Create();
-						this._rsa.KeySize = 2048;
-					}
-				}
-				return this._rsa;
-			}
-		}
-
-		HashSet<string> WindowsAD { get; set; }
+		string PhoneCountryCode = UtilityService.GetAppSetting("Users:Phone:CountryCode", "84");
 		#endregion
 
 		public override string ServiceName => "Users";
@@ -66,9 +49,17 @@ namespace net.vieapps.Services.Users
 				Utility.FilesHttpURI = this.GetHttpURI("Files", "https://fs.vieapps.net");
 				while (Utility.FilesHttpURI.EndsWith("/"))
 					Utility.FilesHttpURI = Utility.FilesHttpURI.Left(Utility.FilesHttpURI.Length - 1);
+				Utility.CaptchaHttpURI = this.GetHttpURI("Captchas", Utility.FilesHttpURI);
+				while (Utility.CaptchaHttpURI.EndsWith("/"))
+					Utility.CaptchaHttpURI = Utility.CaptchaHttpURI.Left(Utility.CaptchaHttpURI.Length - 1);
+				Utility.CaptchaHttpURI = $"{Utility.CaptchaHttpURI}/captchas/";
+				Utility.AvatarHttpURI = this.GetHttpURI("Captchas", Utility.FilesHttpURI);
+				while (Utility.AvatarHttpURI.EndsWith("/"))
+					Utility.AvatarHttpURI = Utility.AvatarHttpURI.Left(Utility.AvatarHttpURI.Length - 1);
+				Utility.AvatarHttpURI = $"{Utility.AvatarHttpURI}/avatars/";
 
 				// register timers
-				this.RegisterTimers(args);
+				this.RegisterTimers();
 
 				// last action
 				next?.Invoke(this);
@@ -89,7 +80,7 @@ namespace net.vieapps.Services.Users
 							break;
 
 						case "otp":
-							json = await this.ProcessOTPAsync(requestInfo, cts.Token).ConfigureAwait(false);
+							json = await this.ProcessOtpAsync(requestInfo, cts.Token).ConfigureAwait(false);
 							break;
 
 						case "account":
@@ -119,7 +110,7 @@ namespace net.vieapps.Services.Users
 							json = new JObject
 							{
 								{ "Code", captcha },
-								{ "Uri", $"{Utility.CaptchaURI}{captcha.Url64Encode()}/{(requestInfo.GetQueryParameter("register") ?? UtilityService.NewUUID.Encrypt(this.EncryptionKey, true)).Substring(UtilityService.GetRandomNumber(13, 43), 13).Reverse()}.jpg" }
+								{ "Uri", $"{Utility.CaptchaHttpURI}{captcha.Url64Encode()}/{(requestInfo.GetQueryParameter("register") ?? UtilityService.NewUUID.Encrypt(this.EncryptionKey, true)).Substring(UtilityService.GetRandomNumber(13, 43), 13).Reverse()}.jpg" }
 							};
 							break;
 
@@ -161,7 +152,8 @@ namespace net.vieapps.Services.Users
 
 			try
 			{
-				var request = new RequestInfo(
+				var request = new RequestInfo
+				(
 					new Services.Session(requestInfo.Session)
 					{
 						User = user ?? requestInfo.Session.User ?? User.GetDefault(requestInfo.Session.SessionID)
@@ -175,11 +167,9 @@ namespace net.vieapps.Services.Users
 					new Dictionary<string, string>(requestInfo.Extra ?? new Dictionary<string, string>(), StringComparer.OrdinalIgnoreCase),
 					correlationID
 				);
-
+				extra?.ForEach(kvp => request.Extra[kvp.Key] = kvp.Value);
 				if (!string.IsNullOrWhiteSpace(objectIdentity))
 					request.Query["object-identity"] = objectIdentity;
-
-				extra?.ForEach(kvp => request.Extra[kvp.Key] = kvp.Value);
 
 				return await this.CallServiceAsync(request, cancellationToken).ConfigureAwait(false);
 			}
@@ -201,20 +191,20 @@ namespace net.vieapps.Services.Users
 		#region Get instructions
 		async Task<Tuple<Tuple<string, string>, Tuple<string, string>, Tuple<string, int, bool, string, string>>> GetInstructionsOfRelatedServiceAsync(RequestInfo requestInfo, string mode = "reset", CancellationToken cancellationToken = default)
 		{
-			var data = await this.CallRelatedServiceAsync(requestInfo, "Instructions", new Dictionary<string, string> { ["mode"] = mode }, cancellationToken).ConfigureAwait(false);
+			var response = await this.CallRelatedServiceAsync(requestInfo, "Instructions", new Dictionary<string, string> { ["mode"] = mode }, cancellationToken).ConfigureAwait(false);
 
-			var message = data.Get("Message", new JObject());
+			var message = response.Get("Message", new JObject());
 			var subject = message.Get<string>("Subject");
 			var body = message.Get<string>("Body");
 
-			var email = data.Get("Email", new JObject());
+			var email = response.Get("Email", new JObject());
 			var emailSender = email.Get<string>("Sender");
 			var emailSignature = email.Get<string>("Signature");
 
-			var smtp = email.Get<JObject>("Smtp", new JObject());
+			var smtp = email.Get("Smtp", new JObject());
 			var smtpServerHost = smtp.Get<string>("Host");
-			var smtpServerPort = smtp.Get<int>("Port", 25);
-			var smtpServerEnableSsl = smtp.Get<bool>("EnableSsl", false);
+			var smtpServerPort = smtp.Get("Port", 25);
+			var smtpServerEnableSsl = smtp.Get("EnableSsl", false);
 			var smtpUser = smtp.Get<string>("User");
 			var smtpUserPassword = smtp.Get<string>("UserPassword");
 
@@ -254,8 +244,8 @@ namespace net.vieapps.Services.Users
 				try
 				{
 					var apisURI = this.GetHttpURI("APIs", "https://apis.vieapps.net");
-					var json = await UtilityService.FetchWebResourceAsync($"{apisURI}/statics/instructions/users/{requestInfo.GetQueryParameter("language") ?? "vi-VN"}.json", cancellationToken).ConfigureAwait(false);
-					var instruction = JObject.Parse(json).Get<JObject>(mode);
+					var response = await UtilityService.FetchWebResourceAsync($"{apisURI}/statics/instructions/users/{requestInfo.GetParameter("language") ?? "vi-VN"}.json", cancellationToken).ConfigureAwait(false);
+					var instruction = response.ToJson().Get<JObject>(mode);
 					subject = string.IsNullOrWhiteSpace(subject) ? instruction?.Get<string>("subject") : subject;
 					body = string.IsNullOrWhiteSpace(body) ? instruction?.Get<string>("body") : body;
 				}
@@ -342,7 +332,7 @@ namespace net.vieapps.Services.Users
 
 			// get information
 			var session = requestInfo.Session.User.ID.Equals("") || requestInfo.Session.User.IsSystemAccount
-				? await Utility.Cache.FetchAsync<Session>(requestInfo.Session.SessionID).ConfigureAwait(false)
+				? await Utility.Cache.FetchAsync<Session>(requestInfo.Session.SessionID, cancellationToken).ConfigureAwait(false)
 				: await Session.GetAsync<Session>(requestInfo.Session.SessionID, cancellationToken).ConfigureAwait(false);
 
 			return session?.ToJson();
@@ -360,15 +350,15 @@ namespace net.vieapps.Services.Users
 			if (requestInfo.Extra == null || !requestInfo.Extra.ContainsKey("Signature") || !requestInfo.Extra["Signature"].Equals(requestInfo.Body.GetHMACSHA256(this.ValidationKey)))
 				throw new InformationInvalidException("The signature is not found or invalid");
 
-			var request = requestInfo.GetBodyExpando();
-			if (request == null)
+			var requestBody = requestInfo.GetBodyExpando();
+			if (requestBody == null)
 				throw new InformationRequiredException();
 
 			// register a session of vistor/system account
 			if (requestInfo.Session.User.ID.Equals("") || requestInfo.Session.User.IsSystemAccount)
 			{
 				// update cache of session
-				var session = Session.CreateInstance(request);
+				var session = Session.CreateInstance(requestBody);
 				await Utility.Cache.SetAsync(session, cancellationToken).ConfigureAwait(false);
 
 				// response
@@ -381,25 +371,26 @@ namespace net.vieapps.Services.Users
 				var session = await Session.GetAsync<Session>(requestInfo.Session.SessionID, cancellationToken, false).ConfigureAwait(false);
 				if (session == null)
 				{
-					session = Session.CreateInstance(request);
+					session = Session.CreateInstance(requestBody);
 					await Session.CreateAsync(session, cancellationToken).ConfigureAwait(false);
 				}
 				else
 				{
-					if (!requestInfo.Session.SessionID.IsEquals(request.Get<string>("ID")) || !requestInfo.Session.User.ID.IsEquals(request.Get<string>("UserID")))
+					if (!requestInfo.Session.SessionID.IsEquals(requestBody.Get<string>("ID")) || !requestInfo.Session.User.ID.IsEquals(requestBody.Get<string>("UserID")))
 						throw new InvalidSessionException();
 
-					await Session.UpdateAsync(session.Fill(request), true, cancellationToken).ConfigureAwait(false);
+					await Session.UpdateAsync(session.Fill(requestBody), true, cancellationToken).ConfigureAwait(false);
 				}
 
 				// make sure the cache has updated && remove duplicated sessions
-				await Task.WhenAll(
+				await Task.WhenAll
+				(
 					Utility.Cache.SetAsync(session, cancellationToken),
 					Session.DeleteManyAsync(Filters<Session>.And(Filters<Session>.Equals("DeviceID", session.DeviceID), Filters<Session>.NotEquals("ID", session.ID)), null, cancellationToken)
 				).ConfigureAwait(false);
 
 				// update account information
-				var account = await Account.GetAsync<Account>(session.UserID, cancellationToken).ConfigureAwait(false);
+				var account = await Account.GetByIDAsync(session.UserID, cancellationToken).ConfigureAwait(false);
 				if (account != null)
 				{
 					account.LastAccess = DateTime.Now;
@@ -421,23 +412,25 @@ namespace net.vieapps.Services.Users
 				throw new InformationInvalidException("The signature is not found or invalid");
 
 			// prepare
-			var request = requestInfo.GetBodyExpando();
-			var email = request.Get("Email", "").Decrypt(this.EncryptionKey).Trim().ToLower();
-			var password = request.Get("Password", "").Decrypt(this.EncryptionKey);
+			var requestBody = requestInfo.GetBodyExpando();
 
-			if (this.WindowsAD == null)
-				this.WindowsAD = UtilityService.GetAppSetting("Users:WindowsAD", "vieapps.net|vieapps.com").ToLower().ToHashSet("|", true);
-			var domain = email.Right(email.Length - email.PositionOf("@") - 1).Trim();
+			var identity = requestBody.Get("Account", "").Decrypt(this.EncryptionKey).Trim().ToLower();
+			if (string.IsNullOrWhiteSpace(identity))
+				identity = requestBody.Get("Email", "").Decrypt(this.EncryptionKey).Trim().ToLower();
+
+			var password = requestBody.Get("Password", "").Decrypt(this.EncryptionKey);
+
+			var domain = identity.Right(identity.Length - identity.PositionOf("@") - 1).Trim();
 			var type = this.WindowsAD.Contains(domain)
 				? AccountType.Windows
-				: request.Get("Type", "BuiltIn").TryToEnum(out AccountType acctype) ? acctype : AccountType.BuiltIn;
+				: requestBody.Get("Type", "BuiltIn").TryToEnum(out AccountType acctype) ? acctype : AccountType.BuiltIn;
 
 			Account account = null;
 
-			// Windows account
+			// Windows AD account
 			if (type.Equals(AccountType.Windows))
 			{
-				var username = email.Left(email.PositionOf("@"));
+				var username = identity.Left(identity.PositionOf("@"));
 				username = username.PositionOf(@"\") > 0
 					? username.Right(username.Length - username.PositionOf(@"\") - 1).Trim()
 					: username.Trim();
@@ -451,11 +444,15 @@ namespace net.vieapps.Services.Users
 
 				await this.CallServiceAsync(new RequestInfo(requestInfo.Session, "WindowsAD", "Account", "POST")
 				{
-					Header = requestInfo.Header,
-					Body = body,
-					Extra = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+					Header = new Dictionary<string, string>(requestInfo.Header ?? new Dictionary<string, string>(), StringComparer.OrdinalIgnoreCase),
+					Query = new Dictionary<string, string>(requestInfo.Query ?? new Dictionary<string, string>(), StringComparer.OrdinalIgnoreCase)
 					{
-						{ "Signature", body.GetHMACSHA256(this.ValidationKey) }
+						["language"] = requestInfo.GetParameter("language") ?? "en-US"
+					},
+					Body = body,
+					Extra = new Dictionary<string, string>(requestInfo.Query ?? new Dictionary<string, string>(), StringComparer.OrdinalIgnoreCase)
+					{
+						["Signature"] = body.GetHMACSHA256(this.ValidationKey)
 					}
 				}, cancellationToken).ConfigureAwait(false);
 
@@ -467,22 +464,22 @@ namespace net.vieapps.Services.Users
 				// create information of account/profile
 				if (needToCreateAccount)
 				{
-					account = await Account.GetByIdentityAsync(email, AccountType.Windows, cancellationToken).ConfigureAwait(false);
+					account = await Account.GetByAccessIdentityAsync(identity, AccountType.Windows, cancellationToken).ConfigureAwait(false);
 					if (account == null)
 					{
 						account = new Account
 						{
-							ID = email.GenerateUUID(),
+							ID = identity.GenerateUUID(),
 							Type = AccountType.Windows,
-							AccessIdentity = email
+							AccessIdentity = identity
 						};
 						await Account.CreateAsync(account, cancellationToken).ConfigureAwait(false);
 
 						var profile = new Profile
 						{
 							ID = account.ID,
-							Name = request.Get("Name", username),
-							Email = email
+							Name = requestBody.Get("Name", username),
+							Email = identity
 						};
 						await Profile.CreateAsync(profile, cancellationToken).ConfigureAwait(false);
 					}
@@ -499,22 +496,25 @@ namespace net.vieapps.Services.Users
 
 			}
 
-			// BuiltIn account
+			// Built-In account
 			else
 			{
-				account = await Account.GetByIdentityAsync(email, AccountType.BuiltIn, cancellationToken).ConfigureAwait(false);
+				account = await Account.GetByAccessIdentityAsync(this.ValidatePhone(identity, out var phone) ? phone : identity, AccountType.BuiltIn, cancellationToken).ConfigureAwait(false);
 				if (account == null || !Account.GeneratePassword(account.ID, password).Equals(account.AccessKey))
 					throw new WrongAccountException();
 			}
 
-			// prepare results
-			var results = account.GetAccountJson();
+			// prepare response
+			var response = account.GetAccountJson();
 
 			// two-factors authentication is required
 			if (account.TwoFactorsAuthentication.Required)
 			{
-				results["Require2FA"] = true;
-				results["Providers"] = account.TwoFactorsAuthentication.GetProvidersJson(this.AuthenticationKey);
+				response["Require2FA"] = true;
+				response["Providers"] = account.TwoFactorsAuthentication.GetProvidersJson(this.AuthenticationKey);
+				var provider = account.TwoFactorsAuthentication.Providers.FirstOrDefault();
+				if (provider != null && provider.Type.Equals(TwoFactorsAuthenticationType.SMS))
+					await this.SendOtpSmsAsync(requestInfo, account, provider.Stamp, true, cancellationToken).ConfigureAwait(false);
 			}
 
 			// clear cached of current session when 2FA is not required
@@ -522,7 +522,7 @@ namespace net.vieapps.Services.Users
 				await Utility.Cache.RemoveAsync<Session>(requestInfo.Session.SessionID, cancellationToken).ConfigureAwait(false);
 
 			// response
-			return results;
+			return response;
 		}
 		#endregion
 
@@ -537,12 +537,12 @@ namespace net.vieapps.Services.Users
 			await Session.DeleteAsync<Session>(requestInfo.Session.SessionID, requestInfo.Session.User.ID, cancellationToken).ConfigureAwait(false);
 
 			// update account
-			var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID, cancellationToken).ConfigureAwait(false);
+			var account = await Account.GetByIDAsync(requestInfo.Session.User.ID, cancellationToken).ConfigureAwait(false);
 			if (account != null)
 			{
 				if (account.Sessions == null)
 					await account.GetSessionsAsync(cancellationToken).ConfigureAwait(false);
-				account.Sessions = account.Sessions.Where(s => !s.ID.Equals(requestInfo.Session.SessionID)).ToList();
+				account.Sessions = account.Sessions.Where(session => !session.ID.Equals(requestInfo.Session.SessionID)).ToList();
 				account.LastAccess = DateTime.Now;
 				await Account.UpdateAsync(account, true, cancellationToken).ConfigureAwait(false);
 			}
@@ -552,17 +552,17 @@ namespace net.vieapps.Services.Users
 		}
 		#endregion
 
-		Task<JToken> ProcessOTPAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		Task<JToken> ProcessOtpAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			switch (requestInfo.Verb)
 			{
+				// provision
+				case "GET":
+					return this.ProvisionOtpAsync(requestInfo, cancellationToken);
+
 				// validate
 				case "POST":
-					return this.ValidateOTPAsync(requestInfo, cancellationToken);
-
-				// provisioning
-				case "GET":
-					return this.GetProvisioningOTPAsync(requestInfo, cancellationToken);
+					return this.ValidateOtpAsync(requestInfo, cancellationToken);
 
 				// update
 				case "PUT":
@@ -578,15 +578,107 @@ namespace net.vieapps.Services.Users
 			}
 		}
 
-		#region Validate an OTP
-		async Task<JToken> ValidateOTPAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		#region Provision OTP
+		async Task<JToken> ProvisionOtpAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// prepare
-			var body = requestInfo.GetBodyExpando();
+			var identity = requestInfo.GetParameter("x-sms-otp") ?? requestInfo.Session.User.ID;
+			var account = !string.IsNullOrWhiteSpace(identity) && identity.IsValidUUID()
+				? await Account.GetByIDAsync(identity, cancellationToken).ConfigureAwait(false)
+				: await Account.GetByAccessIdentityAsync(this.ValidatePhone(identity, out var number) ? number : identity, AccountType.BuiltIn, cancellationToken).ConfigureAwait(false);
+			if (account == null)
+				throw new InformationNotFoundException();
 
-			var id = body.Get("ID", "");
-			var otp = body.Get("OTP", "");
-			var info = body.Get("Info", "");
+			var type = TwoFactorsAuthenticationType.App;
+			if (requestInfo.Extra != null && requestInfo.Extra.ContainsKey("OtpType"))
+				try
+				{
+					type = requestInfo.Extra["OtpType"].Decrypt(this.EncryptionKey).ToEnum<TwoFactorsAuthenticationType>();
+				}
+				catch { }
+
+			var phone = string.Empty;
+			if (requestInfo.Extra != null && requestInfo.Extra.ContainsKey("OtpPhone"))
+				try
+				{
+					phone = requestInfo.Extra["OtpPhone"].Decrypt(this.EncryptionKey);
+				}
+				catch { }
+
+			// send OTP code to a phone number
+			if (type.Equals(TwoFactorsAuthenticationType.SMS) && !string.IsNullOrWhiteSpace(phone) && !string.IsNullOrWhiteSpace(requestInfo.GetParameter("x-sms-otp")))
+				try
+				{
+					if (identity.IsEquals(requestInfo.GetParameter("x-sms-account")?.Url64Decode()) && this.ValidatePhone(identity, out phone))
+					{
+						phone = phone.Encrypt(this.AuthenticationKey, true);
+						if (account.TwoFactorsAuthentication.Settings.FirstOrDefault(provider => provider.Type.Equals(type) && provider.Stamp.Equals(phone)) == null)
+							throw new InformationInvalidException();
+					}
+					else
+					{
+						var data = phone.Decrypt(this.AuthenticationKey, true).ToArray("|");
+						if (data.Length != 2 || !data.First().IsEquals($"{type}"))
+							throw new InformationInvalidException();
+						phone = data.Last();
+					}
+					return await this.SendOtpSmsAsync(requestInfo, account, phone, true, cancellationToken).ConfigureAwait(false);
+				}
+				catch (InformationInvalidException)
+				{
+					throw;
+				}
+				catch (Exception ex)
+				{
+					throw new InformationInvalidException(ex);
+				}
+
+			// provision
+			if (type.Equals(TwoFactorsAuthenticationType.SMS) && !this.ValidatePhone(phone, out phone))
+				throw new InformationInvalidException($"The phone number is invalid");
+
+			var stamp = type.Equals(TwoFactorsAuthenticationType.App)
+				? $"{UtilityService.NewUUID}#{DateTime.Now.ToIsoString(true)}".GetHMACSHA256(account.ID)
+				: phone.Encrypt(this.AuthenticationKey, true);
+
+			var issuer = string.Empty;
+			if (requestInfo.Extra != null && requestInfo.Extra.ContainsKey("OtpIssuer"))
+				try
+				{
+					issuer = requestInfo.Extra["OtpIssuer"].Decrypt(this.EncryptionKey);
+				}
+				catch { }
+
+			var response = type.Equals(TwoFactorsAuthenticationType.SMS)
+				? await this.SendOtpSmsAsync(requestInfo, account, phone, false, cancellationToken).ConfigureAwait(false)
+				: await this.CallOtpServiceAsync(requestInfo, type, account.ID, stamp, null, cancellationToken, new Dictionary<string, string>
+					{
+						{ "Account", account.AccessIdentity.Encrypt(this.EncryptionKey) },
+						{ "Issuer", issuer.Encrypt(this.EncryptionKey) },
+						{ "Setup", type.ToString() }
+					}).ConfigureAwait(false);
+
+			// response
+			response["Provisioning"] = new JObject
+			{
+				{ "Type", $"{type}" },
+				{ "Account", account.AccessIdentity },
+				{ "ID", account.ID },
+				{ "Stamp", stamp }
+			}.ToString(Formatting.None).Encrypt(this.AuthenticationKey);
+			return response;
+		}
+		#endregion
+
+		#region Validate an OTP
+		async Task<JToken> ValidateOtpAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		{
+			// prepare
+			var requestBody = requestInfo.GetBodyExpando();
+
+			var id = requestBody.Get<string>("ID");
+			var otp = requestBody.Get<string>("OTP");
+			var info = requestBody.Get<string>("Info");
 			if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(otp) || string.IsNullOrWhiteSpace(info))
 				throw new InformationRequiredException();
 
@@ -601,21 +693,20 @@ namespace net.vieapps.Services.Users
 				throw new InformationInvalidException(ex);
 			}
 
-			var account = await Account.GetAsync<Account>(id, cancellationToken);
+			var account = await Account.GetByIDAsync(id, cancellationToken).ConfigureAwait(false);
 			if (account == null)
 				throw new InformationNotFoundException();
 
-			var type = TwoFactorsAuthenticationType.App;
-			var stamp = "";
+			TwoFactorsAuthenticationType type;
+			string stamp;
 			try
 			{
-				var data = info.Decrypt(this.AuthenticationKey, true).ToArray('|');
-				type = data[0].ToEnum<TwoFactorsAuthenticationType>();
-				var time = Convert.ToInt64(data[2]);
-				if (account.TwoFactorsAuthentication.Settings.Where(s => s.Type.Equals(type) && s.Stamp.Equals(data[1]) && s.Time.Equals(time)).Count() > 0)
-					stamp = data[1] + (!type.Equals(TwoFactorsAuthenticationType.Phone) ? $"|{time}" : "");
-				else
+				var data = info.Decrypt(this.AuthenticationKey, true).ToArray("|");
+				if (data.Length != 2)
 					throw new InformationInvalidException();
+				if (!data.First().TryToEnum(out type))
+					type = TwoFactorsAuthenticationType.App;
+				stamp = data.Last();
 			}
 			catch (InformationInvalidException)
 			{
@@ -627,67 +718,15 @@ namespace net.vieapps.Services.Users
 			}
 
 			// validate
-			await this.CallServiceAsync(new RequestInfo(requestInfo.Session, "AuthenticatorOTP", "Time-Based-OTP", "GET")
-			{
-				Extra = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-				{
-					{ "Type", type.ToString() },
-					{ "ID", account.ID.Encrypt(this.EncryptionKey) },
-					{ "Stamp", stamp.Encrypt(this.EncryptionKey) },
-					{ "Password", otp.Encrypt(this.EncryptionKey) }
-				}
-			}, cancellationToken).ConfigureAwait(false);
+			await this.CallOtpServiceAsync(requestInfo, type, account.ID, stamp, otp, cancellationToken).ConfigureAwait(false);
 
-			// update when success
-			await Task.WhenAll(
+			// response
+			await Task.WhenAll
+			(
 				Utility.Cache.SetAsync(account, cancellationToken),
 				Utility.Cache.RemoveAsync<Session>(requestInfo.Session.SessionID, cancellationToken)
 			).ConfigureAwait(false);
-
 			return account.GetAccountJson();
-		}
-		#endregion
-
-		#region Get an OTP for provisioning
-		async Task<JToken> GetProvisioningOTPAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
-		{
-			// check
-			var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID, cancellationToken).ConfigureAwait(false);
-			if (account == null)
-				throw new InformationNotFoundException();
-
-			var body = requestInfo.GetRequestExpando();
-			if (!body.Get("Type", "").TryToEnum(out TwoFactorsAuthenticationType type))
-				type = TwoFactorsAuthenticationType.App;
-
-			var stamp = type.Equals(TwoFactorsAuthenticationType.App) ? UtilityService.NewUUID : body.Get("Number", "");
-			if (string.IsNullOrWhiteSpace(stamp))
-				throw new InformationRequiredException();
-
-			// get provisioning info
-			stamp += "|" + DateTime.Now.ToUnixTimestamp().ToString();
-			var json = await this.CallServiceAsync(new RequestInfo(requestInfo.Session, "AuthenticatorOTP", "Time-Based-OTP", "GET")
-			{
-				Extra = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-				{
-					{ "Type", type.ToString() },
-					{ "ID", account.ID.Encrypt(this.EncryptionKey) },
-					{ "Stamp", stamp.Encrypt(this.EncryptionKey) },
-					{ "Account", account.AccessIdentity.Encrypt(this.EncryptionKey) },
-					{ "Issuer", body.Get("Issuer", "").Encrypt(this.EncryptionKey) },
-					{ "Setup", "" }
-				}
-			}, cancellationToken).ConfigureAwait(false);
-
-			// response
-			json["Provisioning"] = new JObject
-			{
-				{ "Type", type.ToString() },
-				{ "Account", account.AccessIdentity },
-				{ "ID", account.ID },
-				{ "Stamp", stamp }
-			}.ToString(Formatting.None).Encrypt(this.AuthenticationKey);
-			return json;
 		}
 		#endregion
 
@@ -695,7 +734,7 @@ namespace net.vieapps.Services.Users
 		async Task<JToken> UpdateOTPAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// prepare
-			var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID, cancellationToken);
+			var account = await Account.GetByIDAsync(requestInfo.Session.User.ID, cancellationToken).ConfigureAwait(false);
 			if (account == null)
 				throw new InformationNotFoundException();
 
@@ -716,34 +755,70 @@ namespace net.vieapps.Services.Users
 				throw new WrongAccountException(ex);
 			}
 
-			var body = requestInfo.GetBodyExpando();
-			var json = JObject.Parse(body.Get("Provisioning", "").Decrypt(this.AuthenticationKey));
-			if (!account.ID.IsEquals(json.Get<string>("ID")) || !account.AccessIdentity.IsEquals(json.Get<string>("Account")))
+			var requestBody = requestInfo.GetBodyExpando();
+			var otp = requestBody.Get<string>("OTP");
+
+			try
+			{
+				requestBody = requestBody.Get<string>("Provisioning").Decrypt(this.AuthenticationKey).ToExpandoObject();
+				if (!account.ID.IsEquals(requestBody.Get<string>("ID")) || !account.AccessIdentity.IsEquals(requestBody.Get<string>("Account")))
+					throw new InformationInvalidException();
+			}
+			catch (InformationInvalidException)
+			{
+				throw;
+			}
+			catch (Exception ex)
+			{
+				throw new InformationInvalidException(ex);
+			}
+
+			var stamp = requestBody.Get<string>("Stamp");
+			if (!requestBody.Get("Type", "App").TryToEnum(out TwoFactorsAuthenticationType type))
+				type = TwoFactorsAuthenticationType.App;
+
+			if (string.IsNullOrWhiteSpace(stamp) || string.IsNullOrWhiteSpace(otp))
 				throw new InformationInvalidException();
 
-			// validate with OTPs service
-			if (!Enum.TryParse(json.Get<string>("Type"), out TwoFactorsAuthenticationType type))
-				type = TwoFactorsAuthenticationType.App;
-			var stamp = json.Get<string>("Stamp");
-			json = await this.CallServiceAsync(new RequestInfo(requestInfo.Session, "AuthenticatorOTP", "Time-Based-OTP", "GET")
+			// validate
+			await this.CallOtpServiceAsync(requestInfo, type, account.ID, stamp, otp, cancellationToken).ConfigureAwait(false);
+
+			// prepare mapping account
+			if (type.Equals(TwoFactorsAuthenticationType.SMS))
 			{
-				Extra = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-				{
-					{ "Type", type.ToString() },
-					{ "ID", account.ID.Encrypt(this.EncryptionKey) },
-					{ "Stamp", stamp.Encrypt(this.EncryptionKey) },
-					{ "Password", body.Get("OTP", "").Encrypt(this.EncryptionKey) }
-				}
-			}, cancellationToken).ConfigureAwait(false) as JObject;
+				var phone = stamp.Decrypt(this.AuthenticationKey, true);
+				var mappingAccount = await Account.GetByAccessIdentityAsync(phone, AccountType.BuiltIn, cancellationToken, false).ConfigureAwait(false);
+				if (mappingAccount == null)
+					await Account.CreateAsync(new Account
+					{
+						ID = UtilityService.NewUUID,
+						Type = AccountType.BuiltIn,
+						Status = AccountStatus.Activated,
+						AccessIdentity = phone,
+						AccessKey = null,
+						AccessMapIdentity = account.ID
+					}, cancellationToken).ConfigureAwait(false);
+				else if (!account.ID.IsEquals(mappingAccount.AccessMapIdentity))
+					throw new InformationExistedException($"The phone number ({phone}) has been used for another account");
+			}
 
 			// update settings
-			account.TwoFactorsAuthentication.Required = true;
-			account.TwoFactorsAuthentication.Settings.Add(new TwoFactorsAuthenticationSetting
+			var existed = account.TwoFactorsAuthentication.Settings.FirstOrDefault(setting => setting.Type.Equals(type) && setting.Stamp.Equals(stamp));
+			if (existed != null)
 			{
-				Type = type,
-				Stamp = stamp.ToArray('|').First(),
-				Time = Convert.ToInt64(stamp.ToArray('|').Last())
-			});
+				existed.Stamp = stamp;
+				existed.Time = DateTime.Now.ToUnixTimestamp();
+			}
+			else
+				account.TwoFactorsAuthentication.Settings.Add(new TwoFactorsAuthenticationSetting
+				{
+					Type = type,
+					Stamp = stamp,
+					Time = DateTime.Now.ToUnixTimestamp()
+				});
+
+			account.TwoFactorsAuthentication.Required = true;
+			account.TwoFactorsAuthentication.Settings = account.TwoFactorsAuthentication.Providers;
 
 			// get all sessions
 			if (account.Sessions == null)
@@ -781,19 +856,17 @@ namespace net.vieapps.Services.Users
 			// update account
 			if (sessions.Count > 0)
 				account.Sessions = account.Sessions.Except(sessions).ToList();
-			json = account.GetAccountJson(true, this.AuthenticationKey);
 
-			// run all tasks
-			await Task.WhenAll(
+			// response
+			await Task.WhenAll
+			(
 				Account.UpdateAsync(account, true, cancellationToken),
 				needUpdate ? Session.UpdateAsync(session, true, cancellationToken) : Task.CompletedTask,
 				sessions.Count > 0 ? Session.DeleteManyAsync(Filters<Session>.Or(sessions.Select(s => Filters<Session>.Equals("ID", s.ID))), null, cancellationToken) : Task.CompletedTask,
-				sessions.Count > 0 ? sessions.ForEachAsync((s, token) => Utility.Cache.RemoveAsync(s, token), cancellationToken) : Task.CompletedTask,
+				sessions.Count > 0 ? sessions.ForEachAsync(s => Utility.Cache.RemoveAsync(s, cancellationToken)) : Task.CompletedTask,
 				messages.Count > 0 ? this.SendInterCommunicateMessagesAsync("APIGateway", messages, cancellationToken) : Task.CompletedTask
 			).ConfigureAwait(false);
-
-			// response
-			return json;
+			return account.GetAccountJson(true, this.AuthenticationKey);
 		}
 		#endregion
 
@@ -801,7 +874,7 @@ namespace net.vieapps.Services.Users
 		async Task<JToken> DeleteOTPAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// prepare
-			var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID, cancellationToken);
+			var account = await Account.GetByIDAsync(requestInfo.Session.User.ID, cancellationToken).ConfigureAwait(false);
 			if (account == null)
 				throw new InformationNotFoundException();
 
@@ -822,41 +895,52 @@ namespace net.vieapps.Services.Users
 				throw new WrongAccountException(ex);
 			}
 
-			var info = (requestInfo.Query.ContainsKey("Info") ? requestInfo.Query["Info"].Decrypt(this.AuthenticationKey, true) : "").ToArray('|');
-			var type = info[0].ToEnum<TwoFactorsAuthenticationType>();
-			var stamp = info[1];
-			var time = Convert.ToInt64(info[2]);
+			if (!requestInfo.Query.ContainsKey("Info"))
+				throw new InformationInvalidException();
+
+			var info = requestInfo.Query["Info"].Decrypt(this.AuthenticationKey, true).ToArray("|");
+			if (info.Length != 2)
+				throw new InformationInvalidException();
+
+			var type = info.First().ToEnum<TwoFactorsAuthenticationType>();
+			var stamp = info.Last();
+
+			// delete mapping account
+			if (type.Equals(TwoFactorsAuthenticationType.SMS))
+			{
+				var phone = stamp.Decrypt(this.AuthenticationKey, true);
+				var mappingAccount = await Account.GetByAccessIdentityAsync(phone, AccountType.BuiltIn, cancellationToken, false).ConfigureAwait(false);
+				if (mappingAccount != null && account.ID.IsEquals(mappingAccount.AccessMapIdentity))
+					await Account.DeleteAsync<Account>(mappingAccount.ID, account.ID, cancellationToken).ConfigureAwait(false);
+			}
 
 			// update settings
-			account.TwoFactorsAuthentication.Settings = account.TwoFactorsAuthentication.Settings.Where(s => !s.Type.Equals(type) && !s.Stamp.Equals(stamp) && !s.Time.Equals(time)).ToList();
-			account.TwoFactorsAuthentication.Required = account.TwoFactorsAuthentication.Settings.Count > 0;
+			account.TwoFactorsAuthentication.Settings = account.TwoFactorsAuthentication.Providers.Except(account.TwoFactorsAuthentication.Providers.Where(provider => provider.Type.Equals(type) && provider.Stamp.Equals(stamp))).ToList();
+			account.TwoFactorsAuthentication.Required = account.TwoFactorsAuthentication.Settings.Any();
 
-			// prepare to update
-			var json = account.GetAccountJson(true, this.AuthenticationKey);
-
+			var response = account.GetAccountJson(true, this.AuthenticationKey);
 			if (account.Sessions == null)
 				await account.GetSessionsAsync(cancellationToken).ConfigureAwait(false);
-
 			if (!account.TwoFactorsAuthentication.Required)
-				account.Sessions.ForEach(s => s.Verified = false);
+				account.Sessions.ForEach(session => session.Verified = false);
 
-			// run all tasks
-			await Task.WhenAll(
+			// response
+			await Task.WhenAll
+			(
 				Account.UpdateAsync(account, true, cancellationToken),
-				account.TwoFactorsAuthentication.Required ? Task.CompletedTask : account.Sessions.ForEachAsync((session, token) => Session.UpdateAsync(session, true, token), cancellationToken),
+				account.TwoFactorsAuthentication.Required ? Task.CompletedTask : account.Sessions.ForEachAsync(session => Session.UpdateAsync(session, true, cancellationToken)),
 				account.TwoFactorsAuthentication.Required ? Task.CompletedTask : this.SendInterCommunicateMessagesAsync("APIGateway", account.Sessions.Select(session => new BaseMessage
 				{
 					Type = "Session#Update",
 					Data = new JObject
 					{
 						{ "SessionID", session.ID },
-						{ "Verification", false }
+						{ "User", response },
+						{ "Verified", session.Verified }
 					}
 				}).ToList(), cancellationToken)
 			).ConfigureAwait(false);
-
-			// response
-			return json;
+			return response;
 		}
 		#endregion
 
@@ -877,6 +961,8 @@ namespace net.vieapps.Services.Users
 					var identity = requestInfo.GetObjectIdentity();
 					if ("reset".IsEquals(identity))
 						return this.ResetPasswordAsync(requestInfo, cancellationToken);
+					else if ("renew".IsEquals(identity))
+						return this.RenewPasswordAsync(requestInfo, cancellationToken);
 					else if ("password".IsEquals(identity))
 						return this.UpdatePasswordAsync(requestInfo, cancellationToken);
 					else if ("email".IsEquals(identity))
@@ -907,10 +993,13 @@ namespace net.vieapps.Services.Users
 
 			// check permission
 			if (!this.IsAuthenticated(requestInfo))
-				throw new AccessDeniedException();
+				throw new AccessDeniedException("Not authenticated");
 
 			// get account information
-			var account = await Account.GetAsync<Account>(requestInfo.GetObjectIdentity() ?? requestInfo.Session.User.ID, cancellationToken).ConfigureAwait(false);
+			var identity = requestInfo.GetObjectIdentity() ?? requestInfo.Session.User.ID;
+			var account = !string.IsNullOrWhiteSpace(identity) && identity.IsValidUUID()
+				? await Account.GetByIDAsync(identity, cancellationToken).ConfigureAwait(false)
+				: await Account.GetByAccessIdentityAsync(this.ValidatePhone(identity, out var phone) ? phone : identity, AccountType.BuiltIn, cancellationToken).ConfigureAwait(false);
 			if (account == null)
 				throw new InformationNotFoundException();
 
@@ -926,24 +1015,22 @@ namespace net.vieapps.Services.Users
 			var requestBody = requestInfo.GetBodyExpando();
 
 			var id = UtilityService.GetUUID();
-			var json = new JObject
+			var response = new JObject
 			{
 				{ "Message", "Please check email and follow the instructions" }
 			};
 
 			var name = requestBody.Get<string>("Name");
-			var email = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Email")
-				? requestInfo.Extra["Email"].Decrypt(this.EncryptionKey).Trim().ToLower()
-				: null;
-			var password = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Password")
-				? requestInfo.Extra["Password"].Decrypt(this.EncryptionKey)
-				: null;
+			var identity = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Account") ? requestInfo.Extra["Account"].Decrypt(this.EncryptionKey).Trim().ToLower() : null;
+			if (string.IsNullOrWhiteSpace(identity))
+				identity = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Email") ? requestInfo.Extra["Email"].Decrypt(this.EncryptionKey).Trim().ToLower() : null;
+			var password = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Password") ? requestInfo.Extra["Password"].Decrypt(this.EncryptionKey) : null;
 			if (string.IsNullOrWhiteSpace(password))
-				password = Account.GeneratePassword(email);
+				password = Account.GeneratePassword(identity);
 
 			// check existing account
-			if (await Account.GetByIdentityAsync(email, AccountType.BuiltIn, cancellationToken).ConfigureAwait(false) != null)
-				throw new InformationExistedException($"The email address ({email}) has been used for another account");
+			if (await Account.GetByAccessIdentityAsync(identity, AccountType.BuiltIn, cancellationToken).ConfigureAwait(false) != null)
+				throw new InformationExistedException($"The identity ({identity}) has been used for another account");
 
 			// related: privileges, service, extra info
 			var privileges = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Privileges")
@@ -958,7 +1045,7 @@ namespace net.vieapps.Services.Users
 			// permissions of privileges & related info
 			if (privileges != null || relatedInfo != null)
 			{
-				var gotRights = await this.IsSystemAdministratorAsync(requestInfo).ConfigureAwait(false);
+				var gotRights = await this.IsSystemAdministratorAsync(requestInfo, cancellationToken).ConfigureAwait(false);
 				if (!gotRights && !string.IsNullOrWhiteSpace(relatedService))
 				{
 					var relatedSvc = this.GetRelatedService(requestInfo);
@@ -981,23 +1068,23 @@ namespace net.vieapps.Services.Users
 					ID = id,
 					Status = requestBody.Get("Status", "Registered").ToEnum<AccountStatus>(),
 					Type = requestBody.Get("Type", "BuiltIn").ToEnum<AccountType>(),
-					AccessIdentity = email,
+					AccessIdentity = identity,
 					AccessKey = password,
 					AccessPrivileges = privileges ?? new List<Privilege>()
 				};
 
 				await Account.CreateAsync(account, cancellationToken).ConfigureAwait(false);
-				json = account.GetAccountJson();
+				response = account.GetAccountJson();
 
 				// create profile
 				var profile = requestBody.Copy<Profile>();
 				profile.ID = id;
 				profile.Name = name;
-				profile.Email = email;
+				profile.Email = identity;
 
 				await Profile.CreateAsync(profile, cancellationToken).ConfigureAwait(false);
 				if (!string.IsNullOrWhiteSpace(relatedService))
-					await this.CallRelatedServiceAsync(requestInfo, json.Copy<User>(), "profile", "POST", null, relatedInfo?.ToDictionary(kvp => kvp.Key, kvp => kvp.Value as string), cancellationToken).ConfigureAwait(false);
+					await this.CallRelatedServiceAsync(requestInfo, response.Copy<User>(), "Profile", "POST", null, relatedInfo?.ToDictionary(kvp => kvp.Key, kvp => kvp.Value as string), cancellationToken).ConfigureAwait(false);
 			}
 
 			// send activation email
@@ -1009,7 +1096,8 @@ namespace net.vieapps.Services.Users
 			{
 				{ "ID", id },
 				{ "Name", name },
-				{ "Email", email },
+				{ "Email", identity },
+				{ "Account", identity },
 				{ "Password", password },
 				{ "Time", DateTime.Now },
 				{ "Mode", isCreateNew ? "Status" : "Create"  }
@@ -1036,7 +1124,7 @@ namespace net.vieapps.Services.Users
 			var instructions = await this.GetInstructionsAsync(requestInfo, mode, cancellationToken).ConfigureAwait(false);
 
 			var from = instructions.Item2.Item1;
-			var to = $"{name} <{email}>";
+			var to = $"{name} <{identity}>";
 
 			var subject = instructions.Item1.Item1;
 			if (string.IsNullOrWhiteSpace(subject))
@@ -1048,7 +1136,7 @@ namespace net.vieapps.Services.Users
 				<br/>
 				These are your account information:
 				<blockquote>
-					Email: <b>{{@params(Email)}}</b>
+					Account: <b>{{@params(Account)}}</b>
 					Password: <b>{{@params(Password)}}</b>
 				</blockquote>
 				Please click the link below to activate your account and complete the registration step:
@@ -1072,8 +1160,9 @@ namespace net.vieapps.Services.Users
 			var inviter = mode.Equals("invite") ? await Profile.GetAsync<Profile>(requestInfo.Session.User.ID, cancellationToken).ConfigureAwait(false) : null;
 			var paramsExpando = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase)
 			{
-				{ "Email", email },
+				{ "Account", identity },
 				{ "Password", password },
+				{ "Email", identity },
 				{ "Name", name },
 				{ "Uri", uri },
 				{ "Code", code },
@@ -1084,7 +1173,7 @@ namespace net.vieapps.Services.Users
 					}
 				},
 				{ "Time", DateTime.Now },
-				{ "Location", await requestInfo.GetLocationAsync().ConfigureAwait(false) },
+				{ "Location", await requestInfo.GetLocationAsync(cancellationToken).ConfigureAwait(false) },
 				{ "EmailSignature", instructions.Item2.Item2 }
 			}.ToExpandoObject();
 
@@ -1104,8 +1193,8 @@ namespace net.vieapps.Services.Users
 			// send an email
 			await this.SendEmailAsync(from, to, subject.Format(parameters), body.Format(parameters), smtpServerHost, smtpServerPort, smtpServerEnableSsl, smtpServerUsername, smtpServerPassword, cancellationToken).ConfigureAwait(false);
 
-			// result
-			return json;
+			// response
+			return response;
 		}
 		#endregion
 
@@ -1162,7 +1251,7 @@ namespace net.vieapps.Services.Users
 				throw new AccessDeniedException();
 
 			// get account
-			var account = await Account.GetAsync<Account>(requestInfo.GetObjectIdentity(), cancellationToken).ConfigureAwait(false);
+			var account = await Account.GetByIDAsync(requestInfo.GetObjectIdentity(), cancellationToken).ConfigureAwait(false);
 			if (account == null)
 				throw new InformationNotFoundException();
 
@@ -1214,8 +1303,8 @@ namespace net.vieapps.Services.Users
 				}
 
 			// update sessions
-			var json = account.GetAccountJson(account.TwoFactorsAuthentication.Required, this.AuthenticationKey);
-			var user = json.FromJson<User>();
+			var response = account.GetAccountJson(account.TwoFactorsAuthentication.Required, this.AuthenticationKey);
+			var user = response.FromJson<User>();
 			if (account.Sessions == null)
 				await account.GetSessionsAsync(cancellationToken).ConfigureAwait(false);
 			account.Sessions.Where(session => session.ExpiredAt > DateTime.Now).ForEach(session =>
@@ -1234,7 +1323,8 @@ namespace net.vieapps.Services.Users
 			});
 
 			// update into repository
-			await Task.WhenAll(
+			await Task.WhenAll
+			(
 				Account.UpdateAsync(account, requestInfo.Session.User.ID, cancellationToken),
 				Task.WhenAll(account.Sessions.Select(session => Session.UpdateAsync(session, true, cancellationToken)))
 			).ConfigureAwait(false);
@@ -1246,7 +1336,7 @@ namespace net.vieapps.Services.Users
 				Data = new JObject
 				{
 					{ "SessionID", session.ID },
-					{ "User", json },
+					{ "User", response },
 					{ "Verified", session.Verified }
 				}
 			}).ToList(), cancellationToken).ConfigureAwait(false);
@@ -1254,16 +1344,19 @@ namespace net.vieapps.Services.Users
 				await this.WriteLogsAsync(requestInfo, $"Successfully send {account.Sessions.Count} message(s) to API Gateway to update new access token of an user account [{account.ID}]").ConfigureAwait(false);
 
 			// response
-			return json;
+			return response;
 		}
 		#endregion
 
-		#region Renew password of an account
+		#region Reset password of an account
 		async Task<JToken> ResetPasswordAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// get account
-			var email = requestInfo.Extra["Email"].Decrypt(this.EncryptionKey);
-			var account = await Account.GetByIdentityAsync(email, AccountType.BuiltIn, cancellationToken).ConfigureAwait(false);
+			var identity = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Account") ? requestInfo.Extra["Account"].Decrypt(this.EncryptionKey) : null;
+			if (string.IsNullOrWhiteSpace(identity))
+				identity = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Email") ? requestInfo.Extra["Email"].Decrypt(this.EncryptionKey) : null;
+
+			var account = await Account.GetByAccessIdentityAsync(identity, AccountType.BuiltIn, cancellationToken).ConfigureAwait(false);
 			if (account == null)
 				return new JObject
 				{
@@ -1271,7 +1364,10 @@ namespace net.vieapps.Services.Users
 				};
 
 			// prepare
-			var password = Account.GeneratePassword(email);
+			var password = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Password") ? requestInfo.Extra["Password"].Decrypt(this.EncryptionKey) : null;
+			if (string.IsNullOrWhiteSpace(password))
+				password = Account.GeneratePassword(identity);
+
 			var code = new JObject
 			{
 				{ "ID", account.ID },
@@ -1279,7 +1375,11 @@ namespace net.vieapps.Services.Users
 				{ "Time", DateTime.Now }
 			}.ToString(Formatting.None).Encrypt(this.ActivationKey).ToBase64Url(true);
 
-			var uri = (requestInfo.Query.ContainsKey("uri") ? requestInfo.Query["uri"].Url64Decode() : Utility.ActivateHttpURI).Format(new Dictionary<string, object>
+			var uri = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Uri") ? requestInfo.Extra["Uri"].Decrypt(this.EncryptionKey) : null;
+			if (string.IsNullOrWhiteSpace(uri))
+				uri = requestInfo.Query.ContainsKey("uri") ? requestInfo.Query["uri"].Url64Decode() : Utility.ActivateHttpURI;
+
+			uri = uri.Format(new Dictionary<string, object>
 			{
 				["mode"] = "password",
 				["code"] = code
@@ -1298,14 +1398,15 @@ namespace net.vieapps.Services.Users
 			var body = instructions.Item1.Item2;
 			if (string.IsNullOrWhiteSpace(body))
 				body = @"Hi <b>{{@params(Name)}}</b>
-				<br/>
+				<br/><br/>
 				These are your account information:
 				<blockquote>
-					Email: <b>{{@params(Email)}}</b>
+					Account: <b>{{@params(Account)}}</b>
+					<br/>
 					Password (new): <b>{{@params(Password)}}</b>
 				</blockquote>
 				Please click the link below to activate your new password:
-				<br/>
+				<br/><br/>
 				<span style='display:inline-block;padding:15px;border-radius:5px;background-color:#eee;font-weight:bold'>
 					<a href='{{@params(Uri)}}' style='color:red'>Activate your new password</a>
 				</span>";
@@ -1324,13 +1425,14 @@ namespace net.vieapps.Services.Users
 
 			var paramsExpando = new Dictionary<string, object>
 			{
-				{ "Email", account.AccessIdentity },
+				{ "Account", account.AccessIdentity },
 				{ "Password", password },
+				{ "Email", account.AccessIdentity },
 				{ "Name", account.Profile.Name },
 				{ "Uri", uri },
 				{ "Code", code },
 				{ "Time", DateTime.Now },
-				{ "Location", await requestInfo.GetLocationAsync().ConfigureAwait(false) },
+				{ "Location", await requestInfo.GetLocationAsync(cancellationToken).ConfigureAwait(false) },
 				{ "EmailSignature", instructions.Item2.Item2 }
 			}.ToExpandoObject();
 
@@ -1358,12 +1460,73 @@ namespace net.vieapps.Services.Users
 		}
 		#endregion
 
+		#region Renew password of an account (SMS)
+		async Task<JToken> RenewPasswordAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		{
+			if (this.ValidatePhone(requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Account") ? requestInfo.Extra["Account"].Decrypt(this.EncryptionKey) : null, out var phone))
+			{
+				// prepare
+				var account = await Account.GetByAccessIdentityAsync(phone, AccountType.BuiltIn, cancellationToken).ConfigureAwait(false);
+				if (account == null)
+					throw new InformationNotFoundException();
+
+				var otp = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("OtpCode") ? requestInfo.Extra["OtpCode"].Decrypt(this.EncryptionKey) : null;
+				if (string.IsNullOrWhiteSpace(otp))
+					throw new InformationInvalidException();
+
+				var stamp = phone.Encrypt(this.AuthenticationKey, true);
+				if (account.TwoFactorsAuthentication.Settings.FirstOrDefault(provider => provider.Type.Equals(TwoFactorsAuthenticationType.SMS) && provider.Stamp.Equals(stamp)) == null)
+					throw new InformationInvalidException();
+
+				// validate
+				await this.CallOtpServiceAsync(requestInfo, TwoFactorsAuthenticationType.SMS, account.ID, stamp, otp, cancellationToken).ConfigureAwait(false);
+
+				// update
+				var password = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Password") ? requestInfo.Extra["Password"].Decrypt(this.EncryptionKey) : null;
+				if (string.IsNullOrWhiteSpace(password))
+					password = Account.GeneratePassword(phone);
+
+				account.AccessKey = Account.GeneratePassword(account.ID, password);
+				account.LastAccess = DateTime.Now;
+				account.Sessions = null;
+				await Account.UpdateAsync(account, true, cancellationToken).ConfigureAwait(false);
+
+				// send SMS
+				var message = requestInfo.GetParameter("x-sms-renew-password-template") ?? UtilityService.GetAppSetting("Users:SMS:RenewPassword");
+				if (string.IsNullOrWhiteSpace(message))
+					message = "vi-VN".IsEquals(requestInfo.GetParameter("language") ?? "en-US")
+						? "Sử dụng mật khẩu {{Password}} để đăng nhập trên app {{AppName}}"
+						: "Use the password {{Password}} to login on {{AppName}} app";
+
+				await this.SendSmsAsync(requestInfo, phone, message, new Dictionary<string, string>
+				{
+					["Password"] = password,
+					["Code"] = password,
+					["Phone"] = phone,
+					["PhoneNumber"] = phone,
+					["Name"] = account.Profile?.Name,
+					["Email"] = account.Profile?.Email,
+					["Account"] = account.AccessIdentity,
+					["AccountID"] = account.ID
+				}, cancellationToken).ConfigureAwait(false);
+
+				// send email
+				await this.SendUpdatePasswordEmailAsync(requestInfo, account, password, cancellationToken).ConfigureAwait(false);
+			}
+
+			return new JObject
+			{
+				{ "Status", "Sent" }
+			};
+		}
+		#endregion
+
 		#region Update password of an account
 		async Task<JToken> UpdatePasswordAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// get account and check
 			var oldPassword = requestInfo.Extra["OldPassword"].Decrypt(this.EncryptionKey);
-			var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID, cancellationToken).ConfigureAwait(false);
+			var account = await Account.GetByIDAsync(requestInfo.Session.User.ID, cancellationToken).ConfigureAwait(false);
 			if (account == null || !Account.GeneratePassword(account.ID, oldPassword).Equals(account.AccessKey))
 				throw new WrongAccountException();
 
@@ -1373,11 +1536,25 @@ namespace net.vieapps.Services.Users
 			account.LastAccess = DateTime.Now;
 			await Account.UpdateAsync(account, true, cancellationToken);
 
-			// prepare activation email
+			// send an email
+			await this.SendUpdatePasswordEmailAsync(requestInfo, account, password, cancellationToken).ConfigureAwait(false);
+
+			// response
+			return account.Profile?.ToJson() ?? new JObject();
+		}
+
+		async Task SendUpdatePasswordEmailAsync(RequestInfo requestInfo, Account account, string password, CancellationToken cancellationToken)
+		{
+			if (!this.ValidateEmail(account.AccessIdentity, out var email))
+			{
+				if (!this.ValidateEmail(account.Profile?.Email, out email))
+					return;
+			}
+
 			var instructions = await this.GetInstructionsAsync(requestInfo, "password", cancellationToken).ConfigureAwait(false);
 
 			var from = instructions.Item2.Item1;
-			var to = $"{account.Profile.Name} <{account.AccessIdentity}>";
+			var to = $"{account.Profile?.Name ?? email} <{email}>";
 
 			var subject = instructions.Item1.Item1;
 			if (string.IsNullOrWhiteSpace(subject))
@@ -1389,7 +1566,7 @@ namespace net.vieapps.Services.Users
 				<br/>
 				These are your account information:
 				<blockquote>
-					Email: <b>{{@params(Email)}}</b>
+					Account: <b>{{@params(Account)}}</b>
 					Password (new): <b>{{@params(Password)}}</b>
 				</blockquote>";
 
@@ -1407,11 +1584,12 @@ namespace net.vieapps.Services.Users
 
 			var paramsExpando = new Dictionary<string, object>
 			{
-				{ "Email", account.AccessIdentity },
+				{ "Account", account.AccessIdentity },
 				{ "Password", password },
-				{ "Name", account.Profile.Name },
+				{ "Email", email },
+				{ "Name", account.Profile?.Name },
 				{ "Time", DateTime.Now },
-				{ "Location", await requestInfo.GetLocationAsync().ConfigureAwait(false) },
+				{ "Location", await requestInfo.GetLocationAsync(cancellationToken).ConfigureAwait(false) },
 				{ "EmailSignature", instructions.Item2.Item2 }
 			}.ToExpandoObject();
 
@@ -1428,11 +1606,7 @@ namespace net.vieapps.Services.Users
 							: token;
 				});
 
-			// send an email
 			await this.SendEmailAsync(from, to, subject.Format(parameters), body.Format(parameters), smtpServerHost, smtpServerPort, smtpServerEnableSsl, smtpServerUsername, smtpServerPassword, cancellationToken).ConfigureAwait(false);
-
-			// response
-			return account.Profile.ToJson();
 		}
 		#endregion
 
@@ -1441,25 +1615,29 @@ namespace net.vieapps.Services.Users
 		{
 			// get account and check
 			var oldPassword = requestInfo.Extra["OldPassword"].Decrypt(this.EncryptionKey);
-			var account = await Account.GetAsync<Account>(requestInfo.Session.User.ID, cancellationToken).ConfigureAwait(false);
+			var account = await Account.GetByIDAsync(requestInfo.Session.User.ID, cancellationToken).ConfigureAwait(false);
 			if (account == null || !Account.GeneratePassword(account.ID, oldPassword).Equals(account.AccessKey))
 				throw new WrongAccountException();
 
 			// check existing
 			var email = requestInfo.Extra["Email"].Decrypt(this.EncryptionKey);
-			var otherAccount = await Account.GetByIdentityAsync(email, AccountType.BuiltIn, cancellationToken).ConfigureAwait(false);
-			if (otherAccount != null)
-				throw new InformationExistedException("The email '" + email + "' is used by other account");
+			if (!this.ValidateEmail(email, out email))
+				throw new InformationInvalidException("The email address is invalid");
+
+			var otherAccount = await Account.GetByAccessIdentityAsync(email, AccountType.BuiltIn, cancellationToken).ConfigureAwait(false);
+			if (otherAccount != null && !otherAccount.ID.Equals(account.ID))
+				throw new InformationExistedException($"The email '{email}' is used by other account");
 
 			// update
 			var oldEmail = account.AccessIdentity;
-			account.AccessIdentity = email.Trim().ToLower();
+			account.AccessIdentity = email;
 			account.LastAccess = DateTime.Now;
 
-			account.Profile.Email = email.Trim().ToLower();
+			account.Profile.Email = email;
 			account.Profile.LastUpdated = DateTime.Now;
 
-			await Task.WhenAll(
+			await Task.WhenAll
+			(
 				Account.UpdateAsync(account, requestInfo.Session.User.ID, cancellationToken),
 				Profile.UpdateAsync(account.Profile, requestInfo.Session.User.ID, cancellationToken)
 			).ConfigureAwait(false);
@@ -1503,7 +1681,7 @@ namespace net.vieapps.Services.Users
 				{ "OldEmail", oldEmail },
 				{ "Name", account.Profile.Name },
 				{ "Time", DateTime.Now },
-				{ "Location", await requestInfo.GetLocationAsync().ConfigureAwait(false) },
+				{ "Location", await requestInfo.GetLocationAsync(cancellationToken).ConfigureAwait(false) },
 				{ "EmailSignature", instructions.Item2.Item2 }
 			}.ToExpandoObject();
 
@@ -1533,7 +1711,7 @@ namespace net.vieapps.Services.Users
 		{
 			var userID = requestInfo.GetObjectIdentity() ?? requestInfo.Session.User.ID;
 			var account = !userID.Equals("") && !requestInfo.Session.User.IsSystemAccount
-				? await Account.GetAsync<Account>(userID, cancellationToken).ConfigureAwait(false)
+				? await Account.GetByIDAsync(userID, cancellationToken).ConfigureAwait(false)
 				: null;
 
 			if (account != null && account.Sessions == null)
@@ -1571,7 +1749,7 @@ namespace net.vieapps.Services.Users
 
 					// fetch
 					else if ("fetch".IsEquals(identity))
-						return this.FetchProfilesAsync(requestInfo, cancellationToken, requestInfo.Extra.TryGetValue("x-notifications-key", out var notificationsKey) && notificationsKey != null ? notificationsKey.IsEquals(this.GetKey("Notifications", null)) : false);
+						return this.FetchProfilesAsync(requestInfo, cancellationToken, requestInfo.Extra.TryGetValue("x-notifications-key", out var notificationsKey) && notificationsKey != null && notificationsKey.IsEquals(this.GetKey("Notifications", null)));
 
 					// get details of a profile
 					else
@@ -1617,7 +1795,7 @@ namespace net.vieapps.Services.Users
 				: "";
 
 			var json = !cacheKey.Equals("")
-				? await Utility.Cache.GetAsync<string>($"{cacheKey }{pageNumber}:json").ConfigureAwait(false)
+				? await Utility.Cache.GetAsync<string>($"{cacheKey}{pageNumber}:json", cancellationToken).ConfigureAwait(false)
 				: "";
 
 			if (!string.IsNullOrWhiteSpace(json))
@@ -1630,12 +1808,12 @@ namespace net.vieapps.Services.Users
 
 			if (totalRecords < 0)
 				totalRecords = string.IsNullOrWhiteSpace(query)
-					? await Profile.CountAsync(filter, $"{cacheKey}total", cancellationToken).ConfigureAwait(false)
+					? await Profile.CountAsync(filter, $"{cacheKey}:total", cancellationToken).ConfigureAwait(false)
 					: await Profile.CountAsync(query, filter, cancellationToken).ConfigureAwait(false);
 
 			var pageSize = pagination.Item3;
 
-			var totalPages = (new Tuple<long, int>(totalRecords, pageSize)).GetTotalPages();
+			var totalPages = new Tuple<long, int>(totalRecords, pageSize).GetTotalPages();
 			if (totalPages > 0 && pageNumber > totalPages)
 				pageNumber = totalPages;
 
@@ -1648,10 +1826,10 @@ namespace net.vieapps.Services.Users
 
 			// build result
 			var profiles = new JArray();
-			await objects.ForEachAsync(async (profile, token) =>
+			await objects.ForEachAsync(async profile =>
 			{
-				profiles.Add(profile.GetProfileJson(await this.GetProfileRelatedJsonAsync(requestInfo, token).ConfigureAwait(false) as JObject, !requestInfo.Session.User.IsSystemAdministrator));
-			}, cancellationToken, true, false).ConfigureAwait(false);
+				profiles.Add(profile.GetProfileJson(await this.GetProfileRelatedJsonAsync(requestInfo, cancellationToken).ConfigureAwait(false) as JObject, !requestInfo.Session.User.IsSystemAdministrator));
+			}, true, false).ConfigureAwait(false);
 
 			pagination = new Tuple<long, int, int, int>(totalRecords, totalPages, pageSize, pageNumber);
 			var result = new JObject
@@ -1666,7 +1844,7 @@ namespace net.vieapps.Services.Users
 			if (!cacheKey.Equals(""))
 			{
 				json = result.ToString(this.JsonFormat);
-				await Utility.Cache.SetAsync($"{cacheKey }{pageNumber}:json", json, Utility.Cache.ExpirationTime / 2).ConfigureAwait(false);
+				await Utility.Cache.SetAsync($"{cacheKey }{pageNumber}:json", json, Utility.Cache.ExpirationTime / 2, cancellationToken).ConfigureAwait(false);
 			}
 
 			// return the result
@@ -1694,9 +1872,9 @@ namespace net.vieapps.Services.Users
 			if (isContactRequest)
 			{
 				var sessions = new Dictionary<string, JArray>(StringComparer.OrdinalIgnoreCase);
-				await objects.ForEachAsync(async (profile, token) =>
+				await objects.ForEachAsync(async profile =>
 				{
-					var account = await Account.GetAsync<Account>(profile.ID, cancellationToken).ConfigureAwait(false);
+					var account = await Account.GetByIDAsync(profile.ID, cancellationToken).ConfigureAwait(false);
 					if (account != null)
 					{
 						if (account.Sessions == null)
@@ -1709,7 +1887,7 @@ namespace net.vieapps.Services.Users
 							{ "IsOnline", session.Online }
 						});
 					}
-				}, cancellationToken).ConfigureAwait(false);
+				}).ConfigureAwait(false);
 				return objects.Select(profile => new JObject
 				{
 					{ "ID", profile.ID },
@@ -1721,10 +1899,10 @@ namespace net.vieapps.Services.Users
 
 			// return the normalized profiles
 			var profiles = new JArray();
-			await objects.ForEachAsync(async (profile, token) =>
+			await objects.ForEachAsync(async profile =>
 			{
-				profiles.Add(profile.GetProfileJson(await this.GetProfileRelatedJsonAsync(requestInfo, token).ConfigureAwait(false) as JObject, !requestInfo.Session.User.IsSystemAdministrator));
-			}, cancellationToken, true, false).ConfigureAwait(false);
+				profiles.Add(profile.GetProfileJson(await this.GetProfileRelatedJsonAsync(requestInfo, cancellationToken).ConfigureAwait(false) as JObject, !requestInfo.Session.User.IsSystemAdministrator));
+			}, true, false).ConfigureAwait(false);
 			return new JObject
 			{
 				{ "Objects", profiles }
@@ -1792,8 +1970,8 @@ namespace net.vieapps.Services.Users
 				throw new AccessDeniedException();
 
 			// get information
-			var profile = await Profile.GetAsync<Profile>(id, cancellationToken).ConfigureAwait(false);
-			var account = await Account.GetAsync<Account>(id, cancellationToken).ConfigureAwait(false);
+			var account = await Account.GetByIDAsync(id, cancellationToken).ConfigureAwait(false);
+			var profile = await Profile.GetAsync<Profile>(account?.ID, cancellationToken).ConfigureAwait(false);
 			if (profile == null || account == null)
 				throw new InformationNotFoundException();
 
@@ -1806,7 +1984,7 @@ namespace net.vieapps.Services.Users
 				profile.LastUpdated = DateTime.Now;
 				profile.Avatar = string.IsNullOrWhiteSpace(profile.Avatar)
 					? string.Empty
-					: profile.Avatar.IsStartsWith(Utility.AvatarURI)
+					: profile.Avatar.IsStartsWith(Utility.AvatarHttpURI)
 						? profile.Avatar.Replace(Utility.FilesHttpURI, "~~")
 						: profile.Avatar;
 
@@ -1818,7 +1996,8 @@ namespace net.vieapps.Services.Users
 			});
 
 			// update
-			await Task.WhenAll(
+			await Task.WhenAll
+			(
 				Profile.UpdateAsync(profile, requestInfo.Session.User.ID, cancellationToken),
 				requestInfo.Query.ContainsKey("related-service")
 					? this.CallRelatedServiceAsync(requestInfo, null, "Profile", "PUT", profile.ID, null, cancellationToken)
@@ -1826,17 +2005,17 @@ namespace net.vieapps.Services.Users
 			).ConfigureAwait(false);
 
 			// send update message
-			var json = profile.GetProfileJson(await this.GetProfileRelatedJsonAsync(requestInfo, cancellationToken).ConfigureAwait(false) as JObject, false);
+			var response = profile.GetProfileJson(await this.GetProfileRelatedJsonAsync(requestInfo, cancellationToken).ConfigureAwait(false) as JObject, false);
 			await this.SendUpdateMessageAsync(new UpdateMessage
 			{
 				Type = "Users#Profile#Update",
 				DeviceID = "*",
 				ExcludedDeviceID = requestInfo.Session.DeviceID,
-				Data = json
+				Data = response
 			}, cancellationToken).ConfigureAwait(false);
 
 			// response
-			return json;
+			return response;
 		}
 		#endregion
 
@@ -1846,15 +2025,11 @@ namespace net.vieapps.Services.Users
 				throw new MethodNotAllowedException(requestInfo.Verb);
 
 			#region prepare
-			var mode = requestInfo.Query.ContainsKey("mode")
-				? requestInfo.Query["mode"]
-				: null;
+			var mode = requestInfo.Query.ContainsKey("mode") ? requestInfo.Query["mode"] : null;
 			if (string.IsNullOrWhiteSpace(mode))
 				throw new InvalidActivateInformationException();
 
-			var code = requestInfo.Query.ContainsKey("code")
-				? requestInfo.Query["code"]
-				: null;
+			var code = requestInfo.Query.ContainsKey("code") ? requestInfo.Query["code"] : null;
 			if (string.IsNullOrWhiteSpace(code))
 				throw new InvalidActivateInformationException();
 
@@ -1907,7 +2082,7 @@ namespace net.vieapps.Services.Users
 			var mode = info.Get<string>("Mode");
 			var id = info.Get<string>("ID");
 			var name = info.Get<string>("Name");
-			var email = info.Get<string>("Email");
+			var identity = info.Get<string>("Account") ?? info.Get<string>("Email");
 			var privileges = info.Get<List<Privilege>>("Privileges");
 			var relatedService = info.Get<string>("RelatedService");
 			var relatedUser = info.Get<string>("RelatedUser");
@@ -1917,9 +2092,9 @@ namespace net.vieapps.Services.Users
 			if (mode.IsEquals("Status"))
 			{
 				// check
-				var account = await Account.GetAsync<Account>(id, cancellationToken).ConfigureAwait(false);
-				if (account == null && !string.IsNullOrWhiteSpace(email))
-					account = await Account.GetByIdentityAsync(email, AccountType.BuiltIn, cancellationToken).ConfigureAwait(false);
+				var account = await Account.GetByIDAsync(id, cancellationToken).ConfigureAwait(false);
+				if (account == null && !string.IsNullOrWhiteSpace(identity))
+					account = await Account.GetByAccessIdentityAsync(identity, AccountType.BuiltIn, cancellationToken).ConfigureAwait(false);
 				if (account == null)
 					throw new InformationNotFoundException();
 
@@ -1936,7 +2111,7 @@ namespace net.vieapps.Services.Users
 					try
 					{
 						// prepare
-						var relatedAccount = await Account.GetAsync<Account>(relatedUser, cancellationToken).ConfigureAwait(false);
+						var relatedAccount = await Account.GetByIDAsync(relatedUser, cancellationToken).ConfigureAwait(false);
 						var relatedSession = new Services.Session(requestInfo.Session)
 						{
 							User = relatedAccount.GetAccountJson().Copy<User>()
@@ -1954,7 +2129,7 @@ namespace net.vieapps.Services.Users
 
 						// update related information
 						if (relatedInfo != null)
-							await this.CallServiceAsync(new RequestInfo(relatedSession, relatedService, "activate", "GET")
+							await this.CallServiceAsync(new RequestInfo(relatedSession, relatedService, "Activate", "GET")
 							{
 								Query = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
 								{
@@ -1980,21 +2155,21 @@ namespace net.vieapps.Services.Users
 					Status = AccountStatus.Activated,
 					Type = info.Get("Type", "BuiltIn").ToEnum<AccountType>(),
 					Joined = info.Get<DateTime>("Time"),
-					AccessIdentity = email,
+					AccessIdentity = identity,
 					AccessKey = Account.GeneratePassword(id, info.Get<string>("Password")),
 					AccessPrivileges = privileges ?? new List<Privilege>()
 				};
 				await Account.CreateAsync(account, cancellationToken).ConfigureAwait(false);
 
 				// prepare response
-				var json = account.GetAccountJson();
+				var response = account.GetAccountJson();
 
 				// create profile
 				var profile = new Profile
 				{
 					ID = id,
 					Name = name,
-					Email = email
+					Email = identity
 				};
 				await Profile.CreateAsync(profile, cancellationToken).ConfigureAwait(false);
 
@@ -2002,12 +2177,12 @@ namespace net.vieapps.Services.Users
 				if (!string.IsNullOrWhiteSpace(relatedService) && !string.IsNullOrWhiteSpace(relatedUser) && relatedInfo != null)
 					try
 					{
-						var relatedAccount = await Account.GetAsync<Account>(relatedUser, cancellationToken).ConfigureAwait(false);
+						var relatedAccount = await Account.GetByIDAsync(relatedUser, cancellationToken).ConfigureAwait(false);
 						var relatedSession = new Services.Session(requestInfo.Session)
 						{
 							User = relatedAccount.GetAccountJson().Copy<User>()
 						};
-						await this.CallServiceAsync(new RequestInfo(relatedSession, relatedService, "activate", "GET")
+						await this.CallServiceAsync(new RequestInfo(relatedSession, relatedService, "Activate", "GET")
 						{
 							Query = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
 							{
@@ -2020,7 +2195,7 @@ namespace net.vieapps.Services.Users
 					catch { }
 
 				// return
-				return json;
+				return response;
 			}
 		}
 		#endregion
@@ -2033,7 +2208,7 @@ namespace net.vieapps.Services.Users
 			var password = info.Get<string>("Password");
 
 			// load account
-			var account = await Account.GetAsync<Account>(id, cancellationToken).ConfigureAwait(false);
+			var account = await Account.GetByIDAsync(id, cancellationToken).ConfigureAwait(false);
 			if (account == null)
 				throw new InvalidActivateInformationException();
 
@@ -2044,6 +2219,8 @@ namespace net.vieapps.Services.Users
 			await Account.UpdateAsync(account, true, cancellationToken).ConfigureAwait(false);
 
 			// response
+			if (this.IsDebugResultsEnabled)
+				await this.WriteLogsAsync(requestInfo, $"Active new password sucessful [ID: {account.ID}]").ConfigureAwait(false);
 			return account.GetAccountJson();
 		}
 		#endregion
@@ -2052,12 +2229,12 @@ namespace net.vieapps.Services.Users
 		public override async Task<JToken> SyncAsync(RequestInfo requestInfo, CancellationToken cancellationToken = default)
 		{
 			var stopwatch = Stopwatch.StartNew();
-			this.WriteLogs(requestInfo, $"Start sync ({requestInfo.Verb} {requestInfo.GetURI()})");
-			using (var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, this.CancellationTokenSource.Token))
+			await this.WriteLogsAsync(requestInfo, $"Start sync ({requestInfo.Verb} {requestInfo.GetURI()})").ConfigureAwait(false);
+			using (var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, this.CancellationToken))
 				try
 				{
 					// validate
-					var json = await base.SyncAsync(requestInfo, cancellationToken).ConfigureAwait(false);
+					var json = await base.SyncAsync(requestInfo, cts.Token).ConfigureAwait(false);
 
 					// sync
 					switch (requestInfo.ObjectName.ToLower())
@@ -2075,12 +2252,9 @@ namespace net.vieapps.Services.Users
 					}
 
 					stopwatch.Stop();
-					this.WriteLogs(requestInfo, $"Sync success - Execution times: {stopwatch.GetElapsedTimes()}");
+					await this.WriteLogsAsync(requestInfo, $"Sync success - Execution times: {stopwatch.GetElapsedTimes()}").ConfigureAwait(false);
 					if (this.IsDebugResultsEnabled)
-						this.WriteLogs(requestInfo,
-							$"- Request: {requestInfo.ToString(this.JsonFormat)}" + "\r\n" +
-							$"- Response: {json?.ToString(this.JsonFormat)}"
-						);
+						await this.WriteLogsAsync(requestInfo, $"- Request: {requestInfo.ToString(this.JsonFormat)}" + "\r\n" + $"- Response: {json?.ToString(this.JsonFormat)}").ConfigureAwait(false);
 					return json;
 				}
 				catch (Exception ex)
@@ -2091,16 +2265,16 @@ namespace net.vieapps.Services.Users
 
 		async Task<JToken> SyncAccountAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
-			var data = requestInfo.GetBodyExpando();
-			var account = await Account.GetAsync<Account>(data.Get<string>("ID"), cancellationToken).ConfigureAwait(false);
+			var requestBody = requestInfo.GetBodyExpando();
+			var account = await Account.GetByIDAsync(requestBody.Get<string>("ID"), cancellationToken).ConfigureAwait(false);
 			if (account == null)
 			{
-				account = Account.CreateInstance(data, null, acc => acc.AccessKey = acc.AccessKey ?? Account.GeneratePassword(acc.ID, Account.GeneratePassword(acc.AccessIdentity)));
+				account = Account.CreateInstance(requestBody, null, acc => acc.AccessKey = acc.AccessKey ?? Account.GeneratePassword(acc.ID, Account.GeneratePassword(acc.AccessIdentity)));
 				await Account.CreateAsync(account, cancellationToken).ConfigureAwait(false);
 			}
 			else
 			{
-				account.Fill(data, null, acc => acc.AccessKey = acc.AccessKey ?? Account.GeneratePassword(acc.ID, Account.GeneratePassword(acc.AccessIdentity)));
+				account.Fill(requestBody, null, acc => acc.AccessKey = acc.AccessKey ?? Account.GeneratePassword(acc.ID, Account.GeneratePassword(acc.AccessIdentity)));
 				await Account.UpdateAsync(account, true, cancellationToken).ConfigureAwait(false);
 			}
 			return new JObject
@@ -2113,16 +2287,16 @@ namespace net.vieapps.Services.Users
 
 		async Task<JToken> SyncProfileAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
-			var data = requestInfo.GetBodyExpando();
-			var profile = await Profile.GetAsync<Profile>(data.Get<string>("ID"), cancellationToken).ConfigureAwait(false);
+			var requestBody = requestInfo.GetBodyExpando();
+			var profile = await Profile.GetAsync<Profile>(requestBody.Get<string>("ID"), cancellationToken).ConfigureAwait(false);
 			if (profile == null)
 			{
-				profile = Profile.CreateInstance(data);
+				profile = Profile.CreateInstance(requestBody);
 				await Profile.CreateAsync(profile, cancellationToken).ConfigureAwait(false);
 			}
 			else
 			{
-				profile.Fill(data);
+				profile.Fill(requestBody);
 				await Profile.UpdateAsync(profile, true, cancellationToken).ConfigureAwait(false);
 			}
 			return new JObject
@@ -2134,9 +2308,7 @@ namespace net.vieapps.Services.Users
 		}
 
 		protected override Task SendSyncRequestAsync(RequestInfo requestInfo, CancellationToken cancellationToken = default)
-		{
-			return base.SendSyncRequestAsync(requestInfo, cancellationToken);
-		}
+			=> base.SendSyncRequestAsync(requestInfo, cancellationToken);
 		#endregion
 
 		protected override async Task ProcessInterCommunicateMessageAsync(CommunicateMessage message, CancellationToken cancellationToken = default)
@@ -2169,7 +2341,7 @@ namespace net.vieapps.Services.Users
 								await Utility.Cache.SetAsync(key, session, 0, cancellationToken).ConfigureAwait(false);
 							else if (info == null || (DateTime.Now - info.Item1).TotalMinutes > 14)
 							{
-								var account = await Account.GetAsync<Account>(userID, cancellationToken).ConfigureAwait(false);
+								var account = await Account.GetByIDAsync(userID, cancellationToken).ConfigureAwait(false);
 								if (account != null)
 								{
 									account.LastAccess = DateTime.Now;
@@ -2190,7 +2362,7 @@ namespace net.vieapps.Services.Users
 								session.Online = false;
 								await Session.UpdateAsync(session, true, cancellationToken).ConfigureAwait(false);
 							}
-							var account = string.IsNullOrWhiteSpace(info.Item2) ? null : await Account.GetAsync<Account>(info.Item2, cancellationToken).ConfigureAwait(false);
+							var account = string.IsNullOrWhiteSpace(info.Item2) ? null : await Account.GetByIDAsync(info.Item2, cancellationToken).ConfigureAwait(false);
 							if (account != null)
 							{
 								account.LastAccess = DateTime.Now;
@@ -2230,14 +2402,14 @@ namespace net.vieapps.Services.Users
 		}
 
 		#region Timers for working with background workers & schedulers
-		void RegisterTimers(string[] args = null)
+		void RegisterTimers()
 		{
 			// clean expired sessions (13 hours)
 			this.StartTimer(async () =>
 			{
 				var userID = UtilityService.GetAppSetting("Users:SystemAccountID", "VIEAppsNGX-MMXVII-System-Account");
 				var sessions = await Session.FindAsync(Filters<Session>.LessThan("ExpiredAt", DateTime.Now), null, 0, 1, null, this.CancellationTokenSource.Token).ConfigureAwait(false);
-				await sessions.ForEachAsync((session, token) => Session.DeleteAsync<Session>(session.ID, userID, token), this.CancellationTokenSource.Token, true, false).ConfigureAwait(false);
+				await sessions.ForEachAsync(async session => await Session.DeleteAsync<Session>(session.ID, userID, this.CancellationToken).ConfigureAwait(false), true, false).ConfigureAwait(false);
 			}, 13 * 60 * 60);
 
 			// refresh sessions (10 minutes)
@@ -2247,7 +2419,7 @@ namespace net.vieapps.Services.Users
 				var visitorTimepoint = DateTime.Now.AddMinutes(-10);
 				await this.Sessions.Select(kvp => new { SessionID = kvp.Key, LastActivity = kvp.Value.Item1, UserID = kvp.Value.Item2 })
 					.ToList()
-					.ForEachAsync(async (info, token) =>
+					.ForEachAsync(async info =>
 					{
 						// remove offline session
 						if (info.LastActivity < (string.IsNullOrWhiteSpace(info.UserID) ? visitorTimepoint : userTimepoint))
@@ -2260,21 +2432,143 @@ namespace net.vieapps.Services.Users
 									{ "UserID", info.UserID },
 									{ "IsOnline", false }
 								}
-							}, token).ConfigureAwait(false);
+							}, this.CancellationToken).ConfigureAwait(false);
 
 						// refresh anonymous session
 						else if (string.IsNullOrWhiteSpace(info.UserID))
 						{
 							var key = $"Session#{info.SessionID}";
-							var session = await Utility.Cache.GetAsync<Session>(key, token).ConfigureAwait(false);
+							var session = await Utility.Cache.GetAsync<Session>(key, this.CancellationToken).ConfigureAwait(false);
 							if (session != null)
-								await Utility.Cache.SetAsync(key, session, 0, token).ConfigureAwait(false);
+								await Utility.Cache.SetAsync(key, session, 0, this.CancellationToken).ConfigureAwait(false);
 							else
 								this.Sessions.TryRemove(info.SessionID, out Tuple<DateTime, string> sessioninfo);
 						}
-					}, this.CancellationTokenSource.Token)
+					})
 					.ConfigureAwait(false);
 			}, 10 * 60);
+		}
+		#endregion
+
+		#region Validate email/phone/otp & send SMS/OTP
+		bool ValidateEmail(string input, out string output)
+		{
+			output = (input ?? "").Replace(" ", "").Replace("#", "").Trim().ToLower();
+			var regex = new Regex("^(([^<>()[\\]\\.,;:\\s@\\\"]+(\\.[^<>()[\\]\\.,;:\\s@\\\"]+)*)|(\\\".+\\\"))@(([^<>()[\\]\\.,;:\\s@\\\"]+\\.)+[^<>()[\\]\\.,;:\\s@\\\"]{2,})$", RegexOptions.IgnoreCase);
+
+			if (string.IsNullOrWhiteSpace(output) || !regex.IsMatch(output))
+			{
+				output = null;
+				return false;
+			}
+
+			return true;
+		}
+
+		bool ValidatePhone(string input, out string output)
+		{
+			output = (input ?? "").Replace(" ", "").Replace("-", "").Replace(".", "").Trim();
+			var regex = new Regex("^\\s*(?:\\+?(\\d{1,3}))?[-. (]*(\\d{3})[-. )]*(\\d{3})[-. ]*(\\d{4})(?: *x(\\d+))?\\s*$", RegexOptions.IgnoreCase);
+
+			if (string.IsNullOrWhiteSpace(output) || !regex.IsMatch(output))
+			{
+				output = null;
+				return false;
+			}
+
+			if (output.StartsWith("00"))
+				output = $"+{output.Right(output.Length - 2)}";
+			if (output.StartsWith("0"))
+				output = $"+{this.PhoneCountryCode}{output.Right(output.Length - 1)}";
+
+			return true;
+		}
+
+		Task<JToken> CallOtpServiceAsync(RequestInfo requestInfo, TwoFactorsAuthenticationType type, string id, string stamp, string otp = null, CancellationToken cancellationToken = default, Dictionary<string, string> extra = null)
+		{
+			extra = new Dictionary<string, string>(extra ?? new Dictionary<string, string>(), StringComparer.OrdinalIgnoreCase)
+			{
+				{ "Type", type.ToString() },
+				{ "ID", id.Encrypt(this.EncryptionKey) },
+				{ "Stamp", stamp.Encrypt(this.EncryptionKey) }
+			};
+			if (!string.IsNullOrWhiteSpace(otp))
+				extra["Password"] = otp.Encrypt(this.EncryptionKey);
+			return this.CallServiceAsync(new RequestInfo(requestInfo.Session, "AuthenticatorOTP", "Time-Based-OTP", "GET")
+			{
+				Header = new Dictionary<string, string>(requestInfo.Header ?? new Dictionary<string, string>(), StringComparer.OrdinalIgnoreCase),
+				Query = new Dictionary<string, string>(requestInfo.Query ?? new Dictionary<string, string>(), StringComparer.OrdinalIgnoreCase)
+				{
+					["language"] = requestInfo.GetParameter("language") ?? "en-US"
+				},
+				Extra = extra,
+				CorrelationID = requestInfo.CorrelationID
+			}, cancellationToken);
+		}
+
+		async Task<JToken> SendSmsAsync(RequestInfo requestInfo, string phone, string message, Dictionary<string, string> parameters, CancellationToken cancellationToken)
+		{
+			if (!this.ValidatePhone(phone, out phone))
+				throw new InformationInvalidException($"The phone number is invalid");
+
+			var appName = requestInfo.GetAppName();
+			var appPlatform = requestInfo.GetAppPlatform();
+			var deviceID = requestInfo.GetDeviceID();
+			var language = requestInfo.GetParameter("language") ?? "en-US";
+			var location = await requestInfo.GetLocationAsync(cancellationToken).ConfigureAwait(false);
+			var extra = new Dictionary<string, string>(requestInfo.Extra ?? new Dictionary<string, string>(), StringComparer.OrdinalIgnoreCase);
+			parameters?.ForEach(kvp => extra[kvp.Key] = kvp.Value);
+			return await this.CallServiceAsync(new RequestInfo(requestInfo.Session, "Sms", requestInfo.GetParameter("x-sms-sender") ?? "Default", "POST")
+			{
+				Header = new Dictionary<string, string>(requestInfo.Header ?? new Dictionary<string, string>(), StringComparer.OrdinalIgnoreCase),
+				Query = new Dictionary<string, string>(requestInfo.Query ?? new Dictionary<string, string>(), StringComparer.OrdinalIgnoreCase)
+				{
+					["language"] = language
+				},
+				Body = new JObject
+				{
+					{ "Phone", phone },
+					{ "Message", message }
+				}.ToString(Formatting.None),
+				Extra = new Dictionary<string, string>(extra, StringComparer.OrdinalIgnoreCase)
+				{
+					["App"] = appName,
+					["AppName"] = appName,
+					["Platform"] = appPlatform,
+					["AppPlatform"] = appPlatform,
+					["AppDevice"] = deviceID,
+					["DeviceID"] = deviceID,
+					["Time"] = "vi-VN".IsEquals(language) ? DateTime.Now.ToString("hh:mm tt @ dd/MM/yyyy") : DateTime.Now.ToString("hh:mm tt @ MM/dd/yyyy"),
+					["Location"] = location,
+					["IP"] = requestInfo.Session.IP
+				},
+				CorrelationID = requestInfo.CorrelationID
+			}, cancellationToken).ConfigureAwait(false);
+		}
+
+		Task<JToken> SendOtpSmsAsync(RequestInfo requestInfo, Account account, string phone, bool isEncrypted, CancellationToken cancellationToken)
+		{
+			if (!this.ValidatePhone(isEncrypted ? phone.Decrypt(this.AuthenticationKey, true) : phone, out phone))
+				throw new InformationInvalidException($"The phone number is invalid");
+
+			var otp = OTPService.GeneratePassword($"{account.ID}@{phone.Encrypt(this.AuthenticationKey, true)}".ToLower().GetHMACSHA512Hash(this.AuthenticationKey), Int32.TryParse(UtilityService.GetAppSetting("OTPs:Interval", ""), out var interval) && interval > 300 ? interval : 300, Int32.TryParse(UtilityService.GetAppSetting("OTPs:Digits", ""), out var digits) && digits > 3 ? digits : 6);
+			var message = requestInfo.GetParameter("x-sms-otp-template") ?? UtilityService.GetAppSetting("OTPs:Template");
+			if (string.IsNullOrWhiteSpace(message))
+				message = "vi-VN".IsEquals(requestInfo.GetParameter("language") ?? "en-US")
+					? "Sử dụng mã {{OTP}} để xác nhận truy cập trên app {{AppName}}"
+					: "Use the {{OTP}} code to confirm your access on {{AppName}} app";
+
+			return this.SendSmsAsync(requestInfo, phone, message, new Dictionary<string, string>
+			{
+				["OTP"] = otp,
+				["Code"] = otp,
+				["Phone"] = phone,
+				["PhoneNumber"] = phone,
+				["Name"] = account.Profile?.Name,
+				["Email"] = account.Profile?.Email,
+				["Account"] = account.AccessIdentity,
+				["AccountID"] = account.ID
+			}, cancellationToken);
 		}
 		#endregion
 
