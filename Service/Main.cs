@@ -508,7 +508,7 @@ namespace net.vieapps.Services.Users
 			var response = account.GetAccountJson();
 
 			// two-factors authentication is required
-			if (account.TwoFactorsAuthentication.Required)
+			if (account.TwoFactorsAuthentication != null && account.TwoFactorsAuthentication.Required)
 			{
 				response["Require2FA"] = true;
 				response["Providers"] = account.TwoFactorsAuthentication.GetProvidersJson(this.AuthenticationKey);
