@@ -23,7 +23,7 @@
 
 	<ItemGroup>
 		<PackageReference Include="System.DirectoryServices.AccountManagement" Version="5.0.0" />
-		<PackageReference Include="VIEApps.Services.Base" Version="10.4.2108.1" />
+		<PackageReference Include="VIEApps.Services.Base" Version="10.4.2108.3" />
 	</ItemGroup>
 
 </Project>

@@ -32,7 +32,7 @@ namespace net.vieapps.Services.Users
 
 		HashSet<string> WindowsAD { get; set; } = UtilityService.GetAppSetting("Users:WindowsAD", "vieapps.net|vieapps.com").ToLower().ToHashSet("|", true);
 
-		string PhoneCountryCode = UtilityService.GetAppSetting("Users:Phone:CountryCode", "84");
+		string PhoneCountryCode { get; } = UtilityService.GetAppSetting("Users:Phone:CountryCode", "84");
 		#endregion
 
 		public override string ServiceName => "Users";
@@ -244,7 +244,7 @@ namespace net.vieapps.Services.Users
 				try
 				{
 					var apisURI = this.GetHttpURI("APIs", "https://apis.vieapps.net");
-					var response = await UtilityService.FetchWebResourceAsync($"{apisURI}/statics/instructions/users/{requestInfo.GetParameter("language") ?? "vi-VN"}.json", cancellationToken).ConfigureAwait(false);
+					var response = await UtilityService.FetchHttpAsync($"{apisURI}/statics/instructions/users/{requestInfo.GetParameter("language") ?? "vi-VN"}.json", cancellationToken).ConfigureAwait(false);
 					var instruction = response.ToJson().Get<JObject>(mode);
 					subject = string.IsNullOrWhiteSpace(subject) ? instruction?.Get<string>("subject") : subject;
 					body = string.IsNullOrWhiteSpace(body) ? instruction?.Get<string>("body") : body;
@@ -2551,7 +2551,7 @@ namespace net.vieapps.Services.Users
 			if (!this.ValidatePhone(isEncrypted ? phone.Decrypt(this.AuthenticationKey, true) : phone, out phone))
 				throw new InformationInvalidException($"The phone number is invalid");
 
-			var otp = OTPService.GeneratePassword($"{account.ID}@{phone.Encrypt(this.AuthenticationKey, true)}".ToLower().GetHMACSHA512Hash(this.AuthenticationKey), Int32.TryParse(UtilityService.GetAppSetting("OTPs:Interval", ""), out var interval) && interval > 300 ? interval : 300, Int32.TryParse(UtilityService.GetAppSetting("OTPs:Digits", ""), out var digits) && digits > 3 ? digits : 6);
+			var otp = OTPService.GeneratePassword($"{account.ID}@{phone.Encrypt(this.AuthenticationKey, true)}".ToLower().GetHMACSHA512Hash(this.AuthenticationKey), Int32.TryParse(UtilityService.GetAppSetting("OTPs:Interval", ""), out var interval) && interval >= 300 ? interval : 900, Int32.TryParse(UtilityService.GetAppSetting("OTPs:Digits", ""), out var digits) && digits > 3 ? digits : 6);
 			var message = requestInfo.GetParameter("x-sms-otp-template") ?? UtilityService.GetAppSetting("OTPs:Template");
 			if (string.IsNullOrWhiteSpace(message))
 				message = "vi-VN".IsEquals(requestInfo.GetParameter("language") ?? "en-US")
