@@ -42,6 +42,8 @@ namespace net.vieapps.Services.Users
 			{
 				// initialize static properties
 				Utility.Cache = new Cache($"VIEApps-Services-{this.ServiceName}", Components.Utility.Logger.GetLoggerFactory());
+				Utility.OAuths = UtilityService.GetAppSetting("Users:OAuths", "").ToList();
+
 				Utility.ActivateHttpURI = this.GetHttpURI("Portals", "https://portals.vieapps.net");
 				while (Utility.ActivateHttpURI.EndsWith("/"))
 					Utility.ActivateHttpURI = Utility.ActivateHttpURI.Left(Utility.FilesHttpURI.Length - 1);
@@ -112,6 +114,29 @@ namespace net.vieapps.Services.Users
 								{ "Code", captcha },
 								{ "Uri", $"{Utility.CaptchaHttpURI}{captcha.Url64Encode()}/{(requestInfo.GetQueryParameter("register") ?? UtilityService.NewUUID.Encrypt(this.EncryptionKey, true)).Substring(UtilityService.GetRandomNumber(13, 43), 13).Reverse()}.jpg" }
 							};
+							break;
+
+						case "definitions":
+							switch (requestInfo.GetObjectIdentity()?.ToLower())
+							{
+								case "oauth":
+								case "oauths":
+									json = Utility.OAuths.ToJArray();
+									break;
+
+								case "account":
+								case "accounts":
+									json = this.GenerateFormControls<Account>();
+									break;
+
+								case "profile":
+								case "profiles":
+									json = this.GenerateFormControls<Profile>();
+									break;
+
+								default:
+									throw new InvalidRequestException($"The request is invalid [({requestInfo.Verb}): {requestInfo.GetURI()}]");
+							}
 							break;
 
 						default:

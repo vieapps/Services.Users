@@ -1,18 +1,6 @@
 ﻿#region Related components
-using System;
-using System.Linq;
-using System.Text;
 using System.Collections.Generic;
-using System.Collections.Specialized;
-using System.Threading;
-using System.Threading.Tasks;
-using System.Configuration;
-using System.Xml.Serialization;
-
-using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
-using MongoDB.Bson.Serialization.Attributes;
-
 using net.vieapps.Components.Utility;
 using net.vieapps.Components.Security;
 using net.vieapps.Components.Caching;
@@ -24,6 +12,8 @@ namespace net.vieapps.Services.Users
 	public static class Utility
 	{
 		public static Cache Cache { get; internal set; }
+
+		public static List<string> OAuths { get; internal set; } = new List<string>();
 
 		public static string FilesHttpURI { get; internal set; }
 

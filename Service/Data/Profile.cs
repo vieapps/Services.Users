@@ -2,15 +2,11 @@
 using System;
 using System.Diagnostics;
 using System.Xml.Serialization;
-
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Newtonsoft.Json.Converters;
-
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
-
-using net.vieapps.Components.Utility;
 using net.vieapps.Components.Security;
 using net.vieapps.Components.Repository;
 #endregion
@@ -96,13 +92,13 @@ namespace net.vieapps.Services.Users
 		[Ignore, JsonIgnore, BsonIgnore, XmlIgnore]
 		public override Privileges OriginalPrivileges { get; set; }
 
-		public override JObject ToJson(bool addTypeOfExtendedProperties = false, Action<JObject> onPreCompleted = null)
+		public override JObject ToJson(bool addTypeOfExtendedProperties = false, Action<JObject> onCompleted = null)
 			=> base.ToJson(addTypeOfExtendedProperties, json =>
 			{
 				json["Avatar"] = string.IsNullOrWhiteSpace(this.Avatar) ? "" : this.Avatar.StartsWith("/") ? Utility.FilesHttpURI + this.Avatar : this.Avatar.Replace("~~/", Utility.FilesHttpURI + "/");
 				json["Gravatar"] = this.GetGravatarURI();
 				json["Options"] = string.IsNullOrWhiteSpace(this.Options) ? null : JObject.Parse(this.Options);
-				onPreCompleted?.Invoke(json);
+				onCompleted?.Invoke(json);
 			});
 	}
 }
