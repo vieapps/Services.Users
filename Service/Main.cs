@@ -2477,37 +2477,10 @@ namespace net.vieapps.Services.Users
 
 		#region Validate email/phone/otp & send SMS/OTP
 		bool ValidateEmail(string input, out string output)
-		{
-			output = (input ?? "").Replace(" ", "").Replace("#", "").Trim().ToLower();
-			var regex = new Regex("^(([^<>()[\\]\\.,;:\\s@\\\"]+(\\.[^<>()[\\]\\.,;:\\s@\\\"]+)*)|(\\\".+\\\"))@(([^<>()[\\]\\.,;:\\s@\\\"]+\\.)+[^<>()[\\]\\.,;:\\s@\\\"]{2,})$", RegexOptions.IgnoreCase);
-
-			if (string.IsNullOrWhiteSpace(output) || !regex.IsMatch(output))
-			{
-				output = null;
-				return false;
-			}
-
-			return true;
-		}
+			=> (input ?? "").IsValidEmail(out output);
 
 		bool ValidatePhone(string input, out string output)
-		{
-			output = (input ?? "").Replace(" ", "").Replace("-", "").Replace(".", "").Trim();
-			var regex = new Regex("^\\s*(?:\\+?(\\d{1,3}))?[-. (]*(\\d{3})[-. )]*(\\d{3})[-. ]*(\\d{4})(?: *x(\\d+))?\\s*$", RegexOptions.IgnoreCase);
-
-			if (string.IsNullOrWhiteSpace(output) || !regex.IsMatch(output))
-			{
-				output = null;
-				return false;
-			}
-
-			if (output.StartsWith("00"))
-				output = $"+{output.Right(output.Length - 2)}";
-			if (output.StartsWith("0"))
-				output = $"+{this.PhoneCountryCode}{output.Right(output.Length - 1)}";
-
-			return true;
-		}
+			=> (input ?? "").IsValidPhone(out output, this.PhoneCountryCode);
 
 		Task<JToken> CallOtpServiceAsync(RequestInfo requestInfo, TwoFactorsAuthenticationType type, string id, string stamp, string otp = null, CancellationToken cancellationToken = default, Dictionary<string, string> extra = null)
 		{
