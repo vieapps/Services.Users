@@ -1176,14 +1176,8 @@ namespace net.vieapps.Services.Users
 			var smtpServerUsername = instructions.Item3.Item4;
 			var smtpServerPassword = instructions.Item3.Item5;
 
-			var requestExpando = requestInfo.ToExpandoObject(requestInfoAsExpandoObject =>
-			{
-				requestInfoAsExpandoObject.Set("Body", requestInfo.BodyAsExpandoObject);
-				requestInfoAsExpandoObject.Get<ExpandoObject>("Header").Remove("x-app-token");
-			});
-
 			var inviter = mode.Equals("invite") ? await Profile.GetAsync<Profile>(requestInfo.Session.User.ID, cancellationToken).ConfigureAwait(false) : null;
-			var paramsExpando = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase)
+			var @params = new JObject
 			{
 				{ "Account", identity },
 				{ "Password", password },
@@ -1202,18 +1196,12 @@ namespace net.vieapps.Services.Users
 				{ "EmailSignature", instructions.Item2.Item2 }
 			}.ToExpandoObject();
 
+			var requestInfoAsExpandoObject = requestInfo.AsExpandoObject;
 			var parameters = $"{subject}\r\n{body}"
 				.GetDoubleBracesTokens()
 				.Select(token => token.Item2)
 				.Distinct(StringComparer.OrdinalIgnoreCase)
-				.ToDictionary(token => token, token =>
-				{
-					return token.StartsWith("@[") && token.EndsWith("]")
-						? Extensions.JsEvaluate(token.GetJsExpression(requestExpando, null, paramsExpando))
-						: token.StartsWith("@")
-							? token.Evaluate(new Tuple<ExpandoObject, ExpandoObject, ExpandoObject>(requestExpando, null, paramsExpando))
-							: token;
-				});
+				.ToDictionary(token => token, token => token.StartsWith("@[") && token.EndsWith("]") ? Extensions.JsEvaluate(token.GetJsExpression(null, requestInfoAsExpandoObject, @params)) : token.StartsWith("@") ? token.Evaluate(null, requestInfoAsExpandoObject, @params) : token);
 
 			// send an email
 			await this.SendEmailAsync(from, to, subject.Format(parameters), body.Format(parameters), smtpServerHost, smtpServerPort, smtpServerEnableSsl, smtpServerUsername, smtpServerPassword, cancellationToken).ConfigureAwait(false);
@@ -1442,13 +1430,7 @@ namespace net.vieapps.Services.Users
 			var smtpServerUsername = instructions.Item3.Item4;
 			var smtpServerPassword = instructions.Item3.Item5;
 
-			var requestExpando = requestInfo.ToExpandoObject(requestInfoAsExpandoObject =>
-			{
-				requestInfoAsExpandoObject.Set("Body", requestInfo.BodyAsExpandoObject);
-				requestInfoAsExpandoObject.Get<ExpandoObject>("Header").Remove("x-app-token");
-			});
-
-			var paramsExpando = new Dictionary<string, object>
+			var @params = new JObject
 			{
 				{ "Account", account.AccessIdentity },
 				{ "Password", password },
@@ -1461,18 +1443,12 @@ namespace net.vieapps.Services.Users
 				{ "EmailSignature", instructions.Item2.Item2 }
 			}.ToExpandoObject();
 
+			var requestInfoAsExpandoObject = requestInfo.AsExpandoObject;
 			var parameters = $"{subject}\r\n{body}"
 				.GetDoubleBracesTokens()
 				.Select(token => token.Item2)
 				.Distinct(StringComparer.OrdinalIgnoreCase)
-				.ToDictionary(token => token, token =>
-				{
-					return token.StartsWith("@[") && token.EndsWith("]")
-						? Extensions.JsEvaluate(token.GetJsExpression(requestExpando, null, paramsExpando))
-						: token.StartsWith("@")
-							? token.Evaluate(new Tuple<ExpandoObject, ExpandoObject, ExpandoObject>(requestExpando, null, paramsExpando))
-							: token;
-				});
+				.ToDictionary(token => token, token => token.StartsWith("@[") && token.EndsWith("]") ? Extensions.JsEvaluate(token.GetJsExpression(null, requestInfoAsExpandoObject, @params)) : token.StartsWith("@") ? token.Evaluate(null, requestInfoAsExpandoObject, @params) : token);
 
 			// send an email
 			await this.SendEmailAsync(from, to, subject.Format(parameters), body.Format(parameters), smtpServerHost, smtpServerPort, smtpServerEnableSsl, smtpServerUsername, smtpServerPassword, cancellationToken).ConfigureAwait(false);
@@ -1601,13 +1577,7 @@ namespace net.vieapps.Services.Users
 			var smtpServerUsername = instructions.Item3.Item4;
 			var smtpServerPassword = instructions.Item3.Item5;
 
-			var requestExpando = requestInfo.ToExpandoObject(requestInfoAsExpandoObject =>
-			{
-				requestInfoAsExpandoObject.Set("Body", requestInfo.BodyAsExpandoObject);
-				requestInfoAsExpandoObject.Get<ExpandoObject>("Header").Remove("x-app-token");
-			});
-
-			var paramsExpando = new Dictionary<string, object>
+			var @params = new JObject
 			{
 				{ "Account", account.AccessIdentity },
 				{ "Password", password },
@@ -1618,18 +1588,12 @@ namespace net.vieapps.Services.Users
 				{ "EmailSignature", instructions.Item2.Item2 }
 			}.ToExpandoObject();
 
+			var requestInfoAsExpandoObject = requestInfo.AsExpandoObject;
 			var parameters = $"{subject}\r\n{body}"
 				.GetDoubleBracesTokens()
 				.Select(token => token.Item2)
 				.Distinct(StringComparer.OrdinalIgnoreCase)
-				.ToDictionary(token => token, token =>
-				{
-					return token.StartsWith("@[") && token.EndsWith("]")
-						? Extensions.JsEvaluate(token.GetJsExpression(requestExpando, null, paramsExpando))
-						: token.StartsWith("@")
-							? token.Evaluate(new Tuple<ExpandoObject, ExpandoObject, ExpandoObject>(requestExpando, null, paramsExpando))
-							: token;
-				});
+				.ToDictionary(token => token, token => token.StartsWith("@[") && token.EndsWith("]") ? Extensions.JsEvaluate(token.GetJsExpression(null, requestInfoAsExpandoObject, @params)) : token.StartsWith("@") ? token.Evaluate(null, requestInfoAsExpandoObject, @params) : token);
 
 			await this.SendEmailAsync(from, to, subject.Format(parameters), body.Format(parameters), smtpServerHost, smtpServerPort, smtpServerEnableSsl, smtpServerUsername, smtpServerPassword, cancellationToken).ConfigureAwait(false);
 		}
@@ -1693,13 +1657,7 @@ namespace net.vieapps.Services.Users
 			var smtpServerUsername = instructions.Item3.Item4;
 			var smtpServerPassword = instructions.Item3.Item5;
 
-			var requestExpando = requestInfo.ToExpandoObject(requestInfoAsExpandoObject =>
-			{
-				requestInfoAsExpandoObject.Set("Body", requestInfo.BodyAsExpandoObject);
-				requestInfoAsExpandoObject.Get<ExpandoObject>("Header").Remove("x-app-token");
-			});
-
-			var paramsExpando = new Dictionary<string, object>
+			var @params = new JObject
 			{
 				{ "Host", requestInfo.GetQueryParameter("host") ?? "unknown" },
 				{ "Email", account.AccessIdentity },
@@ -1710,18 +1668,12 @@ namespace net.vieapps.Services.Users
 				{ "EmailSignature", instructions.Item2.Item2 }
 			}.ToExpandoObject();
 
+			var requestInfoAsExpandoObject = requestInfo.AsExpandoObject;
 			var parameters = $"{subject}\r\n{body}"
 				.GetDoubleBracesTokens()
 				.Select(token => token.Item2)
 				.Distinct(StringComparer.OrdinalIgnoreCase)
-				.ToDictionary(token => token, token =>
-				{
-					return token.StartsWith("@[") && token.EndsWith("]")
-						? Extensions.JsEvaluate(token.GetJsExpression(requestExpando, null, paramsExpando))
-						: token.StartsWith("@")
-							? token.Evaluate(new Tuple<ExpandoObject, ExpandoObject, ExpandoObject>(requestExpando, null, paramsExpando))
-							: token;
-				});
+				.ToDictionary(token => token, token => token.StartsWith("@[") && token.EndsWith("]") ? Extensions.JsEvaluate(token.GetJsExpression(null, requestInfoAsExpandoObject, @params)) : token.StartsWith("@") ? token.Evaluate(null, requestInfoAsExpandoObject, @params) : token);
 
 			// send an email
 			await this.SendEmailAsync(from, to, subject.Format(parameters), body.Format(parameters), smtpServerHost, smtpServerPort, smtpServerEnableSsl, smtpServerUsername, smtpServerPassword, cancellationToken).ConfigureAwait(false);
