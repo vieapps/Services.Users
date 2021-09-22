@@ -54,11 +54,11 @@ namespace net.vieapps.Services.Users
 				Utility.CaptchaHttpURI = this.GetHttpURI("Captchas", Utility.FilesHttpURI);
 				while (Utility.CaptchaHttpURI.EndsWith("/"))
 					Utility.CaptchaHttpURI = Utility.CaptchaHttpURI.Left(Utility.CaptchaHttpURI.Length - 1);
-				Utility.CaptchaHttpURI = $"{Utility.CaptchaHttpURI}/captchas/";
-				Utility.AvatarHttpURI = this.GetHttpURI("Captchas", Utility.FilesHttpURI);
+				Utility.CaptchaHttpURI += "/captchas/";
+				Utility.AvatarHttpURI = this.GetHttpURI("Avatars", Utility.FilesHttpURI);
 				while (Utility.AvatarHttpURI.EndsWith("/"))
 					Utility.AvatarHttpURI = Utility.AvatarHttpURI.Left(Utility.AvatarHttpURI.Length - 1);
-				Utility.AvatarHttpURI = $"{Utility.AvatarHttpURI}/avatars/";
+				Utility.AvatarHttpURI += "/avatars/";
 
 				// register timers
 				this.RegisterTimers();
