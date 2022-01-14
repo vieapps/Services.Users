@@ -1195,13 +1195,7 @@ namespace net.vieapps.Services.Users
 				{ "Location", await requestInfo.GetLocationAsync(cancellationToken).ConfigureAwait(false) },
 				{ "EmailSignature", instructions.Item2.Item2 }
 			}.ToExpandoObject();
-
-			var requestInfoAsExpandoObject = requestInfo.AsExpandoObject;
-			var parameters = $"{subject}\r\n{body}"
-				.GetDoubleBracesTokens()
-				.Select(token => token.Item2)
-				.Distinct(StringComparer.OrdinalIgnoreCase)
-				.ToDictionary(token => token, token => token.StartsWith("@[") && token.EndsWith("]") ? Extensions.JsEvaluate(token.GetJsExpression(null, requestInfoAsExpandoObject, @params)) : token.StartsWith("@") ? token.Evaluate(null, requestInfoAsExpandoObject, @params) : token);
+			var parameters = $"{subject}\r\n{body}".PrepareDoubleBracesParameters(null, requestInfo.AsExpandoObject, @params);
 
 			// send an email
 			await this.SendEmailAsync(from, to, subject.Format(parameters), body.Format(parameters), smtpServerHost, smtpServerPort, smtpServerEnableSsl, smtpServerUsername, smtpServerPassword, cancellationToken).ConfigureAwait(false);
@@ -1442,13 +1436,7 @@ namespace net.vieapps.Services.Users
 				{ "Location", await requestInfo.GetLocationAsync(cancellationToken).ConfigureAwait(false) },
 				{ "EmailSignature", instructions.Item2.Item2 }
 			}.ToExpandoObject();
-
-			var requestInfoAsExpandoObject = requestInfo.AsExpandoObject;
-			var parameters = $"{subject}\r\n{body}"
-				.GetDoubleBracesTokens()
-				.Select(token => token.Item2)
-				.Distinct(StringComparer.OrdinalIgnoreCase)
-				.ToDictionary(token => token, token => token.StartsWith("@[") && token.EndsWith("]") ? Extensions.JsEvaluate(token.GetJsExpression(null, requestInfoAsExpandoObject, @params)) : token.StartsWith("@") ? token.Evaluate(null, requestInfoAsExpandoObject, @params) : token);
+			var parameters = $"{subject}\r\n{body}".PrepareDoubleBracesParameters(null, requestInfo.AsExpandoObject, @params);
 
 			// send an email
 			await this.SendEmailAsync(from, to, subject.Format(parameters), body.Format(parameters), smtpServerHost, smtpServerPort, smtpServerEnableSsl, smtpServerUsername, smtpServerPassword, cancellationToken).ConfigureAwait(false);
@@ -1587,13 +1575,7 @@ namespace net.vieapps.Services.Users
 				{ "Location", await requestInfo.GetLocationAsync(cancellationToken).ConfigureAwait(false) },
 				{ "EmailSignature", instructions.Item2.Item2 }
 			}.ToExpandoObject();
-
-			var requestInfoAsExpandoObject = requestInfo.AsExpandoObject;
-			var parameters = $"{subject}\r\n{body}"
-				.GetDoubleBracesTokens()
-				.Select(token => token.Item2)
-				.Distinct(StringComparer.OrdinalIgnoreCase)
-				.ToDictionary(token => token, token => token.StartsWith("@[") && token.EndsWith("]") ? Extensions.JsEvaluate(token.GetJsExpression(null, requestInfoAsExpandoObject, @params)) : token.StartsWith("@") ? token.Evaluate(null, requestInfoAsExpandoObject, @params) : token);
+			var parameters = $"{subject}\r\n{body}".PrepareDoubleBracesParameters(null, requestInfo.AsExpandoObject, @params);
 
 			await this.SendEmailAsync(from, to, subject.Format(parameters), body.Format(parameters), smtpServerHost, smtpServerPort, smtpServerEnableSsl, smtpServerUsername, smtpServerPassword, cancellationToken).ConfigureAwait(false);
 		}
@@ -1667,13 +1649,7 @@ namespace net.vieapps.Services.Users
 				{ "Location", await requestInfo.GetLocationAsync(cancellationToken).ConfigureAwait(false) },
 				{ "EmailSignature", instructions.Item2.Item2 }
 			}.ToExpandoObject();
-
-			var requestInfoAsExpandoObject = requestInfo.AsExpandoObject;
-			var parameters = $"{subject}\r\n{body}"
-				.GetDoubleBracesTokens()
-				.Select(token => token.Item2)
-				.Distinct(StringComparer.OrdinalIgnoreCase)
-				.ToDictionary(token => token, token => token.StartsWith("@[") && token.EndsWith("]") ? Extensions.JsEvaluate(token.GetJsExpression(null, requestInfoAsExpandoObject, @params)) : token.StartsWith("@") ? token.Evaluate(null, requestInfoAsExpandoObject, @params) : token);
+			var parameters = $"{subject}\r\n{body}".PrepareDoubleBracesParameters(null, requestInfo.AsExpandoObject, @params);
 
 			// send an email
 			await this.SendEmailAsync(from, to, subject.Format(parameters), body.Format(parameters), smtpServerHost, smtpServerPort, smtpServerEnableSsl, smtpServerUsername, smtpServerPassword, cancellationToken).ConfigureAwait(false);
