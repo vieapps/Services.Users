@@ -65,14 +65,9 @@ namespace net.vieapps.Services.Users.WindowsAD
 			var username = requestBody.Get<string>("Username").Decrypt(this.EncryptionKey).Trim();
 			var password = requestBody.Get<string>("Password").Decrypt(this.EncryptionKey);
 
-			// perform sign-in with Windows Directory Service (when domain doesn't got dot (.) in the name, means local machine)
-			using (var context = new PrincipalContext(domain.PositionOf(".") < 0 ? ContextType.Machine : ContextType.Domain, domain))
-			{
-				if (!context.ValidateCredentials(username, password, ContextOptions.Negotiate))
-					throw new WrongAccountException();
-			}
-
-			return new JObject();
+			// perform sign-in with Windows Directory Service (when domain doesn't have dot (.) in the name, means local machine)
+			using (var context = new PrincipalContext(domain.IsContains(".") ? ContextType.Domain : ContextType.Machine, domain))
+				return context.ValidateCredentials(username, password, ContextOptions.Negotiate) ? new JObject() : throw new WrongAccountException();
 		}
 
 		JObject ChangePassword(RequestInfo requestInfo)

@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
-		<TargetFrameworks>net6.0;net5.0;netstandard2.0</TargetFrameworks>
+		<TargetFrameworks>net6.0</TargetFrameworks>
 		<WarningLevel>3</WarningLevel>
 		<NoWarn>1573,1591,IDE0044,IDE0054,IDE0063,IDE0066,IDE0074,IDE0090,CA1068,CA1507,CA1822</NoWarn>
 		<RootNamespace>net.vieapps.Services.Users</RootNamespace>
@@ -21,7 +21,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Include="VIEApps.Services.Base" Version="10.5.2201.2" />
+		<PackageReference Include="VIEApps.Services.Base" Version="10.5.2205.1" />
 	</ItemGroup>
 
 </Project>
