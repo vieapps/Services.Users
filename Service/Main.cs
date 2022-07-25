@@ -60,6 +60,8 @@ namespace net.vieapps.Services.Users
 					Utility.AvatarHttpURI = Utility.AvatarHttpURI.Left(Utility.AvatarHttpURI.Length - 1);
 				Utility.AvatarHttpURI += "/avatars/";
 
+				this.Logger?.LogInformation($"System Administrators: {User.SystemAdministrators.Join(",")}");
+
 				// register timers
 				this.RegisterTimers();
 
