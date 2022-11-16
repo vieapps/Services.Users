@@ -16,6 +16,10 @@ using net.vieapps.Components.Repository;
 using net.vieapps.Components.Caching;
 using net.vieapps.Components.Utility;
 using net.vieapps.Services;
+using System.Data;
+using System.IO;
+using WampSharp.V2.Core.Contracts;
+
 #endregion
 
 namespace net.vieapps.Services.Users
@@ -43,6 +47,8 @@ namespace net.vieapps.Services.Users
 				// initialize static properties
 				Utility.Cache = new Cache($"VIEApps-Services-{this.ServiceName}", Components.Utility.Logger.GetLoggerFactory());
 				Utility.OAuths = UtilityService.GetAppSetting("Users:OAuths", "").ToList();
+				if ("false".IsEquals(UtilityService.GetAppSetting("Users:AllowRegister", "true")))
+					Utility.AllowRegister = false;
 
 				Utility.ActivateHttpURI = this.GetHttpURI("Portals", "https://portals.vieapps.net");
 				while (Utility.ActivateHttpURI.EndsWith("/"))
@@ -1089,6 +1095,10 @@ namespace net.vieapps.Services.Users
 			var isCreateNew = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("x-create");
 			if (isCreateNew)
 			{
+				// not allow
+				if (!Utility.AllowRegister)
+					return response;
+
 				// create account
 				var account = new Account
 				{
@@ -1706,6 +1716,10 @@ namespace net.vieapps.Services.Users
 					else if ("fetch".IsEquals(identity))
 						return this.FetchProfilesAsync(requestInfo, cancellationToken, requestInfo.Extra.TryGetValue("x-notifications-key", out var notificationsKey) && notificationsKey != null && notificationsKey.IsEquals(this.GetKey("Notifications", null)));
 
+					// export
+					else if ("export".IsEquals(identity))
+						return this.ExportProfilesAsync(requestInfo, cancellationToken);
+
 					// get details of a profile
 					else
 						return this.GetProfileAsync(requestInfo, cancellationToken);
@@ -1783,7 +1797,7 @@ namespace net.vieapps.Services.Users
 			var profiles = new JArray();
 			await objects.ForEachAsync(async profile =>
 			{
-				profiles.Add(profile.GetProfileJson(await this.GetProfileRelatedJsonAsync(requestInfo, cancellationToken).ConfigureAwait(false) as JObject, !requestInfo.Session.User.IsSystemAdministrator));
+				profiles.Add(profile.GetProfileJson(await this.GetProfileRelatedJsonAsync(requestInfo, cancellationToken).ConfigureAwait(false) as JObject));
 			}, true, false).ConfigureAwait(false);
 
 			pagination = new Tuple<long, int, int, int>(totalRecords, totalPages, pageSize, pageNumber);
@@ -1799,7 +1813,7 @@ namespace net.vieapps.Services.Users
 			if (!cacheKey.Equals(""))
 			{
 				json = result.ToString(this.JsonFormat);
-				await Utility.Cache.SetAsync($"{cacheKey }{pageNumber}:json", json, Utility.Cache.ExpirationTime / 2, cancellationToken).ConfigureAwait(false);
+				await Utility.Cache.SetAsync($"{cacheKey}{pageNumber}:json", json, Utility.Cache.ExpirationTime / 2, cancellationToken).ConfigureAwait(false);
 			}
 
 			// return the result
@@ -1856,12 +1870,181 @@ namespace net.vieapps.Services.Users
 			var profiles = new JArray();
 			await objects.ForEachAsync(async profile =>
 			{
-				profiles.Add(profile.GetProfileJson(await this.GetProfileRelatedJsonAsync(requestInfo, cancellationToken).ConfigureAwait(false) as JObject, !requestInfo.Session.User.IsSystemAdministrator));
+				profiles.Add(profile.GetProfileJson(await this.GetProfileRelatedJsonAsync(requestInfo, cancellationToken).ConfigureAwait(false) as JObject));
 			}, true, false).ConfigureAwait(false);
 			return new JObject
 			{
 				{ "Objects", profiles }
 			};
+		}
+		#endregion
+
+		#region Export profiles to Excel
+		async Task<JToken> ExportProfilesAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		{
+			if (!await this.IsSystemAdministratorAsync(requestInfo, cancellationToken).ConfigureAwait(false))
+				throw new AccessDeniedException();
+
+			var processID = requestInfo.CorrelationID ?? UtilityService.NewUUID;
+			var deviceID = requestInfo.Session.DeviceID;
+			var requestJson = requestInfo.GetRequestJson();
+			var filterBy = requestJson.Get<JObject>("FilterBy");
+			var sortBy = requestJson.Get<JObject>("SortBy");
+			var pagination = requestJson.Get("Pagination", new JObject());
+			var pageSize = pagination.Get("PageSize", 100);
+			var pageNumber = pagination.Get("PageNumber", 1);
+			var maxPages = pagination.Get("MaxPages", 0);
+
+			this.ExportProfiles(processID, deviceID, filterBy?.ToFilterBy<Profile>(), sortBy?.ToSortBy<Profile>() ?? Sorts<Profile>.Ascending("Name"), pageSize, pageNumber, maxPages);
+			return new JObject();
+		}
+
+		void ExportProfiles(string processID, string deviceID, IFilterBy<Profile> filter, SortBy<Profile> sort, int pageSize, int pageNumber, int maxPages, int totalPages = 0)
+			=> Task.Run(async () =>
+			{
+				try
+				{
+					var stopwatch = Stopwatch.StartNew();
+					if (this.IsDebugLogEnabled)
+						await this.WriteLogsAsync(processID, $"Start to export data to Excel - Filter: {filter?.ToJson().ToString(Formatting.None) ?? "N/A"} - Sort: {sort?.ToJson().ToString(Formatting.None) ?? "N/A"}", null, this.ServiceName, "Excel").ConfigureAwait(false);
+
+					long totalRecords = 0;
+					if (totalPages < 1)
+					{
+						totalRecords = await Profile.CountAsync(filter, null, false, null, 0, this.CancellationToken).ConfigureAwait(false);
+						totalPages = totalRecords < 1 ? 0 : new Tuple<long, int>(totalRecords, pageSize).GetTotalPages();
+					}
+
+					var dataSet = totalPages < 1
+						? ExcelService.ToDataSet<Profile>(null)
+						: null;
+
+					var exceptions = new List<Exception>();
+					while (pageNumber <= totalPages && (maxPages == 0 || pageNumber <= maxPages))
+					{
+						new UpdateMessage
+						{
+							Type = "Users#Profile#Export",
+							DeviceID = deviceID,
+							Data = new JObject
+							{
+								{ "ProcessID", processID },
+								{ "Status", "Processing" },
+								{ "Percentage", $"{pageNumber * 100/totalPages:#0.0}%" }
+							}
+						}.Send();
+
+						try
+						{
+							var objects = pageNumber <= totalPages && (maxPages == 0 || pageNumber <= maxPages)
+								? await RepositoryMediator.FindAsync(null, filter, sort, pageSize, pageNumber, null, false, null, 0, this.CancellationToken).ConfigureAwait(false)
+								: new List<Profile>();
+							if (pageNumber < 2)
+								dataSet = objects.ToDataSet(null, dataset => this.NormalizeProfiles(dataset.Tables[0].Rows));
+							else
+								dataSet.Tables[0].UpdateDataTable(objects, null, dataTable => this.NormalizeProfiles(dataTable.Rows));
+						}
+						catch (Exception ex)
+						{
+							exceptions.Add(new RepositoryOperationException($"Error occurred while preparing objects to export to Excel => {ex.GetTypeName(true)}: {ex.Message}", ex));
+							await this.WriteLogsAsync(processID, $"Error occurred while preparing objects to export to Excel => {ex.GetTypeName(true)}: {ex.Message}", ex, this.ServiceName, "Excel").ConfigureAwait(false);
+						}
+						pageNumber++;
+					}
+
+					var filename = $"{processID}-profiles.xlsx";
+					if (dataSet != null)
+					{
+						using (var stream = dataSet.SaveAsExcel())
+							await stream.SaveAsBinaryAsync(Path.Combine(this.GetPath("Temp", Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "data-files", "temp")), filename), this.CancellationToken).ConfigureAwait(false);
+					}
+
+					new UpdateMessage
+					{
+						Type = "Users#Profile#Export",
+						DeviceID = deviceID,
+						Data = new JObject
+						{
+							{ "ProcessID", processID },
+							{ "Status", "Done" },
+							{ "Percentage", "100%" },
+							{ "Filename", filename },
+							{ "NodeID", $"{this.ServiceName.Trim().ToLower()}.{this.NodeID}" },
+							{
+								"Exceptions",
+								exceptions.Select(exception => new JObject
+								{
+									{ "Type", exception.GetType().ToString() },
+									{ "Message", exception.Message },
+									{ "Stack", exception.StackTrace }
+								}).ToJArray()
+							}
+						}
+					}.Send();
+
+					stopwatch.Stop();
+					if (this.IsDebugLogEnabled)
+						await this.WriteLogsAsync(processID, $"Export objects to Excel was completed - Total: {totalRecords:###,###,##0} - Execution times: {stopwatch.GetElapsedTimes()}", null, this.ServiceName, "Excel").ConfigureAwait(false);
+				}
+				catch (Exception ex)
+				{
+					var code = 500;
+					var type = ex.GetTypeName(true);
+					var message = ex.Message;
+					var stack = ex.StackTrace;
+					if (ex is WampException wampException)
+					{
+						var wampDetails = wampException.GetDetails();
+						code = wampDetails.Item1;
+						type = wampDetails.Item2;
+						message = wampDetails.Item3;
+						stack = wampDetails.Item4;
+					}
+					new UpdateMessage
+					{
+						Type = "Users#Profile#Export",
+						DeviceID = deviceID,
+						Data = new JObject
+						{
+							{ "ProcessID", processID },
+							{ "Status", "Error" },
+							{
+								"Error", new JObject
+								{
+									{ "Code", code },
+									{ "Type", type },
+									{ "Message", message },
+									{ "Stack", stack }
+								}
+							}
+						}
+					}.Send();
+					await this.WriteLogsAsync(processID, $"Error occurred while exporting objects to Excel => {message}", ex, this.ServiceName, "Excel").ConfigureAwait(false);
+				}
+			}, this.CancellationToken).ConfigureAwait(false);
+
+		void NormalizeProfiles(DataRowCollection rows)
+		{
+			foreach (DataRow row in rows)
+				try
+				{
+					var email = row["Email"].ToString().ToLower();
+					var name = row["Name"].ToString();
+					name = string.IsNullOrWhiteSpace(name) || (name[0] >= '0' && name[0] <= '9') ? email : name;
+					name = name.IndexOf("@") > 0 ? name.Left(name.IndexOf("@")) : name;
+					var mobile = row["Mobile"]?.ToString()?.Replace(" ", "").Replace(".", "").Replace("-", "").Replace("(", "").Replace(")", "");
+					mobile = string.IsNullOrWhiteSpace(mobile)
+						? null
+						: (mobile.StartsWith("+") || mobile.StartsWith("0") ? "" : mobile.StartsWith("84") ? "+" : "") + mobile;
+					row["Name"] = name.IndexOf(".") > 0 ? name.GetCapitalizedFirstLetter() : name.GetCapitalizedWords();
+					row["Email"] = email;
+					row["Mobile"] = mobile?.Trim();
+					row["BirthDay"] = DateTime.TryParse(row["BirthDay"]?.ToString(), out var birthday) ? birthday : null;
+					row["Address"] = row["Address"]?.ToString()?.Replace("-", " - ").Replace("  ", " ").GetCapitalizedWords();
+					row["County"] = row["County"]?.ToString()?.Replace("-", " - ").Replace("  ", " ").GetCapitalizedWords();
+					row["Province"] = row["Province"]?.ToString()?.Replace("-", " - ").Replace("  ", " ").GetCapitalizedWords();
+				}
+				catch { }
 		}
 		#endregion
 
@@ -1884,24 +2067,17 @@ namespace net.vieapps.Services.Users
 			var objectID = requestInfo.GetQueryParameter("related-object-identity");
 
 			// check permissions
-			var doNormalize = false;
 			var gotRights = this.IsAuthenticated(requestInfo) && requestInfo.Session.User.ID.IsEquals(id);
 			if (!gotRights)
-			{
 				gotRights = requestInfo.Session.User.IsSystemAdministrator || await this.IsAuthorizedAsync(requestInfo, "profile", Components.Security.Action.View, cancellationToken).ConfigureAwait(false);
-				doNormalize = !requestInfo.Session.User.IsSystemAdministrator;
-			}
 			var relatedService = gotRights ? null : this.GetRelatedService(requestInfo);
 			if (!gotRights && relatedService != null)
-			{
 				gotRights = await relatedService.CanManageAsync(requestInfo.Session.User, objectName, systemID, definitionID, objectID, cancellationToken).ConfigureAwait(false);
-				doNormalize = false;
-			}
 			if (!gotRights && requestInfo.GetHeaderParameter("x-app") == null)
 				throw new AccessDeniedException();
 
 			// response
-			var response = profile.GetProfileJson(await this.GetProfileRelatedJsonAsync(requestInfo, cancellationToken).ConfigureAwait(false) as JObject, doNormalize);
+			var response = profile.GetProfileJson(await this.GetProfileRelatedJsonAsync(requestInfo, cancellationToken).ConfigureAwait(false) as JObject);
 			if (requestInfo.GetHeaderParameter("x-app") != null)
 				await this.SendUpdateMessageAsync(new UpdateMessage
 				{
@@ -1960,7 +2136,7 @@ namespace net.vieapps.Services.Users
 			).ConfigureAwait(false);
 
 			// send update message
-			var response = profile.GetProfileJson(await this.GetProfileRelatedJsonAsync(requestInfo, cancellationToken).ConfigureAwait(false) as JObject, false);
+			var response = profile.GetProfileJson(await this.GetProfileRelatedJsonAsync(requestInfo, cancellationToken).ConfigureAwait(false) as JObject);
 			await this.SendUpdateMessageAsync(new UpdateMessage
 			{
 				Type = "Users#Profile#Update",

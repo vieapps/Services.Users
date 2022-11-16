@@ -15,6 +15,8 @@ namespace net.vieapps.Services.Users
 
 		public static List<string> OAuths { get; internal set; } = new List<string>();
 
+		public static bool AllowRegister { get; internal set; } = true;
+
 		public static string FilesHttpURI { get; internal set; }
 
 		public static string CaptchaHttpURI { get; internal set; } = $"{Utility.FilesHttpURI}/captchas/";
@@ -24,7 +26,7 @@ namespace net.vieapps.Services.Users
 		public static string ActivateHttpURI { get; internal set; }
 
 		#region Extensions for working with profile
-		internal static JObject GetProfileJson(this Profile profile, JObject relatedData = null, bool doNormalize = true, bool addRelated = true, bool useBriefInfo = false)
+		internal static JObject GetProfileJson(this Profile profile, JObject relatedData = null, bool addRelated = true, bool useBriefInfo = false)
 		{
 			var json = useBriefInfo
 				? new JObject
@@ -52,16 +54,6 @@ namespace net.vieapps.Services.Users
 								catch { }
 					}
 				});
-
-			if (doNormalize)
-			{
-				json["Email"] = !string.IsNullOrWhiteSpace(profile.Email)
-					? profile.Email.Left(profile.Email.IndexOf("@")) + "@..."
-					: "";
-				json["Mobile"] = !string.IsNullOrWhiteSpace(profile.Mobile)
-					? profile.Mobile.Trim().Replace(" ", "").Right(4).PadLeft(10, 'x')
-					: "";
-			}
 
 			return json;
 		}
