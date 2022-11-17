@@ -170,6 +170,7 @@ namespace net.vieapps.Services.Users
 			var json = new JObject
 			{
 				{ "ID", this.ID },
+				{ "Type", this.Type.ToString() },
 				{ "Roles", roles.Distinct(StringComparer.OrdinalIgnoreCase).ToJArray() },
 				{ "Privileges", (this.AccessPrivileges ?? new List<Privilege>()).ToJArray(privilege => privilege.ToJson()) }
 			};

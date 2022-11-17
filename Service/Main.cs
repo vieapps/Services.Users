@@ -1054,10 +1054,10 @@ namespace net.vieapps.Services.Users
 			};
 
 			var name = requestBody.Get<string>("Name");
-			var identity = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Account") ? requestInfo.Extra["Account"].Decrypt(this.EncryptionKey).Trim().ToLower() : null;
+			var identity = requestInfo.Extra != null && requestInfo.Extra.TryGetValue("Account", out var avalue) ? avalue.Decrypt(this.EncryptionKey).Trim().ToLower() : null;
 			if (string.IsNullOrWhiteSpace(identity))
-				identity = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Email") ? requestInfo.Extra["Email"].Decrypt(this.EncryptionKey).Trim().ToLower() : null;
-			var password = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Password") ? requestInfo.Extra["Password"].Decrypt(this.EncryptionKey) : null;
+				identity = requestInfo.Extra != null && requestInfo.Extra.TryGetValue("Email", out var evalue) ? evalue.Decrypt(this.EncryptionKey).Trim().ToLower() : null;
+			var password = requestInfo.Extra != null && requestInfo.Extra.TryGetValue("Password", out var pvalue) ? pvalue.Decrypt(this.EncryptionKey) : null;
 			if (string.IsNullOrWhiteSpace(password))
 				password = Account.GeneratePassword(identity);
 
@@ -1066,13 +1066,13 @@ namespace net.vieapps.Services.Users
 				throw new InformationExistedException($"The identity ({identity}) has been used for another account");
 
 			// related: privileges, service, extra info
-			var privileges = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Privileges")
-				? JArray.Parse(requestInfo.Extra["Privileges"].Decrypt(this.EncryptionKey)).ToList<Privilege>()
+			var privileges = requestInfo.Extra != null && requestInfo.Extra.TryGetValue("Privileges", out var privalue)
+				? JArray.Parse(privalue.Decrypt(this.EncryptionKey)).ToList<Privilege>()
 				: null;
 
 			var relatedService = requestInfo.GetQueryParameter("related-service");
-			var relatedInfo = !string.IsNullOrWhiteSpace(relatedService) && requestInfo.Extra != null && requestInfo.Extra.ContainsKey("RelatedInfo")
-				? requestInfo.Extra["RelatedInfo"].Decrypt(this.EncryptionKey).ToExpandoObject()
+			var relatedInfo = !string.IsNullOrWhiteSpace(relatedService) && requestInfo.Extra != null && requestInfo.Extra.TryGetValue("RelatedInfo", out var rvalue)
+				? rvalue.Decrypt(this.EncryptionKey).ToExpandoObject()
 				: null;
 
 			// permissions of privileges & related info
