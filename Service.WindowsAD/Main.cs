@@ -66,8 +66,16 @@ namespace net.vieapps.Services.Users.WindowsAD
 			var password = requestBody.Get<string>("Password").Decrypt(this.EncryptionKey);
 
 			// perform sign-in with Windows Directory Service (when domain doesn't have dot (.) in the name, means local machine)
-			using (var context = new PrincipalContext(domain.IsContains(".") ? ContextType.Domain : ContextType.Machine, domain))
+			try
+			{
+				using var context = new PrincipalContext(domain.IsContains(".") ? ContextType.Domain : ContextType.Machine, domain);
 				return context.ValidateCredentials(username, password, ContextOptions.Negotiate) ? new JObject() : throw new WrongAccountException();
+			}
+			catch (Exception ex)
+			{
+				this.WriteLogs(requestInfo, $"Cannot perform sign-in with Windows AD => {ex.Message}", ex, Microsoft.Extensions.Logging.LogLevel.Error);
+				throw;
+			}
 		}
 
 		JObject ChangePassword(RequestInfo requestInfo)
