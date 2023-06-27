@@ -19,6 +19,7 @@ using net.vieapps.Services;
 using System.Data;
 using System.IO;
 using WampSharp.V2.Core.Contracts;
+using Microsoft.AspNetCore.Http;
 
 #endregion
 
@@ -1714,7 +1715,7 @@ namespace net.vieapps.Services.Users
 
 					// fetch
 					else if ("fetch".IsEquals(identity))
-						return this.FetchProfilesAsync(requestInfo, cancellationToken, requestInfo.Extra.TryGetValue("x-notifications-key", out var notificationsKey) && notificationsKey != null && notificationsKey.IsEquals(this.GetKey("Notifications", null)));
+						return this.FetchProfilesAsync(requestInfo, cancellationToken, requestInfo.Extra.TryGetValue("x-notifications-key", out var notificationsKey) && notificationsKey != null && notificationsKey.IsEquals(this.GetKey("Notifications", null)), !requestInfo.Extra.TryGetValue("x-fetch-sessions", out var fetchSessions) || !"false".IsEquals(fetchSessions));
 
 					// export
 					else if ("export".IsEquals(identity))
@@ -1822,7 +1823,7 @@ namespace net.vieapps.Services.Users
 		#endregion
 
 		#region Fetch profiles
-		async Task<JToken> FetchProfilesAsync(RequestInfo requestInfo, CancellationToken cancellationToken, bool isContactRequest = false)
+		async Task<JToken> FetchProfilesAsync(RequestInfo requestInfo, CancellationToken cancellationToken, bool isContactRequest = false, bool fetchSessions = true)
 		{
 			// check permissions
 			if (!isContactRequest)
@@ -1841,28 +1842,29 @@ namespace net.vieapps.Services.Users
 			if (isContactRequest)
 			{
 				var sessions = new Dictionary<string, JArray>(StringComparer.OrdinalIgnoreCase);
-				await objects.ForEachAsync(async profile =>
-				{
-					var account = await Account.GetByIDAsync(profile.ID, cancellationToken).ConfigureAwait(false);
-					if (account != null)
+				if (fetchSessions)
+					await objects.ForEachAsync(async profile =>
 					{
-						if (account.Sessions == null)
-							await account.GetSessionsAsync(cancellationToken).ConfigureAwait(false);
-						sessions[account.ID] = account.Sessions.ToJArray(session => new JObject
+						var account = await Account.GetByIDAsync(profile.ID, cancellationToken).ConfigureAwait(false);
+						if (account != null)
 						{
+							if (account.Sessions == null)
+								await account.GetSessionsAsync(cancellationToken).ConfigureAwait(false);
+							sessions[account.ID] = account.Sessions.ToJArray(session => new JObject
+							{
 							{ "SessionID", session.ID },
 							{ "DeviceID", session.DeviceID },
 							{ "AppInfo", session.AppInfo },
 							{ "IsOnline", session.Online }
-						});
-					}
-				}).ConfigureAwait(false);
+							});
+						}
+					}).ConfigureAwait(false);
 				return objects.Select(profile => new JObject
 				{
 					{ "ID", profile.ID },
 					{ "Name", profile.Name },
 					{ "Email", profile.Email },
-					{ "Sessions", sessions.TryGetValue(profile.ID,  out var session) ? session : null }
+					{ "Sessions", sessions.TryGetValue(profile.ID, out var session) ? session : null }
 				}).ToJArray();
 			}
 
