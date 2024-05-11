@@ -1108,7 +1108,7 @@ namespace net.vieapps.Services.Users
 					Type = requestBody.Get("Type", "BuiltIn").ToEnum<AccountType>(),
 					AccessIdentity = identity,
 					AccessKey = password,
-					AccessPrivileges = privileges ?? new List<Privilege>()
+					AccessPrivileges = privileges ?? []
 				};
 
 				await Account.CreateAsync(account, cancellationToken).ConfigureAwait(false);

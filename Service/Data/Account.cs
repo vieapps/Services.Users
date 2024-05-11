@@ -246,13 +246,13 @@ namespace net.vieapps.Services.Users
 		/// <returns></returns>
 		public static string GeneratePassword(string account = null)
 		{
-			var pos = (account ?? "").IndexOf("-");
+			var pos = (account ?? "").IndexOf('-');
 			if (pos < 0)
-				pos = (account ?? "").IndexOf("_");
+				pos = (account ?? "").IndexOf('_');
 			if (pos < 0)
-				pos = (account ?? "").IndexOf(".");
+				pos = (account ?? "").IndexOf('.');
 			return CaptchaService.GenerateRandomCode(true, true).GetCapitalizedFirstLetter()
-				+ (pos > 0 ? account.Substring(pos, 1) : "#") + OTPService.GeneratePassword(UtilityService.NewUUID + (account ?? ""))
+				+ (pos > 0 ? account.Substring(pos, 1) : "#") + OTPService.GeneratePassword((UtilityService.NewUUID + (account ?? "")).ToBytes())
 				+ CaptchaService.GenerateRandomCode().GetCapitalizedFirstLetter();
 		}
 		#endregion

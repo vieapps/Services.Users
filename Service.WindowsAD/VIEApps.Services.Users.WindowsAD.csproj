@@ -1,9 +1,9 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
-		<TargetFrameworks>net7.0-windows</TargetFrameworks>
+		<TargetFrameworks>net8.0-windows</TargetFrameworks>
 		<WarningLevel>3</WarningLevel>
-		<NoWarn>1573,1591,IDE0066,CA1416</NoWarn>
+		<NoWarn>1573,1591,IDE0066,CA1416,NU1605</NoWarn>
 		<RootNamespace>net.vieapps.Services.Users.WindowsAD</RootNamespace>
 		<AssemblyName>VIEApps.Services.Users.WindowsAD</AssemblyName>
 		<AssemblyTitle>VIEApps NGX Users</AssemblyTitle>
@@ -11,9 +11,9 @@
 		<Company>VIEApps.net</Company>
 		<Product>VIEApps NGX</Product>
 		<Copyright>© $([System.DateTime]::Now.Year) VIEApps.net</Copyright>
-		<AssemblyVersion>10.7$(ReleaseVersion)</AssemblyVersion>
-		<FileVersion>10.7$(ReleaseVersion)</FileVersion>
-		<InformationalVersion>10.7.$([System.DateTime]::Now.Year).$([System.DateTime]::Now.Month).$([System.DateTime]::Now.Day)@$(TargetFramework)#$(ReleaseRevision)</InformationalVersion>
+		<AssemblyVersion>10.8$(ReleaseVersion)</AssemblyVersion>
+		<FileVersion>10.8$(ReleaseVersion)</FileVersion>
+		<InformationalVersion>10.8.$([System.DateTime]::Now.Year).$([System.DateTime]::Now.Month).$([System.DateTime]::Now.Day)@$(TargetFramework)#$(ReleaseRevision)</InformationalVersion>
 	</PropertyGroup>
 
 	<ItemGroup>
@@ -21,8 +21,8 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Include="System.DirectoryServices.AccountManagement" Version="7.0.0" />
-		<PackageReference Include="VIEApps.Services.Base" Version="10.7.2306.1" />
+		<PackageReference Include="System.DirectoryServices.AccountManagement" Version="8.0.0" />
+		<PackageReference Include="VIEApps.Services.Base" Version="10.8.2405.1" />
 	</ItemGroup>
 
 </Project>
