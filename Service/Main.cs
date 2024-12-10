@@ -1755,7 +1755,7 @@ namespace net.vieapps.Services.Users
 
 			var pagination = request.Has("Pagination")
 				? request.Get<ExpandoObject>("Pagination").GetPagination()
-				: new Tuple<long, int, int, int>(-1, 0, 20, 1);
+				: (-1, 0, 20, 1);
 
 			var pageNumber = pagination.Item4;
 
@@ -1772,8 +1772,8 @@ namespace net.vieapps.Services.Users
 				return JObject.Parse(json);
 
 			// prepare pagination
-			var totalRecords = pagination.Item1 > -1
-				? pagination.Item1
+			var totalRecords = pagination.TotalRecords > -1
+				? pagination.TotalRecords
 				: -1;
 
 			if (totalRecords < 0)
@@ -1781,9 +1781,9 @@ namespace net.vieapps.Services.Users
 					? await Profile.CountAsync(filter, $"{cacheKey}:total", cancellationToken).ConfigureAwait(false)
 					: await Profile.CountAsync(query, filter, cancellationToken).ConfigureAwait(false);
 
-			var pageSize = pagination.Item3;
+			var pageSize = pagination.PageSize;
 
-			var totalPages = new Tuple<long, int>(totalRecords, pageSize).GetTotalPages();
+			var totalPages = (totalRecords, pageSize).GetTotalPages();
 			if (totalPages > 0 && pageNumber > totalPages)
 				pageNumber = totalPages;
 
@@ -1801,12 +1801,12 @@ namespace net.vieapps.Services.Users
 				profiles.Add(profile.GetProfileJson(await this.GetProfileRelatedJsonAsync(requestInfo, cancellationToken).ConfigureAwait(false) as JObject));
 			}, true, false).ConfigureAwait(false);
 
-			pagination = new Tuple<long, int, int, int>(totalRecords, totalPages, pageSize, pageNumber);
+			pagination = (totalRecords, totalPages, pageSize, pageNumber);
 			var result = new JObject
 			{
 				{ "FilterBy", (filter ?? new FilterBys<Profile>()).ToClientJson(query) },
 				{ "SortBy", sort?.ToClientJson() },
-				{ "Pagination", pagination?.GetPagination() },
+				{ "Pagination", pagination.GetPagination() },
 				{ "Objects", profiles }
 			};
 
@@ -1914,7 +1914,7 @@ namespace net.vieapps.Services.Users
 					if (totalPages < 1)
 					{
 						totalRecords = await Profile.CountAsync(filter, null, false, null, 0, this.CancellationToken).ConfigureAwait(false);
-						totalPages = totalRecords < 1 ? 0 : new Tuple<long, int>(totalRecords, pageSize).GetTotalPages();
+						totalPages = totalRecords < 1 ? 0 : (totalRecords, pageSize).GetTotalPages();
 					}
 
 					var dataSet = totalPages < 1
