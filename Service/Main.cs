@@ -117,11 +117,11 @@ namespace net.vieapps.Services.Users
 						case "captcha":
 							if (!requestInfo.Verb.IsEquals("GET"))
 								throw new MethodNotAllowedException(requestInfo.Verb);
-							var captcha = CaptchaService.GenerateCode();
+							var captcha = CaptchaService.GenerateCode(requestInfo.Extra != null && requestInfo.Extra.TryGetValue("Salt", out var salt) ? salt : null);
 							json = new JObject
 							{
 								{ "Code", captcha },
-								{ "Uri", $"{Utility.CaptchaHttpURI}{captcha.Url64Encode()}/{(requestInfo.GetQueryParameter("register") ?? UtilityService.NewUUID.Encrypt(this.EncryptionKey, true)).Substring(UtilityService.GetRandomNumber(13, 43), 13).Reverse()}.jpg" }
+								{ "Uri", $"{Utility.CaptchaHttpURI}{captcha.Url64Encode()}/{(requestInfo.Extra != null && requestInfo.Extra.TryGetValue("Mode", out var mode) && !string.IsNullOrWhiteSpace(mode) ? mode : "small").Url64Encode()}/{(requestInfo.GetParameter("register") ?? UtilityService.NewUUID.Encrypt(this.EncryptionKey, true)).Substring(UtilityService.GetRandomNumber(13, 43), 13).Reverse()}.webp" }
 							};
 							break;
 
@@ -1940,7 +1940,7 @@ namespace net.vieapps.Services.Users
 						{
 							var objects = pageNumber <= totalPages && (maxPages == 0 || pageNumber <= maxPages)
 								? await RepositoryMediator.FindAsync(null, filter, sort, pageSize, pageNumber, null, false, null, 0, this.CancellationToken).ConfigureAwait(false)
-								: new List<Profile>();
+								: [];
 							if (pageNumber < 2)
 								dataSet = objects.ToDataSet(null, dataset => this.NormalizeProfiles(dataset.Tables[0].Rows));
 							else
@@ -1971,7 +1971,7 @@ namespace net.vieapps.Services.Users
 							{ "Status", "Done" },
 							{ "Percentage", "100%" },
 							{ "Filename", filename },
-							{ "NodeID", $"{this.ServiceName.Trim().ToLower()}.{this.NodeID}" },
+							{ "NodeID", Extensions.GetUniqueName(this.ServiceName, this.NodeID) },
 							{
 								"Exceptions",
 								exceptions.Select(exception => new JObject
@@ -1997,10 +1997,10 @@ namespace net.vieapps.Services.Users
 					if (ex is WampException wampException)
 					{
 						var wampDetails = wampException.GetDetails();
-						code = wampDetails.Item1;
-						type = wampDetails.Item2;
-						message = wampDetails.Item3;
-						stack = wampDetails.Item4;
+						code = wampDetails.Code;
+						type = wampDetails.Message;
+						message = wampDetails.Type;
+						stack = wampDetails.Stack;
 					}
 					new UpdateMessage
 					{
