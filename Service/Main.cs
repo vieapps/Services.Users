@@ -361,7 +361,7 @@ namespace net.vieapps.Services.Users
 		async Task<JToken> GetSessionAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// verify
-			if (requestInfo.Extra == null || !requestInfo.Extra.ContainsKey("Signature") || !requestInfo.Extra["Signature"].Equals(requestInfo.Header["x-app-token"].GetHMACSHA256(this.ValidationKey)))
+			if (requestInfo.Extra == null || !requestInfo.Extra.ContainsKey("Signature") || !requestInfo.Extra["Signature"].Equals(requestInfo.GetParameter("x-app-token")?.GetHMACSHA256(this.ValidationKey)))
 				throw new InformationInvalidException("The signature is not found or invalid");
 
 			// get information
@@ -564,7 +564,7 @@ namespace net.vieapps.Services.Users
 		async Task<JToken> LogSessionOutAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// verify
-			if (requestInfo.Extra == null || !requestInfo.Extra.ContainsKey("Signature") || !requestInfo.Extra["Signature"].Equals(requestInfo.Header["x-app-token"].GetHMACSHA256(this.ValidationKey)))
+			if (requestInfo.Extra == null || !requestInfo.Extra.ContainsKey("Signature") || !requestInfo.Extra["Signature"].Equals(requestInfo.GetParameter("x-app-token")?.GetHMACSHA256(this.ValidationKey)))
 				throw new InformationInvalidException("The signature is not found or invalid");
 
 			// remove session
@@ -1225,11 +1225,11 @@ namespace net.vieapps.Services.Users
 			var relatedService = gotRights ? null : this.GetRelatedService(requestInfo);
 			if (!gotRights && relatedService != null)
 			{
-				var serviceName = requestInfo.GetQueryParameter("related-service");
-				var objectName = requestInfo.GetQueryParameter("related-object");
-				var systemID = requestInfo.GetQueryParameter("related-system");
-				var definitionID = requestInfo.GetQueryParameter("related-definition");
-				var objectID = requestInfo.GetQueryParameter("related-object-identity");
+				var serviceName = requestInfo.GetParameter("related-service");
+				var objectName = requestInfo.GetParameter("related-object");
+				var systemID = requestInfo.GetParameter("related-system");
+				var definitionID = requestInfo.GetParameter("related-definition");
+				var objectID = requestInfo.GetParameter("related-object-identity");
 				if (await relatedService.CanManageAsync(requestInfo.Session.User, objectName, systemID, definitionID, objectID, cancellationToken).ConfigureAwait(false))
 					return await this.CallServiceAsync(new RequestInfo(requestInfo.Session, serviceName, "Privileges", "GET")
 					{
@@ -1255,11 +1255,11 @@ namespace net.vieapps.Services.Users
 		async Task<JToken> SetPrivilegesAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// prepare
-			var serviceName = requestInfo.GetQueryParameter("related-service");
-			var objectName = requestInfo.GetQueryParameter("related-object");
-			var systemID = requestInfo.GetQueryParameter("related-system");
-			var entityInfo = requestInfo.GetQueryParameter("related-entity");
-			var objectID = requestInfo.GetQueryParameter("related-object-identity");
+			var serviceName = requestInfo.GetParameter("related-service");
+			var objectName = requestInfo.GetParameter("related-object");
+			var systemID = requestInfo.GetParameter("related-system");
+			var entityInfo = requestInfo.GetParameter("related-entity");
+			var objectID = requestInfo.GetParameter("related-object-identity");
 
 			// check permission => only system administrator or manager of the specified service can do
 			var isSystemAdministrator = requestInfo.Session.User.IsSystemAdministrator;
