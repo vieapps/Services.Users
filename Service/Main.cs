@@ -1015,11 +1015,9 @@ namespace net.vieapps.Services.Users
 
 			// get account information
 			var identity = requestInfo.GetObjectIdentity() ?? requestInfo.Session.User.ID;
-			var account = !string.IsNullOrWhiteSpace(identity) && identity.IsValidUUID()
+			var account = (!string.IsNullOrWhiteSpace(identity) && identity.IsValidUUID()
 				? await Account.GetByIDAsync(identity, cancellationToken).ConfigureAwait(false)
-				: await Account.GetByAccessIdentityAsync(this.ValidatePhone(identity, out var phone) ? phone : identity, AccountType.BuiltIn, cancellationToken).ConfigureAwait(false);
-			if (account == null)
-				throw new InformationNotFoundException();
+				: await Account.GetByAccessIdentityAsync(this.ValidatePhone(identity, out var phone) ? phone : identity, AccountType.BuiltIn, cancellationToken).ConfigureAwait(false)) ?? throw new InformationNotFoundException();
 
 			// response
 			return account.GetAccountJson(requestInfo.Query.ContainsKey("x-status"), this.AuthenticationKey);
