@@ -105,7 +105,7 @@ namespace net.vieapps.Services.Users
 							json = new JObject
 							{
 								{ "Code", captcha },
-								{ "Uri", $"{Utility.CaptchaHttpURI}{captcha.Url64Encode()}/{$"{(requestInfo.Extra != null && requestInfo.Extra.TryGetValue("Mode", out var mode) && !string.IsNullOrWhiteSpace(mode) ? mode : "small")}-{UtilityService.NewUUID.Substring(UtilityService.GetRandomNumber(13, 43), 13)}".Url64Encode()}/{(requestInfo.GetParameter("register") ?? UtilityService.NewUUID.Encrypt(this.EncryptionKey, true)).Substring(UtilityService.GetRandomNumber(13, 43), 13).Reverse()}.webp" }
+								{ "Uri", $"{Utility.CaptchaHttpURI}{captcha.Url64Encode()}/{$"{(requestInfo.Extra != null && requestInfo.Extra.TryGetValue("Mode", out var mode) && !string.IsNullOrWhiteSpace(mode) ? mode : "small")}-{UtilityService.NewUUID.Substring(UtilityService.GetRandomNumber(3, 23))}".Url64Encode()}/{(requestInfo.GetParameter("register") ?? UtilityService.NewUUID.Encrypt(this.EncryptionKey, true)).Substring(UtilityService.GetRandomNumber(13, 43), 13).Reverse()}.webp" }
 							};
 							break;
 
