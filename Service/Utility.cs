@@ -13,7 +13,7 @@ namespace net.vieapps.Services.Users
 	{
 		public static Cache Cache { get; internal set; }
 
-		public static List<string> OAuths { get; internal set; } = new List<string>();
+		public static List<string> OAuths { get; internal set; } = [];
 
 		public static bool AllowRegister { get; internal set; } = true;
 
@@ -25,7 +25,6 @@ namespace net.vieapps.Services.Users
 
 		public static string ActivateHttpURI { get; internal set; }
 
-		#region Extensions for working with profile
 		internal static JObject GetProfileJson(this Profile profile, JObject relatedData = null, bool addRelated = true, bool useBriefInfo = false)
 		{
 			var json = useBriefInfo
@@ -59,11 +58,18 @@ namespace net.vieapps.Services.Users
 		}
 
 		internal static string GetGravatarURI(this Profile profile)
-			=> string.IsNullOrWhiteSpace(profile.Email)
+			=> string.IsNullOrWhiteSpace(profile.Email) || "false".IsEquals(UtilityService.GetAppSetting("Users:AllowGravatar", "true"))
 				? Utility.FilesHttpURI + "/avatars/default.png"
 				: "https://secure.gravatar.com/avatar/" + profile.Email.ToLower().Trim().GetMD5() + "?s=300&d=" + (Utility.FilesHttpURI + "/avatars/default.png").UrlEncode();
-		#endregion
 
+		internal static string RemoveURITrail(this string uri, string trail = "/")
+		{
+			uri ??= "";
+			trail = string.IsNullOrWhiteSpace(trail) ? trail = "/" : trail;
+			while (uri.EndsWith(trail))
+				uri = uri.Left(uri.Length - trail.Length);
+			return uri;
+		}
 	}
 
 	//  --------------------------------------------------------------------------------------------

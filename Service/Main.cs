@@ -1,5 +1,7 @@
 ﻿#region Related components
 using System;
+using System.IO;
+using System.Data;
 using System.Linq;
 using System.Dynamic;
 using System.Diagnostics;
@@ -7,20 +9,14 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Collections.Generic;
 using System.Collections.Concurrent;
-using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using WampSharp.V2.Core.Contracts;
 using net.vieapps.Components.Security;
 using net.vieapps.Components.Repository;
 using net.vieapps.Components.Caching;
 using net.vieapps.Components.Utility;
-using net.vieapps.Services;
-using System.Data;
-using System.IO;
-using WampSharp.V2.Core.Contracts;
-using Microsoft.AspNetCore.Http;
-
 #endregion
 
 namespace net.vieapps.Services.Users
@@ -51,22 +47,10 @@ namespace net.vieapps.Services.Users
 				if ("false".IsEquals(UtilityService.GetAppSetting("Users:AllowRegister", "true")))
 					Utility.AllowRegister = false;
 
-				Utility.ActivateHttpURI = this.GetHttpURI("Portals", "https://portals.vieapps.net");
-				while (Utility.ActivateHttpURI.EndsWith("/"))
-					Utility.ActivateHttpURI = Utility.ActivateHttpURI.Left(Utility.FilesHttpURI.Length - 1);
-				Utility.ActivateHttpURI += "/home?prego=activate&mode={{mode}}&code={{code}}";
-				Utility.FilesHttpURI = this.GetHttpURI("Files", "https://fs.vieapps.net");
-				while (Utility.FilesHttpURI.EndsWith("/"))
-					Utility.FilesHttpURI = Utility.FilesHttpURI.Left(Utility.FilesHttpURI.Length - 1);
-				Utility.CaptchaHttpURI = this.GetHttpURI("Captchas", Utility.FilesHttpURI);
-				while (Utility.CaptchaHttpURI.EndsWith("/"))
-					Utility.CaptchaHttpURI = Utility.CaptchaHttpURI.Left(Utility.CaptchaHttpURI.Length - 1);
-				Utility.CaptchaHttpURI += "/captchas/";
-				Utility.AvatarHttpURI = this.GetHttpURI("Avatars", Utility.FilesHttpURI);
-				while (Utility.AvatarHttpURI.EndsWith("/"))
-					Utility.AvatarHttpURI = Utility.AvatarHttpURI.Left(Utility.AvatarHttpURI.Length - 1);
-				Utility.AvatarHttpURI += "/avatars/";
-
+				Utility.ActivateHttpURI = this.GetHttpURI("Portals", "https://portals.vieapps.net").RemoveURITrail() + "/home?prego=activate&mode={{mode}}&code={{code}}";
+				Utility.FilesHttpURI = this.GetHttpURI("Files", "https://fs.vieapps.net").RemoveURITrail();
+				Utility.CaptchaHttpURI = this.GetHttpURI("Captchas", Utility.FilesHttpURI).RemoveURITrail() + "/captchas/";
+				Utility.AvatarHttpURI = this.GetHttpURI("Avatars", Utility.FilesHttpURI).RemoveURITrail() + "/avatars/";
 				this.Logger?.LogInformation($"System Administrators: {User.SystemAdministrators.Join(",")}");
 
 				// register timers
@@ -121,7 +105,7 @@ namespace net.vieapps.Services.Users
 							json = new JObject
 							{
 								{ "Code", captcha },
-								{ "Uri", $"{Utility.CaptchaHttpURI}{captcha.Url64Encode()}/{(requestInfo.Extra != null && requestInfo.Extra.TryGetValue("Mode", out var mode) && !string.IsNullOrWhiteSpace(mode) ? mode : "small").Url64Encode()}/{(requestInfo.GetParameter("register") ?? UtilityService.NewUUID.Encrypt(this.EncryptionKey, true)).Substring(UtilityService.GetRandomNumber(13, 43), 13).Reverse()}.webp" }
+								{ "Uri", $"{Utility.CaptchaHttpURI}{captcha.Url64Encode()}/{$"{(requestInfo.Extra != null && requestInfo.Extra.TryGetValue("Mode", out var mode) && !string.IsNullOrWhiteSpace(mode) ? mode : "small")}-{UtilityService.NewUUID.Substring(UtilityService.GetRandomNumber(13, 43), 13)}".Url64Encode()}/{(requestInfo.GetParameter("register") ?? UtilityService.NewUUID.Encrypt(this.EncryptionKey, true)).Substring(UtilityService.GetRandomNumber(13, 43), 13).Reverse()}.webp" }
 							};
 							break;
 
