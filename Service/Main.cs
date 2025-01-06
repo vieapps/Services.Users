@@ -25,15 +25,17 @@ namespace net.vieapps.Services.Users
 	{
 
 		#region Properties
-		ConcurrentDictionary<string, Tuple<DateTime, string>> Sessions { get; } = new ConcurrentDictionary<string, Tuple<DateTime, string>>();
+		ConcurrentDictionary<string, Tuple<DateTime, string>> Sessions => [];
 
 		string ActivationKey => this.GetKey("Activation", "VIEApps-56BA2999-NGX-A2E4-Services-4B54-Activation-83EB-Key-693C250DC95D");
 
 		string AuthenticationKey => this.GetKey("Authentication", "VIEApps-65E47754-NGX-50C0-Services-4565-Authentication-BA55-Key-A8CC23879C5D");
 
-		HashSet<string> WindowsAD { get; set; } = UtilityService.GetAppSetting("Users:WindowsAD", "vieapps.net|vieapps.com").ToLower().ToHashSet("|", true);
+		HashSet<string> WindowsAD => UtilityService.GetAppSetting("Users:WindowsAD", "vieapps.net|vieapps.com").ToLower().ToHashSet("|", true);
 
-		string PhoneCountryCode { get; } = UtilityService.GetAppSetting("Users:Phone:CountryCode", "84");
+		Dictionary<string, string> WindowsADEmails => UtilityService.GetAppSetting("Users:WindowsAD:Emails", "vieapps.com:vieapps.net").ToLower().ToList("|", true).ToDictionary(value => value.ToArray(":").First(), value => value.ToArray(":").Last());
+
+		string PhoneCountryCode => UtilityService.GetAppSetting("Users:Phone:CountryCode", "84");
 		#endregion
 
 		public override string ServiceName => "Users";
@@ -432,14 +434,12 @@ namespace net.vieapps.Services.Users
 			// prepare
 			var requestBody = requestInfo.GetBodyExpando();
 
-			var identity = requestBody.Get("Account", "").Decrypt(this.EncryptionKey).Trim().ToLower();
-			if (string.IsNullOrWhiteSpace(identity))
-				identity = requestBody.Get("Email", "").Decrypt(this.EncryptionKey).Trim().ToLower();
-
+			var identity = requestBody.Get("Account", requestBody.Get("Email", "")).Decrypt(this.EncryptionKey).Trim().ToLower();
 			var password = requestBody.Get("Password", "").Decrypt(this.EncryptionKey);
-
-			var domain = identity.Right(identity.Length - identity.PositionOf("@") - 1).Trim();
-			var type = this.WindowsAD.Contains(domain)
+			var domain = identity.IsContains("@")
+				? identity.Right(identity.Length - identity.PositionOf("@") - 1).Trim()
+				: null;
+			var type = !string.IsNullOrWhiteSpace(domain) && this.WindowsAD.Contains(domain)
 				? AccountType.Windows
 				: requestBody.Get("Type", "BuiltIn").TryToEnum(out AccountType acctype) ? acctype : AccountType.BuiltIn;
 
@@ -462,26 +462,22 @@ namespace net.vieapps.Services.Users
 
 				await this.CallServiceAsync(new RequestInfo(requestInfo.Session, "WindowsAD", "Account", "POST")
 				{
-					Header = new Dictionary<string, string>(requestInfo.Header ?? new Dictionary<string, string>(), StringComparer.OrdinalIgnoreCase),
-					Query = new Dictionary<string, string>(requestInfo.Query ?? new Dictionary<string, string>(), StringComparer.OrdinalIgnoreCase)
+					Header = new Dictionary<string, string>(requestInfo.Header ?? [], StringComparer.OrdinalIgnoreCase),
+					Query = new Dictionary<string, string>(requestInfo.Query ?? [], StringComparer.OrdinalIgnoreCase)
 					{
 						["language"] = requestInfo.GetParameter("language") ?? "en-US"
 					},
 					Body = body,
-					Extra = new Dictionary<string, string>(requestInfo.Query ?? new Dictionary<string, string>(), StringComparer.OrdinalIgnoreCase)
+					Extra = new Dictionary<string, string>(requestInfo.Query ?? [], StringComparer.OrdinalIgnoreCase)
 					{
 						["Signature"] = body.GetHMACSHA256(this.ValidationKey)
 					}
 				}, cancellationToken).ConfigureAwait(false);
 
-				// state to create information of account/profile
-				var needToCreateAccount = true;
-				if (requestInfo.Extra != null && requestInfo.Extra.ContainsKey("x-no-account"))
-					needToCreateAccount = false;
-
-				// create information of account/profile
-				if (needToCreateAccount)
+				// prepare account & profile
+				if (requestInfo.Extra == null || !requestInfo.Extra.ContainsKey("x-no-account"))
 				{
+					var email = this.WindowsADEmails.TryGetValue(domain, out var edomain) && !string.IsNullOrWhiteSpace(edomain) ? $"{username}@{edomain}" : identity;
 					account = await Account.GetByAccessIdentityAsync(identity, AccountType.Windows, cancellationToken).ConfigureAwait(false);
 					if (account == null)
 					{
@@ -492,20 +488,24 @@ namespace net.vieapps.Services.Users
 							AccessIdentity = identity
 						};
 						await Account.CreateAsync(account, cancellationToken).ConfigureAwait(false);
-
 						var profile = new Profile
 						{
 							ID = account.ID,
 							Name = requestBody.Get("Name", username),
-							Email = identity
+							Email = email
 						};
 						await Profile.CreateAsync(profile, cancellationToken).ConfigureAwait(false);
 					}
+					else if (!email.IsEquals(identity))
+					{
+						var profile = await Profile.GetAsync<Profile>(account.ID, cancellationToken).ConfigureAwait(false);
+						if (profile != null && !email.IsEquals(profile.Email))
+						{
+							profile.Email = email;
+							await Profile.UpdateAsync(profile, true, cancellationToken).ConfigureAwait(false);
+						}
+					}
 				}
-
-				// no need to create account, then response with success state
-				else
-					return new JObject();
 			}
 
 			// OAuth account
