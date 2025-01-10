@@ -42,7 +42,7 @@ namespace net.vieapps.Services.Users.WindowsAD
 
 				stopwatch.Stop();
 				await this.WriteLogsAsync(requestInfo, $"Success response - Execution times: {stopwatch.GetElapsedTimes()}").ConfigureAwait(false);
-				if (this.IsDebugResultsEnabled)
+				if (this.IsDebugResultsEnabled || requestInfo.ContainsKey("x-logs"))
 					await this.WriteLogsAsync(requestInfo, $"- Request: {requestInfo.ToString(this.JsonFormat)}" + "\r\n" + $"- Response: {json?.ToString(this.JsonFormat)}").ConfigureAwait(false);
 
 				return json;
@@ -69,11 +69,14 @@ namespace net.vieapps.Services.Users.WindowsAD
 			try
 			{
 				using var context = new PrincipalContext(domain.IsContains(".") ? ContextType.Domain : ContextType.Machine, domain);
-				return context.ValidateCredentials(username, password, ContextOptions.Negotiate) ? new JObject() : throw new WrongAccountException();
+				if (!context.ValidateCredentials(username, password, ContextOptions.Negotiate))
+					throw new WrongAccountException();
+				this.WriteLogs(requestInfo, $"Perform sign-in with Windows AD successful [{username}@{domain}]");
+				return [];
 			}
 			catch (Exception ex)
 			{
-				this.WriteLogs(requestInfo, $"Cannot perform sign-in with Windows AD => {ex.Message}", ex, Microsoft.Extensions.Logging.LogLevel.Error);
+				this.WriteLogs(requestInfo, $"Cannot perform sign-in with Windows AD [{username}@{domain}] => {ex.Message}", ex, Microsoft.Extensions.Logging.LogLevel.Error);
 				throw;
 			}
 		}
@@ -104,7 +107,7 @@ namespace net.vieapps.Services.Users.WindowsAD
 					throw new WrongAccountException();
 			}
 
-			return new JObject();
+			return [];
 		}
 	}
 }
