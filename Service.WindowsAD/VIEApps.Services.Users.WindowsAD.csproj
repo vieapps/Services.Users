@@ -21,10 +21,10 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Include="System.DirectoryServices.AccountManagement" Version="9.0.0" />
+		<PackageReference Include="System.DirectoryServices.AccountManagement" Version="9.0.4" />
 		<PackageReference Include="System.IO.FileSystem" Version="4.3.0" />
 		<PackageReference Include="System.Threading.Tasks" Version="4.3.0" />
-		<PackageReference Include="VIEApps.Services.Base" Version="10.9.2501.1" />
+		<PackageReference Include="VIEApps.Services.Base" Version="10.9.2504.4" />
 	</ItemGroup>
 
 </Project>

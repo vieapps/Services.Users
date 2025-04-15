@@ -25,17 +25,17 @@ namespace net.vieapps.Services.Users
 	{
 
 		#region Properties
-		ConcurrentDictionary<string, Tuple<DateTime, string>> Sessions => [];
+		ConcurrentDictionary<string, Tuple<DateTime, string>> Sessions { get; } = [];
 
 		string ActivationKey => this.GetKey("Activation", "VIEApps-56BA2999-NGX-A2E4-Services-4B54-Activation-83EB-Key-693C250DC95D");
 
 		string AuthenticationKey => this.GetKey("Authentication", "VIEApps-65E47754-NGX-50C0-Services-4565-Authentication-BA55-Key-A8CC23879C5D");
 
-		HashSet<string> WindowsAD => UtilityService.GetAppSetting("Users:WindowsAD", "vieapps.net|vieapps.com").ToLower().ToHashSet("|", true);
+		HashSet<string> WindowsAD { get; } = UtilityService.GetAppSetting("Users:WindowsAD", "vieapps.net|vieapps.com").ToLower().ToHashSet("|", true);
 
-		Dictionary<string, string> WindowsADEmails => UtilityService.GetAppSetting("Users:WindowsAD:Emails", "vieapps.com:vieapps.net").ToLower().ToList("|", true).ToDictionary(value => value.ToArray(":").First(), value => value.ToArray(":").Last());
+		Dictionary<string, string> WindowsADEmails { get; } = UtilityService.GetAppSetting("Users:WindowsAD:Emails", "vieapps.com:vieapps.net").ToLower().ToList("|", true).ToDictionary(value => value.ToArray(":").First(), value => value.ToArray(":").Last());
 
-		string PhoneCountryCode => UtilityService.GetAppSetting("Users:Phone:CountryCode", "84");
+		string PhoneCountryCode { get; } = UtilityService.GetAppSetting("Users:Phone:CountryCode", "84");
 		#endregion
 
 		public override string ServiceName => "Users";
@@ -1728,18 +1728,11 @@ namespace net.vieapps.Services.Users
 			var request = requestInfo.GetRequestExpando();
 
 			var query = request.Get<string>("FilterBy.Query");
-
 			var filter = request.Get<ExpandoObject>("FilterBy", null)?.ToFilterBy<Profile>();
-
 			var sort = request.Get<ExpandoObject>("SortBy", null)?.ToSortBy<Profile>();
 			if (sort == null && string.IsNullOrWhiteSpace(query))
 				sort = Sorts<Profile>.Ascending("Name");
-
-			var pagination = request.Has("Pagination")
-				? request.Get<ExpandoObject>("Pagination").GetPagination()
-				: (-1, 0, 20, 1);
-
-			var pageNumber = pagination.Item4;
+			var (totalRecords, totalPages, pageSize, pageNumber) = request.Get<ExpandoObject>("Pagination")?.GetPagination() ?? (-1, 0, 20, 1);
 
 			// check cache
 			var cacheKey = string.IsNullOrWhiteSpace(query)
@@ -1754,18 +1747,13 @@ namespace net.vieapps.Services.Users
 				return JObject.Parse(json);
 
 			// prepare pagination
-			var totalRecords = pagination.TotalRecords > -1
-				? pagination.TotalRecords
-				: -1;
-
+			totalRecords = totalRecords > -1 ? totalRecords : -1;
 			if (totalRecords < 0)
 				totalRecords = string.IsNullOrWhiteSpace(query)
 					? await Profile.CountAsync(filter, $"{cacheKey}:total", cancellationToken).ConfigureAwait(false)
 					: await Profile.CountAsync(query, filter, cancellationToken).ConfigureAwait(false);
 
-			var pageSize = pagination.PageSize;
-
-			var totalPages = (totalRecords, pageSize).GetTotalPages();
+			totalPages = (totalRecords, pageSize).GetTotalPages();
 			if (totalPages > 0 && pageNumber > totalPages)
 				pageNumber = totalPages;
 
@@ -1774,7 +1762,7 @@ namespace net.vieapps.Services.Users
 				? string.IsNullOrWhiteSpace(query)
 					? await Profile.FindAsync(filter, sort, pageSize, pageNumber, $"{cacheKey}{pageNumber}", cancellationToken).ConfigureAwait(false)
 					: await Profile.SearchAsync(query, filter, null, pageSize, pageNumber, cancellationToken).ConfigureAwait(false)
-				: new List<Profile>();
+				: [];
 
 			// build result
 			var profiles = new JArray();
@@ -1783,12 +1771,11 @@ namespace net.vieapps.Services.Users
 				profiles.Add(profile.GetProfileJson(await this.GetProfileRelatedJsonAsync(requestInfo, cancellationToken).ConfigureAwait(false) as JObject));
 			}, true, false).ConfigureAwait(false);
 
-			pagination = (totalRecords, totalPages, pageSize, pageNumber);
 			var result = new JObject
 			{
 				{ "FilterBy", (filter ?? new FilterBys<Profile>()).ToClientJson(query) },
 				{ "SortBy", sort?.ToClientJson() },
-				{ "Pagination", pagination.GetPagination() },
+				{ "Pagination", (totalRecords, totalPages, pageSize, pageNumber).GetPagination() },
 				{ "Objects", profiles }
 			};
 
