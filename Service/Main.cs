@@ -1253,22 +1253,20 @@ namespace net.vieapps.Services.Users
 				throw new AccessDeniedException();
 
 			// get account
-			var account = await Account.GetByIDAsync(requestInfo.GetObjectIdentity(), cancellationToken).ConfigureAwait(false);
-			if (account == null)
-				throw new InformationNotFoundException();
+			var account = await Account.GetByIDAsync(requestInfo.GetObjectIdentity(), cancellationToken).ConfigureAwait(false) ?? throw new InformationNotFoundException();
 
 			// roles of a system
 			if (!string.IsNullOrWhiteSpace(systemID) && requestInfo.Extra != null && (requestInfo.Extra.ContainsKey("Roles") || requestInfo.Extra.ContainsKey("AddedRoles") || requestInfo.Extra.ContainsKey("RemovedRoles")))
 				try
 				{
 					if (!account.AccessRoles.TryGetValue(systemID, out var roles))
-						roles = new List<string>();
-					if (requestInfo.Extra.ContainsKey("Roles"))
-						account.AccessRoles[systemID] = roles.Concat(JArray.Parse(requestInfo.Extra["Roles"].Decrypt(this.EncryptionKey)).ToList<string>()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-					else if (requestInfo.Extra.ContainsKey("AddedRoles"))
-						account.AccessRoles[systemID] = roles.Concat(JArray.Parse(requestInfo.Extra["AddedRoles"].Decrypt(this.EncryptionKey)).ToList<string>()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-					else if (requestInfo.Extra.ContainsKey("RemovedRoles"))
-						account.AccessRoles[systemID] = roles.Except(JArray.Parse(requestInfo.Extra["RemovedRoles"].Decrypt(this.EncryptionKey)).ToList<string>()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+						roles = [];
+					if (requestInfo.Extra.TryGetValue("Roles", out var extraRoles))
+						account.AccessRoles[systemID] = roles.Concat(JArray.Parse(extraRoles.Decrypt(this.EncryptionKey)).ToList<string>()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+					else if (requestInfo.Extra.TryGetValue("AddedRoles", out var addedRoles))
+						account.AccessRoles[systemID] = roles.Concat(JArray.Parse(addedRoles.Decrypt(this.EncryptionKey)).ToList<string>()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+					else if (requestInfo.Extra.TryGetValue("RemovedRoles", out var removedRoles))
+						account.AccessRoles[systemID] = roles.Except(JArray.Parse(removedRoles.Decrypt(this.EncryptionKey)).ToList<string>()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 				}
 				catch (Exception ex)
 				{
@@ -1276,17 +1274,17 @@ namespace net.vieapps.Services.Users
 				}
 
 			// privileges of a service
-			if (requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Privileges"))
+			if (requestInfo.Extra != null && requestInfo.Extra.TryGetValue("Privileges", out var extraPrivileges))
 				try
 				{
-					var allPrivileges = requestInfo.Extra["Privileges"].Decrypt(this.EncryptionKey).ToJson().ToExpandoObject();
+					var allPrivileges = extraPrivileges.Decrypt(this.EncryptionKey).ToJson().ToExpandoObject();
 					if (isSystemAdministrator)
 					{
 						(allPrivileges as IDictionary<string, object>).Keys.ForEach(svcName =>
 						{
 							var svcPrivileges = allPrivileges.Get<List<Privilege>>(svcName).Where(p => p.ServiceName.IsEquals(svcName)).ToList();
 							if (svcPrivileges.Count == 1 && svcPrivileges[0].ObjectName.Equals("") && svcPrivileges[0].Role.Equals(PrivilegeRole.Viewer.ToString()))
-								svcPrivileges = new List<Privilege>();
+								svcPrivileges = [];
 							account.AccessPrivileges = account.AccessPrivileges.Where(p => !p.ServiceName.IsEquals(svcName)).Concat(svcPrivileges).ToList();
 						});
 					}
@@ -1294,7 +1292,7 @@ namespace net.vieapps.Services.Users
 					{
 						var svcPrivileges = allPrivileges.Get<List<Privilege>>(serviceName).Where(p => p.ServiceName.IsEquals(serviceName)).ToList();
 						if (svcPrivileges.Count == 1 && svcPrivileges[0].ObjectName.Equals("") && svcPrivileges[0].Role.Equals(PrivilegeRole.Viewer.ToString()))
-							svcPrivileges = new List<Privilege>();
+							svcPrivileges = [];
 						account.AccessPrivileges = account.AccessPrivileges.Where(p => !p.ServiceName.IsEquals(serviceName)).Concat(svcPrivileges).ToList();
 					}
 					account.AccessPrivileges = account.AccessPrivileges.OrderBy(p => p.ServiceName).ThenBy(p => p.ObjectName).ToList();
@@ -2371,12 +2369,12 @@ namespace net.vieapps.Services.Users
 			var account = await Account.GetByIDAsync(requestBody.Get<string>("ID"), cancellationToken).ConfigureAwait(false);
 			if (account == null)
 			{
-				account = Account.CreateInstance(requestBody, null, acc => acc.AccessKey = acc.AccessKey ?? Account.GeneratePassword(acc.ID, Account.GeneratePassword(acc.AccessIdentity)));
+				account = Account.CreateInstance(requestBody, acc => acc.AccessKey = acc.AccessKey ?? Account.GeneratePassword(acc.ID, Account.GeneratePassword(acc.AccessIdentity)));
 				await Account.CreateAsync(account, cancellationToken).ConfigureAwait(false);
 			}
 			else
 			{
-				account.Fill(requestBody, null, acc => acc.AccessKey = acc.AccessKey ?? Account.GeneratePassword(acc.ID, Account.GeneratePassword(acc.AccessIdentity)));
+				account.Fill(requestBody, acc => acc.AccessKey = acc.AccessKey ?? Account.GeneratePassword(acc.ID, Account.GeneratePassword(acc.AccessIdentity)));
 				await Account.UpdateAsync(account, true, cancellationToken).ConfigureAwait(false);
 			}
 			return new JObject

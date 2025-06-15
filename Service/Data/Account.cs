@@ -146,7 +146,7 @@ namespace net.vieapps.Services.Users
 		/// </summary>
 		/// <returns></returns>
 		public Account GetOriginal()
-			 => string.IsNullOrWhiteSpace(this.AccessMapIdentity) || !this.AccessMapIdentity.IsValidUUID() 
+			=> string.IsNullOrWhiteSpace(this.AccessMapIdentity) || !this.AccessMapIdentity.IsValidUUID() 
 				? null
 				: Account.Get<Account>(this.AccessMapIdentity);
 
@@ -172,7 +172,7 @@ namespace net.vieapps.Services.Users
 				{ "ID", this.ID },
 				{ "Type", this.Type.ToString() },
 				{ "Roles", roles.Distinct(StringComparer.OrdinalIgnoreCase).ToJArray() },
-				{ "Privileges", (this.AccessPrivileges ?? new List<Privilege>()).ToJArray(privilege => privilege.ToJson()) }
+				{ "Privileges", (this.AccessPrivileges ?? []).ToJArray(privilege => privilege.ToJson()) }
 			};
 
 			if (addStatus)
