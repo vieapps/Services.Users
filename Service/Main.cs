@@ -31,6 +31,10 @@ namespace net.vieapps.Services.Users
 
 		string AuthenticationKey => this.GetKey("Authentication", "VIEApps-65E47754-NGX-50C0-Services-4565-Authentication-BA55-Key-A8CC23879C5D");
 
+		string CaptchaKey => this.GetKey("Captcha", null);
+
+		string CaptchaExtraKey => this.GetKey("Captcha:Extra", CryptoService.DEFAULT_PASS_PHRASE);
+
 		HashSet<string> WindowsAD { get; } = UtilityService.GetAppSetting("Users:WindowsAD", "vieapps.net|vieapps.com").ToLower().ToHashSet("|", true);
 
 		Dictionary<string, string> WindowsADEmails { get; } = UtilityService.GetAppSetting("Users:WindowsAD:Emails", "vieapps.com:vieapps.net").ToLower().ToList("|", true).ToDictionary(value => value.ToArray(":").First(), value => value.ToArray(":").Last());
@@ -103,11 +107,11 @@ namespace net.vieapps.Services.Users
 						case "captcha":
 							if (!requestInfo.Verb.IsEquals("GET"))
 								throw new MethodNotAllowedException(requestInfo.Verb);
-							var captcha = CaptchaService.GenerateCode(requestInfo.Extra != null && requestInfo.Extra.TryGetValue("Salt", out var salt) ? salt : null);
+							var captcha = CaptchaService.GenerateCode(requestInfo.Extra != null && requestInfo.Extra.TryGetValue("Salt", out var salt) ? salt : null, this.CaptchaKey);
 							json = new JObject
 							{
 								{ "Code", captcha },
-								{ "Uri", $"{Utility.CaptchaHttpURI}{captcha.Url64Encode()}/{$"{(requestInfo.Extra != null && requestInfo.Extra.TryGetValue("Mode", out var mode) && !string.IsNullOrWhiteSpace(mode) ? mode : "small")}-{UtilityService.NewUUID.Substring(UtilityService.GetRandomNumber(3, 23))}".Url64Encode()}/{(requestInfo.GetParameter("register") ?? UtilityService.NewUUID.Encrypt(this.EncryptionKey, true)).Substring(UtilityService.GetRandomNumber(13, 43), 13).Reverse()}.webp" }
+								{ "Uri", $"{Utility.CaptchaHttpURI}{captcha.Url64Encode()}/{$"{(requestInfo.Extra != null && requestInfo.Extra.TryGetValue("Mode", out var mode) && !string.IsNullOrWhiteSpace(mode) ? mode : "small")}-{UtilityService.NewUUID.Substring(UtilityService.GetRandomNumber(3, 23))}".Url64Encode()}/{(string.IsNullOrWhiteSpace(this.CaptchaKey) ? "" : $"{this.CaptchaKey}:{UtilityService.NewUUID}".Encrypt(this.CaptchaExtraKey).ToBase64Url(true) + "/")}{(requestInfo.GetParameter("register") ?? UtilityService.NewUUID.Encrypt(this.EncryptionKey, true)).Substring(UtilityService.GetRandomNumber(13, 43), 13).Reverse()}.webp" }
 							};
 							break;
 
@@ -1819,10 +1823,10 @@ namespace net.vieapps.Services.Users
 								await account.GetSessionsAsync(cancellationToken).ConfigureAwait(false);
 							sessions[account.ID] = account.Sessions.ToJArray(session => new JObject
 							{
-							{ "SessionID", session.ID },
-							{ "DeviceID", session.DeviceID },
-							{ "AppInfo", session.AppInfo },
-							{ "IsOnline", session.Online }
+								{ "SessionID", session.ID },
+								{ "DeviceID", session.DeviceID },
+								{ "AppInfo", session.AppInfo },
+								{ "IsOnline", session.Online }
 							});
 						}
 					}).ConfigureAwait(false);
