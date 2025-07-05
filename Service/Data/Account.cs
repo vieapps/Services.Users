@@ -141,6 +141,20 @@ namespace net.vieapps.Services.Users
 		[Ignore, JsonIgnore, BsonIgnore, XmlIgnore]
 		public Account Original => this.GetOriginal();
 
+		[MessagePackIgnore]
+		[Ignore, JsonIgnore, BsonIgnore, XmlIgnore]
+		public List<string> Roles
+		{
+			get
+			{
+				var roles = new[] { $"{SystemRole.All}", $"{SystemRole.Authenticated}" }.ToList();
+				if (UserIdentity.SystemAdministrators.Contains(this.ID))
+					roles.Add($"{SystemRole.SystemAdministrator}");
+				this.AccessRoles?.ForEach(accessRoles => roles = roles.Concat(accessRoles).ToList());
+				return [.. roles.Distinct(StringComparer.OrdinalIgnoreCase)];
+			}
+		}
+
 		/// <summary>
 		/// Gets the orginal account that this account was mapped to
 		/// </summary>
@@ -162,25 +176,18 @@ namespace net.vieapps.Services.Users
 
 		public JObject GetAccountJson(bool addStatus = false, string authenticationKey = null)
 		{
-			var roles = new[] { $"{SystemRole.All}", $"{SystemRole.Authenticated}" }.ToList();
-			if (UserIdentity.SystemAdministrators.Contains(this.ID))
-				roles.Add($"{SystemRole.SystemAdministrator}");
-			this.AccessRoles?.ForEach(accessRoles => roles = roles.Concat(accessRoles).ToList());
-
 			var json = new JObject
 			{
 				{ "ID", this.ID },
 				{ "Type", this.Type.ToString() },
-				{ "Roles", roles.Distinct(StringComparer.OrdinalIgnoreCase).ToJArray() },
+				{ "Roles", this.Roles.ToJArray() },
 				{ "Privileges", (this.AccessPrivileges ?? []).ToJArray(privilege => privilege.ToJson()) }
 			};
-
 			if (addStatus)
 			{
-				json["Status"] = $"{this.Status}";
+				json["Statistics"] = $"{this.Status}";
 				json["TwoFactorsAuthentication"] = this.TwoFactorsAuthentication.ToJson(authenticationKey ?? UtilityService.GetAppSetting("Keys:Authentication"));
 			}
-
 			return json;
 		}
 

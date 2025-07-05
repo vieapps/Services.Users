@@ -1,13 +1,13 @@
 ﻿#region Related components
 using System;
+using System.Dynamic;
 using System.Diagnostics;
 using System.Xml.Serialization;
-
-using Newtonsoft.Json;
 using MongoDB.Bson.Serialization.Attributes;
-
-using net.vieapps.Components.Security;
+using Newtonsoft.Json;
 using net.vieapps.Components.Repository;
+using net.vieapps.Components.Security;
+using net.vieapps.Components.Utility;
 #endregion
 
 namespace net.vieapps.Services.Users
@@ -17,6 +17,49 @@ namespace net.vieapps.Services.Users
 	public class Session : Repository<Session>
 	{
 		public Session() : base() { }
+
+		public Session(Services.Session session, string osInfo = null) : base()
+		{
+			this.ID = session?.SessionID ?? "";
+			this.UserID = session?.User?.ID ?? "";
+			this.Verified = session != null && session.Verified;
+			this.DeviceID = session?.DeviceID ?? "";
+			this.IP = session?.IP ?? "";
+			this.DeveloperID = session?.DeveloperID ?? "";
+			this.AppID = session?.AppID ?? "";
+			this.AppInfo = $"{session?.AppName ?? "Generic App"} @ {session?.AppPlatform ?? "Dekstop WPA"}";
+			this.OSInfo = osInfo ?? $"{Extensions.GetOSInfo(session?.AppAgent)} [{session?.AppAgent ?? "N/A"}]";
+		}
+
+		internal Services.Session ToSession(Account account = null)
+			=> new Services.Session
+			{
+				SessionID = this.ID,
+				User = account != null ? new User(account.ID, this.ID, account.Roles, account.AccessPrivileges ?? [], "APIs") : User.GetDefault(this.ID),
+				Verified = this.Verified,
+				DeviceID = this.DeviceID,
+				IP = this.IP,
+				DeveloperID = this.DeveloperID,
+				AppID = this.AppID,
+				AppMode = "Client"
+			};
+
+		internal static Services.Session ToSession(System.Dynamic.ExpandoObject data)
+			=> new Services.Session
+			{
+				SessionID = data.Get<string>("SessionID"),
+				User = data.Get<User>("User") ?? User.GetDefault(data.Get<string>("SessionID")),
+				Verified = data.Get("Verified", false),
+				DeviceID = data.Get<string>("DeviceID"),
+				IP = data.Get<string>("IP"),
+				DeveloperID = data.Get<string>("DeveloperID"),
+				AppID = data.Get<string>("AppID"),
+				AppName =	data.Get<string>("AppName"),
+				AppPlatform = data.Get<string>("AppPlatform"),
+				AppAgent = data.Get<string>("AppAgent"),
+				AppOrigin = data.Get<string>("AppOrigin"),
+				AppMode = data.Get<string>("AppMode") ?? "Client"
+			};
 
 		/// <summary>
 		/// Gets or sets time when the session is issued
@@ -115,4 +158,48 @@ namespace net.vieapps.Services.Users
 		[Ignore, JsonIgnore, BsonIgnore, XmlIgnore]
 		public override Privileges OriginalPrivileges { get; set; }
 	}
+
+	public class SessionInfo
+	{
+		public SessionInfo(ExpandoObject data = null)
+		{
+			if (data != null)
+			{
+				this.Session = new Session().CopyFrom(data.Get("Session", new ExpandoObject()));
+				this.User = new UserInfo(data.Get("User", new ExpandoObject()));
+				this.Service = new ServiceInfo(data.Get("Service", new ExpandoObject()));
+				this.LastAccess = data.Get("LastAccess", DateTime.Now);
+			}
+		}
+		public Session Session { get; set; }
+		public UserInfo User { get; set; }
+		public ServiceInfo Service { get; set; }
+		public DateTime LastAccess { get; set; } = DateTime.Now;
+	}
+
+	public class UserInfo
+	{
+		public UserInfo(ExpandoObject data = null)
+		{
+			if (data != null)
+				this.CopyFrom(data);
+		}
+		public string Name { get; set; }
+		public string Email { get; set; }
+		public string Location { get; set; }
+		public DateTime LastAccess { get; set; } = DateTime.Now;
+	}
+
+	public class ServiceInfo
+	{
+		public ServiceInfo(ExpandoObject data = null)
+		{
+			if (data != null)
+				this.CopyFrom(data);
+		}
+		public string Name { get; set; }
+		public string URI { get; set; }
+		public string SystemID { get; set; }
+	}
+
 }
