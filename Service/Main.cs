@@ -319,9 +319,18 @@ namespace net.vieapps.Services.Users
 					return requestInfo.ContainsKey("x-summary") || requestInfo.ContainsKey("x-sum") || requestInfo.ContainsKey("x-normalize") ? this.GetStatistics(!requestInfo.ContainsKey("x-no-hour-details")) : this.Statistics;
 				}
 
+				JObject portalIPs = null;
 				var isSystemAdministrator = await this.IsSystemAdministratorAsync(requestInfo, cancellationToken).ConfigureAwait(false);
+
 				if (isSystemAdministrator)
 				{
+					portalIPs = await this.CallServiceAsync(new RequestInfo(requestInfo)
+					{
+						ServiceName = "Portals",
+						ObjectName = "Black.IPs",
+						Verb = "FETCH"
+					}, cancellationToken).ConfigureAwait(false) as JObject;
+
 					if (requestInfo.ContainsKey("x-clear"))
 					{
 						new CommunicateMessage(this.ServiceName)
@@ -428,7 +437,15 @@ namespace net.vieapps.Services.Users
 					? this.GetOnlineStatistics(sessions)
 					: new JObject
 					{
-						["Statistics"] = this.GetOnlineStatistics(null, statistics => statistics["Sessions"] = sessions.Count()),
+						["Statistics"] = this.GetOnlineStatistics(null, statistics =>
+						{
+							statistics["Sessions"] = sessions.Count();
+							if (portalIPs != null)
+							{
+								statistics["BlackIPs"] = portalIPs.Get<JArray>("BlackIPs");
+								statistics["HarmfulIPs"] = portalIPs.Get<JArray>("HarmfulIPs");
+							}
+						}),
 						["Sessions"] = sessions.ToList().Select(info => new JObject
 						{
 							["ID"] = info.Session.ID,
