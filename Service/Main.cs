@@ -316,7 +316,7 @@ namespace net.vieapps.Services.Users
 				{
 					if (requestInfo.ContainsKey("x-sync") || requestInfo.ContainsKey("x-sync-request"))
 						await this.SendSyncStatisticsAsync().ConfigureAwait(false);
-					return requestInfo.ContainsKey("x-summary") || requestInfo.ContainsKey("x-sum") || requestInfo.ContainsKey("x-normalize") ? this.GetStatistics(!requestInfo.ContainsKey("x-no-detail")) : this.Statistics;
+					return requestInfo.ContainsKey("x-summary") || requestInfo.ContainsKey("x-sum") || requestInfo.ContainsKey("x-normalize") ? this.GetStatistics(!requestInfo.ContainsKey("x-no-hour-details")) : this.Statistics;
 				}
 
 				var isSystemAdministrator = await this.IsSystemAdministratorAsync(requestInfo, cancellationToken).ConfigureAwait(false);
@@ -510,17 +510,17 @@ namespace net.vieapps.Services.Users
 			this.Statistics.ForEach(kvpYear =>
 			{
 				var year = kvpYear.Value as JObject;
-				var months = new List<JObject>();
+				var months = new Dictionary<string, JObject>();
 				var totalOfTheYear = 0;
 				year.ForEach(kvpMonth =>
 				{
 					var month = kvpMonth.Value as JObject;
-					var days = new List<JObject>();
+					var days = new Dictionary<string, JObject>();
 					var totalOfTheMonth = 0;
 					month.ForEach(kvpDay =>
 					{
 						var day = kvpDay.Value as JObject;
-						var hours = new List<JObject>();
+						var hours = new Dictionary<string, JObject>();
 						var totalOfTheDay = 0;
 						day.ForEach(kvpHour =>
 						{
@@ -531,43 +531,34 @@ namespace net.vieapps.Services.Users
 								totalOfTheHour += (kvpMinute.Value as JValue).Value.As<int>();
 								counterOfTheHour++;
 							});
-							hours.Add(new JObject
+							hours[kvpHour.Key] = new JObject
 							{
-								[kvpHour.Key] = new JObject
-								{
-									["Total"] = totalOfTheHour,
-									["AverageOfOneMinute"] = totalOfTheHour / counterOfTheHour
-								}
-							});
+								["Total"] = totalOfTheHour,
+								["AverageOfOneMinute"] = totalOfTheHour / counterOfTheHour
+							};
 							totalOfTheDay += totalOfTheHour;
 						});
-						days.Add(new JObject
+						days[kvpDay.Key] = new JObject
 						{
-							[kvpDay.Key] = new JObject
-							{
-								["Total"] = totalOfTheDay,
-								["AverageOfOneHour"] = totalOfTheDay / hours.Count,
-								["Hours"] = addHourDetails ? hours.ToJArray() : null
-							}
-						});
+							["Total"] = totalOfTheDay,
+							["AverageOfOneHour"] = totalOfTheDay / hours.Count,
+							["Hours"] = addHourDetails ? hours.ToJObject() : null
+						};
 						totalOfTheMonth += totalOfTheDay;
 					});
-					months.Add(new JObject
+					months[kvpMonth.Key] = new JObject
 					{
-						[kvpMonth.Key] = new JObject
-						{
-							["Total"] = totalOfTheMonth,
-							["AverageOfOneDay"] = totalOfTheMonth / days.Count,
-							["Days"] = days.ToJArray()
-						}
-					});
+						["Total"] = totalOfTheMonth,
+						["AverageOfOneDay"] = totalOfTheMonth / days.Count,
+						["Days"] = days.ToJObject()
+					};
 					totalOfTheYear += totalOfTheMonth;
 				});
 				statistics[kvpYear.Key] = new JObject
 				{
 					["Total"] = totalOfTheYear,
 					["AverageOfOneMonth"] = totalOfTheYear / months.Count,
-					["Months"] = months.ToJArray()
+					["Months"] = months.ToJObject()
 				};
 			});
 			return statistics;
