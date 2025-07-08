@@ -27,7 +27,7 @@ namespace net.vieapps.Services.Users
 		#region Properties
 		ConcurrentDictionary<string, SessionInfo> Sessions { get; } = [];
 
-		Statistics Statistics { get; set; } = new();
+		Statistics Statistics { get; } = new();
 
 		string StatisticsFilePath { get; } = Path.Combine(UtilityService.GetAppSetting("Path:Status", "status"), "visits.json");
 
@@ -178,7 +178,7 @@ namespace net.vieapps.Services.Users
 			}
 		}
 
-		#region Call related services
+		#region Related services
 		IService GetRelatedService(RequestInfo requestInfo)
 		{
 			try
@@ -237,7 +237,7 @@ namespace net.vieapps.Services.Users
 			=> this.CallRelatedServiceAsync(requestInfo, objectName, null, null, extra, cancellationToken);
 		#endregion
 
-		#region Get instructions
+		#region Instructions
 		async Task<Tuple<Tuple<string, string>, Tuple<string, string>, Tuple<string, int, bool, string, string>>> GetInstructionsOfRelatedServiceAsync(RequestInfo requestInfo, string mode = "reset", CancellationToken cancellationToken = default)
 		{
 			var response = await this.CallRelatedServiceAsync(requestInfo, "Instructions", new Dictionary<string, string> { ["mode"] = mode }, cancellationToken).ConfigureAwait(false);
@@ -312,30 +312,34 @@ namespace net.vieapps.Services.Users
 		}
 		#endregion
 
-		#region Sessions statistics
+		#region Statistics
 		async Task<JToken> ProcessStatisticsAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			if (requestInfo.Verb.IsEquals("GET"))
 			{
+				var isSystemAdministrator = await this.IsSystemAdministratorAsync(requestInfo, cancellationToken).ConfigureAwait(false);
+
 				if (requestInfo.ObjectName.IsEquals("statistics"))
 				{
-					if (requestInfo.ContainsKey("x-sync") || requestInfo.ContainsKey("x-sync-all"))
-						await this.SendSyncStatisticsAsync(requestInfo.ContainsKey("x-sync-all") || requestInfo.ContainsKey("x-all")).ConfigureAwait(false);
-					else if (requestInfo.ContainsKey("x-reload"))
+					if (isSystemAdministrator)
 					{
-						await this.Statistics.LoadAsync(this.StatisticsFilePath, cancellationToken).ConfigureAwait(false);
-						this.SendSyncAllStatistics();
-					}
-					else if (requestInfo.ContainsKey("x-dump"))
-						new CommunicateMessage(this.ServiceName)
+						if (requestInfo.ContainsKey("x-sync") || requestInfo.ContainsKey("x-sync-all"))
+							await this.SendSyncStatisticsAsync(requestInfo.ContainsKey("x-sync-all") || requestInfo.ContainsKey("x-all")).ConfigureAwait(false);
+						else if (requestInfo.ContainsKey("x-reload"))
 						{
-							Type = "Statistics#Dump"
-						}.Send();
+							await this.Statistics.LoadAsync(this.StatisticsFilePath, cancellationToken).ConfigureAwait(false);
+							this.SendSyncAllStatistics();
+						}
+						else if (requestInfo.ContainsKey("x-dump"))
+							new CommunicateMessage(this.ServiceName)
+							{
+								Type = "Statistics#Dump"
+							}.Send();
+					}
 					return this.Statistics.ToJson(requestInfo.ContainsKey("x-summary") || requestInfo.ContainsKey("x-sum") || requestInfo.ContainsKey("x-normalize"), !requestInfo.ContainsKey("x-no-hour-details"));
 				}
 
 				JObject portalIPs = null;
-				var isSystemAdministrator = await this.IsSystemAdministratorAsync(requestInfo, cancellationToken).ConfigureAwait(false);
 
 				if (isSystemAdministrator)
 				{
@@ -2669,6 +2673,7 @@ namespace net.vieapps.Services.Users
 
 					if (session.Online)
 					{
+						this.Statistics.Update();
 						var serviceInfo = data.Get<ExpandoObject>("Service");
 						if (existed)
 						{
@@ -2701,7 +2706,6 @@ namespace net.vieapps.Services.Users
 								Service = new ServiceInfo(serviceInfo)
 							};
 						}
-						this.Statistics.Update();
 					}
 					else if (this.Sessions.Remove(sessionID))
 					{
@@ -2771,11 +2775,7 @@ namespace net.vieapps.Services.Users
 					DateTime.Now.Minute < 3 ? null : $"{DateTime.Now.AddMinutes(-2):mm}",
 					DateTime.Now.Minute < 2 ? null : $"{DateTime.Now.AddMinutes(-1):mm}",
 					$"{DateTime.Now:mm}"
-				}.Where(minuteID => minuteID != null).ToList().ForEach(minuteID =>
-				{
-					var total = this.Statistics.Get(yearID, monthID, dayID, hourID, minuteID).Counters;
-					this.SendSyncStatistics(total, minuteID, hourID, dayID, monthID, yearID);
-				});
+				}.Where(minuteID => minuteID != null).ToList().ForEach(minuteID => this.SendSyncStatistics(this.Statistics.Get(minuteID, hourID, dayID, monthID, yearID).Counters, minuteID, hourID, dayID, monthID, yearID));
 			}
 
 			else if (message.Type.IsEquals("Session#SyncAllStatistics"))
@@ -2785,7 +2785,7 @@ namespace net.vieapps.Services.Users
 			}
 
 			else if (message.Type.IsEquals("Session#UpdateStatistics"))
-				this.Statistics.Update(data.Get("Total", 0), data.Get<string>("Minute"), data.Get<string>("Hour"), data.Get<string>("Day"), data.Get<string>("Month"), data.Get<string>("Year"));
+				this.Statistics.Update(data.Get("Counters", 0), data.Get<string>("Minute"), data.Get<string>("Hour"), data.Get<string>("Day"), data.Get<string>("Month"), data.Get<string>("Year"));
 
 			else if (message.Type.IsEquals("Session#Dump") || message.Type.IsEquals("Statistics#Dump"))
 			{
@@ -2843,7 +2843,7 @@ namespace net.vieapps.Services.Users
 				await this.SaveStatisticsAsync(this.CancellationToken, UtilityService.GetRandomNumber(1234, 2345)).ConfigureAwait(false);
 		}
 
-		void SendSyncStatistics(int total, string minuteID, string hourID, string dayID = null, string monthID = null, string yearID = null)
+		void SendSyncStatistics(int counters, string minuteID, string hourID, string dayID = null, string monthID = null, string yearID = null)
 			=> new CommunicateMessage(this.ServiceName)
 			{
 				Type = "Session#UpdateStatistics",
@@ -2855,7 +2855,7 @@ namespace net.vieapps.Services.Users
 					["Day"] = dayID,
 					["Hour"] = hourID,
 					["Minute"] = minuteID,
-					["Total"] = total
+					["Counters"] = counters
 				}
 			}.Send();
 
