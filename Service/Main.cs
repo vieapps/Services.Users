@@ -7,12 +7,12 @@ using System.Dynamic;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
-using WampSharp.V2.Core.Contracts;
+using System.Collections.Concurrent;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using WampSharp.V2.Core.Contracts;
 using net.vieapps.Components.Caching;
 using net.vieapps.Components.Repository;
 using net.vieapps.Components.Security;
@@ -27,9 +27,9 @@ namespace net.vieapps.Services.Users
 		#region Properties
 		ConcurrentDictionary<string, SessionInfo> Sessions { get; } = [];
 
-		JObject Statistics { get; set; } = new();
+		Statistics Statistics { get; set; } = new();
 
-		string StatisticsFilePath { get; } = Path.Combine(UtilityService.GetAppSetting("Path:Status", "status"), "sessions.json");
+		string StatisticsFilePath { get; } = Path.Combine(UtilityService.GetAppSetting("Path:Status", "status"), "visits.json");
 
 		string ActivationKey => this.GetKey("Activation", "VIEApps-56BA2999-NGX-A2E4-Services-4B54-Activation-83EB-Key-693C250DC95D");
 
@@ -52,6 +52,7 @@ namespace net.vieapps.Services.Users
 		protected override Privileges Privileges => new Privileges();
 		#endregion
 
+		#region Start/Stop the service
 		public override async Task StartAsync(string[] args = null, bool initializeRepository = true, Action<IService> next = null)
 		{
 			// initialize static properties
@@ -69,7 +70,7 @@ namespace net.vieapps.Services.Users
 			// statistics
 			try
 			{
-				this.Statistics = await new FileInfo(this.StatisticsFilePath).ReadAsJsonAsync(this.CancellationToken).ConfigureAwait(false) as JObject ?? new();
+				await this.Statistics.LoadAsync(this.StatisticsFilePath, this.CancellationToken).ConfigureAwait(false);
 			}
 			catch { }
 
@@ -79,6 +80,10 @@ namespace net.vieapps.Services.Users
 			// last action
 			await base.StartAsync(args, initializeRepository, next).ConfigureAwait(false);
 		}
+
+		protected override Task StopAsync(string[] args, bool available, bool disconnect, Action<IService> next = null)
+			=> base.StopAsync(args, available, disconnect, next);
+		#endregion
 
 		public override async Task<JToken> ProcessRequestAsync(RequestInfo requestInfo, CancellationToken cancellationToken = default)
 		{
@@ -314,9 +319,19 @@ namespace net.vieapps.Services.Users
 			{
 				if (requestInfo.ObjectName.IsEquals("statistics"))
 				{
-					if (requestInfo.ContainsKey("x-sync") || requestInfo.ContainsKey("x-sync-request"))
-						await this.SendSyncStatisticsAsync().ConfigureAwait(false);
-					return requestInfo.ContainsKey("x-summary") || requestInfo.ContainsKey("x-sum") || requestInfo.ContainsKey("x-normalize") ? this.GetStatistics(!requestInfo.ContainsKey("x-no-hour-details")) : this.Statistics;
+					if (requestInfo.ContainsKey("x-sync") || requestInfo.ContainsKey("x-sync-all"))
+						await this.SendSyncStatisticsAsync(requestInfo.ContainsKey("x-sync-all") || requestInfo.ContainsKey("x-all")).ConfigureAwait(false);
+					else if (requestInfo.ContainsKey("x-reload"))
+					{
+						await this.Statistics.LoadAsync(this.StatisticsFilePath, cancellationToken).ConfigureAwait(false);
+						this.SendSyncAllStatistics();
+					}
+					else if (requestInfo.ContainsKey("x-dump"))
+						new CommunicateMessage(this.ServiceName)
+						{
+							Type = "Statistics#Dump"
+						}.Send();
+					return this.Statistics.ToJson(requestInfo.ContainsKey("x-summary") || requestInfo.ContainsKey("x-sum") || requestInfo.ContainsKey("x-normalize"), !requestInfo.ContainsKey("x-no-hour-details"));
 				}
 
 				JObject portalIPs = null;
@@ -489,95 +504,6 @@ namespace net.vieapps.Services.Users
 				{ "Visitor", total - user - crawler },
 			};
 			onCompleted?.Invoke(statistics);
-			return statistics;
-		}
-
-		JObject UpdateSessionStatistics(string hourID = null, string minuteID = null, int total = 0)
-		{
-			var hour = this.GetSessionStatistics(hourID);
-			var minute = hour.Get<JValue>(minuteID ??= $"{DateTime.Now:mm}");
-			hour[minuteID] = new JValue(total > 0 ? total : (minute ?? new JValue(0)).Value.As<int>() + 1);
-			return this.Statistics;
-		}
-
-		JObject GetSessionStatistics(string hourID = null)
-		{
-			var year = this.Statistics.Get<JObject>($"{DateTime.Now:yyyy}");
-			if (year == null)
-				this.Statistics[$"{DateTime.Now:yyyy}"] = year = new JObject();
-
-			var month = year.Get<JObject>($"{DateTime.Now:MM}");
-			if (month == null)
-				year[$"{DateTime.Now:MM}"] = month = new JObject();
-
-			var day = month.Get<JObject>($"{DateTime.Now:dd}");
-			if (day == null)
-				month[$"{DateTime.Now:dd}"] = day = new JObject();
-
-			var hour = day.Get<JObject>(hourID ??= $"{DateTime.Now:HH}");
-			if (hour == null)
-				day[hourID] = hour = new JObject();
-
-			return hour;
-		}
-
-		JObject GetStatistics(bool addHourDetails = true)
-		{
-			var statistics = new JObject();
-			this.Statistics.ForEach(kvpYear =>
-			{
-				var year = kvpYear.Value as JObject;
-				var months = new Dictionary<string, JObject>();
-				var totalOfTheYear = 0;
-				year.ForEach(kvpMonth =>
-				{
-					var month = kvpMonth.Value as JObject;
-					var days = new Dictionary<string, JObject>();
-					var totalOfTheMonth = 0;
-					month.ForEach(kvpDay =>
-					{
-						var day = kvpDay.Value as JObject;
-						var hours = new Dictionary<string, JObject>();
-						var totalOfTheDay = 0;
-						day.ForEach(kvpHour =>
-						{
-							var totalOfTheHour = 0;
-							var counterOfTheHour = 0;
-							(kvpHour.Value as JObject).ForEach(kvpMinute =>
-							{
-								totalOfTheHour += (kvpMinute.Value as JValue).Value.As<int>();
-								counterOfTheHour++;
-							});
-							hours[kvpHour.Key] = new JObject
-							{
-								["Total"] = totalOfTheHour,
-								["AverageOfOneMinute"] = totalOfTheHour / counterOfTheHour
-							};
-							totalOfTheDay += totalOfTheHour;
-						});
-						days[kvpDay.Key] = new JObject
-						{
-							["Total"] = totalOfTheDay,
-							["AverageOfOneHour"] = totalOfTheDay / hours.Count,
-							["Hours"] = addHourDetails ? hours.ToJObject() : null
-						};
-						totalOfTheMonth += totalOfTheDay;
-					});
-					months[kvpMonth.Key] = new JObject
-					{
-						["Total"] = totalOfTheMonth,
-						["AverageOfOneDay"] = totalOfTheMonth / days.Count,
-						["Days"] = days.ToJObject()
-					};
-					totalOfTheYear += totalOfTheMonth;
-				});
-				statistics[kvpYear.Key] = new JObject
-				{
-					["Total"] = totalOfTheYear,
-					["AverageOfOneMonth"] = totalOfTheYear / months.Count,
-					["Months"] = months.ToJObject()
-				};
-			});
 			return statistics;
 		}
 		#endregion
@@ -2775,7 +2701,7 @@ namespace net.vieapps.Services.Users
 								Service = new ServiceInfo(serviceInfo)
 							};
 						}
-						this.UpdateSessionStatistics();
+						this.Statistics.Update();
 					}
 					else if (this.Sessions.Remove(sessionID))
 					{
@@ -2826,10 +2752,7 @@ namespace net.vieapps.Services.Users
 			else if (message.Type.IsEquals("Session#UpdateLocation"))
 				try
 				{
-					await this.Sessions.Where(kvp => string.IsNullOrWhiteSpace(kvp.Value.User.Location) || kvp.Value.User.Location.IsEquals(", "))
-						.Select(kvp => kvp.Value)
-						.ToList()
-						.ForEachAsync(async sessionInfo => sessionInfo.User.Location = await sessionInfo.Session.ToSession().GetLocationAsync(correlationID, cancellationToken).ConfigureAwait(false), true, false).ConfigureAwait(false);
+					await this.Sessions.Where(kvp => string.IsNullOrWhiteSpace(kvp.Value.User.Location) || kvp.Value.User.Location.IsEquals(", ")).Select(kvp => kvp.Value).ToList().ForEachAsync(async sessionInfo => sessionInfo.User.Location = await sessionInfo.Session.ToSession().GetLocationAsync(correlationID, cancellationToken).ConfigureAwait(false), true, false).ConfigureAwait(false);
 				}
 				catch { }
 
@@ -2838,61 +2761,46 @@ namespace net.vieapps.Services.Users
 
 			else if (message.Type.IsEquals("Session#SyncStatistics"))
 			{
+				var yearID = $"{DateTime.Now:yyyy}";
+				var monthID = $"{DateTime.Now:MM}";
+				var dayID = $"{DateTime.Now:dd}";
 				var hourID = $"{DateTime.Now:HH}";
-				var hour = this.GetSessionStatistics(hourID);
 				new[] {
 					DateTime.Now.Minute < 5 ? null : $"{DateTime.Now.AddMinutes(-4):mm}",
 					DateTime.Now.Minute < 4 ? null : $"{DateTime.Now.AddMinutes(-3):mm}",
 					DateTime.Now.Minute < 3 ? null : $"{DateTime.Now.AddMinutes(-2):mm}",
 					DateTime.Now.Minute < 2 ? null : $"{DateTime.Now.AddMinutes(-1):mm}",
 					$"{DateTime.Now:mm}"
-				}
-				.Where(minuteID => minuteID != null)
-				.ToList()
-				.ForEach(minuteID => new CommunicateMessage(this.ServiceName)
+				}.Where(minuteID => minuteID != null).ToList().ForEach(minuteID =>
 				{
-					Type = "Session#UpdateSessionStatistics",
-					ExcludedNodeID = this.NodeID,
-					Data = new JObject
-					{
-						["Hour"] = hourID,
-						["Minute"] = minuteID,
-						["Total"] = hour.Get(minuteID, new JValue(0)).Value.As<int>()
-					}
-				}.Send());
+					var total = this.Statistics.Get(yearID, monthID, dayID, hourID, minuteID).Counters;
+					this.SendSyncStatistics(total, minuteID, hourID, dayID, monthID, yearID);
+				});
 			}
 
-			else if (message.Type.IsEquals("Session#UpdateSessionStatistics"))
+			else if (message.Type.IsEquals("Session#SyncAllStatistics"))
 			{
-				var syncHourID = data.Get<string>("Hour");
-				var syncMinuteID = data.Get<string>("Minute");
-				var syncTotal = data.Get("Total", 0);
-				var currentTotal = this.GetSessionStatistics(syncHourID).Get(syncMinuteID, new JValue(0)).Value.As<int>();
-				if (syncTotal > currentTotal)
-					this.UpdateSessionStatistics(syncHourID, syncMinuteID, syncTotal);
+				this.SendSyncAllStatistics();
+				await this.SaveStatisticsAsync(this.CancellationToken, UtilityService.GetRandomNumber(12346, 23467)).ConfigureAwait(false);
 			}
 
-			else if (message.Type.IsEquals("Session#Dump"))
+			else if (message.Type.IsEquals("Session#UpdateStatistics"))
+				this.Statistics.Update(data.Get("Total", 0), data.Get<string>("Minute"), data.Get<string>("Hour"), data.Get<string>("Day"), data.Get<string>("Month"), data.Get<string>("Year"));
+
+			else if (message.Type.IsEquals("Session#Dump") || message.Type.IsEquals("Statistics#Dump"))
 			{
-				await this.Statistics.SaveAsTextAsync(this.StatisticsFilePath, cancellationToken).ConfigureAwait(false);
+				await this.SaveStatisticsAsync(cancellationToken).ConfigureAwait(false);
 				await this.Sessions.Select(kvp => kvp.Value)
 					.OrderByDescending(sessionInfo => sessionInfo.LastAccess)
 					.Select(sessionInfo => sessionInfo.ToJson())
 					.ToJArray()
-					.SaveAsTextAsync(Path.Combine(UtilityService.GetAppSetting("Path:Status", "status"), "online-sessions.json"), cancellationToken).ConfigureAwait(false);
+					.SaveAsTextAsync(Path.Combine(UtilityService.GetAppSetting("Path:Status", "status"), "sessions.json"), cancellationToken).ConfigureAwait(false);
 			}
 
 			// unknown
 			else if (this.IsDebugResultsEnabled)
 				await this.WriteLogsAsync(correlationID, $"Got an inter-communicate message => {message.ToJson().ToString(this.JsonFormat)})", null, this.ServiceName, "Communicates", LogLevel.Warning).ConfigureAwait(false);
 		}
-
-		void SendSyncSessionsRequest(string excludedNodeID = null)
-			=> Task.Delay(UtilityService.GetRandomNumber(1234, 5678), this.CancellationToken).ContinueWith(_ => new CommunicateMessage(this.ServiceName)
-			{
-				Type = "Session#SyncRequest",
-				ExcludedNodeID = excludedNodeID ?? this.NodeID
-			}.Send(), this.CancellationToken, TaskContinuationOptions.OnlyOnRanToCompletion, TaskScheduler.Default).Run();
 
 		void SendSyncSession(SessionInfo sessionInfo, string excludedNodeID = null)
 			=> new CommunicateMessage(this.ServiceName)
@@ -2917,22 +2825,55 @@ namespace net.vieapps.Services.Users
 				onNext().Run();
 		}
 
-		async Task SendSyncStatisticsAsync()
+		void SendSyncSessionsRequest(string excludedNodeID = null)
+			=> Task.Delay(UtilityService.GetRandomNumber(1234, 5678), this.CancellationToken).ContinueWith(_ => new CommunicateMessage(this.ServiceName)
+			{
+				Type = "Session#SyncRequest",
+				ExcludedNodeID = excludedNodeID ?? this.NodeID
+			}.Send(), this.CancellationToken, TaskContinuationOptions.OnlyOnRanToCompletion, TaskScheduler.Default).Run();
+
+		async Task SendSyncStatisticsAsync(bool all = false)
 		{
 			await Task.Delay(UtilityService.GetRandomNumber(1234, 2345), this.CancellationToken).ConfigureAwait(false);
 			new CommunicateMessage(this.ServiceName)
 			{
-				Type = "Session#SyncStatistics"
+				Type = $"Session#Sync{(all ? "All" : "")}Statistics"
 			}.Send();
-			await Task.Delay(UtilityService.GetRandomNumber(4567, 6789), this.CancellationToken).ConfigureAwait(false);
-			await this.Statistics.SaveAsTextAsync(this.StatisticsFilePath, this.CancellationToken).ConfigureAwait(false);
+			if (!all)
+				await this.SaveStatisticsAsync(this.CancellationToken, UtilityService.GetRandomNumber(1234, 2345)).ConfigureAwait(false);
+		}
+
+		void SendSyncStatistics(int total, string minuteID, string hourID, string dayID = null, string monthID = null, string yearID = null)
+			=> new CommunicateMessage(this.ServiceName)
+			{
+				Type = "Session#UpdateStatistics",
+				ExcludedNodeID = this.NodeID,
+				Data = new JObject
+				{
+					["Year"] = yearID,
+					["Month"] = monthID,
+					["Day"] = dayID,
+					["Hour"] = hourID,
+					["Minute"] = minuteID,
+					["Total"] = total
+				}
+			}.Send();
+
+		void SendSyncAllStatistics()
+			=> this.Statistics.SendStatistics(this.SendSyncStatistics);
+
+		async Task SaveStatisticsAsync(CancellationToken cancellationToken, int waitingTimes = 0)
+		{
+			if (waitingTimes > 0)
+				await Task.Delay(waitingTimes, cancellationToken).ConfigureAwait(false);
+			await this.Statistics.ToJson().SaveAsTextAsync(this.StatisticsFilePath, cancellationToken).ConfigureAwait(false);
 		}
 		#endregion
 
 		#region Timers for working with background workers & schedulers
 		void RegisterTimers()
 		{
-			// clean expired sessions (13 hours)
+			// clean expired sessions and sync all statistics (13 hours)
 			this.StartTimer(async () =>
 			{
 				var userID = UtilityService.GetAppSetting("Users:SystemAccountID", "VIEAppsNGX-MMXVII-System-Account");
@@ -2949,6 +2890,7 @@ namespace net.vieapps.Services.Users
 						}
 					}.Send();
 				}, true, false).ConfigureAwait(false);
+				await this.SendSyncStatisticsAsync(true).ConfigureAwait(false);
 			}, 13 * 60 * 60);
 
 			// refresh sessions (10 minutes)
@@ -2979,6 +2921,7 @@ namespace net.vieapps.Services.Users
 							this.Sessions.Remove(info.SessionID);
 					}
 				}, true, false).ConfigureAwait(false);
+				await this.SaveStatisticsAsync(this.CancellationToken).ConfigureAwait(false);
 				if (this.IsStatisticsUpdater)
 				{
 					await Task.Delay(UtilityService.GetRandomNumber(1234, 5678), this.CancellationToken).ConfigureAwait(false);
@@ -2992,10 +2935,11 @@ namespace net.vieapps.Services.Users
 			}, 10 * 60);
 
 			// sync sessions (3 minutes)
-			this.StartTimer(() => this.SendSyncSessions(DateTime.Now.AddMinutes(-4), this.NodeID, this.SendSyncStatisticsAsync), 3 * 60);
+			this.StartTimer(() => this.SendSyncSessions(DateTime.Now.AddMinutes(-4), this.NodeID, () => this.SendSyncStatisticsAsync()), 3 * 60);
 
 			// sync at the first time
 			this.SendSyncSessionsRequest();
+			this.SendSyncStatisticsAsync(true).Run();
 		}
 		#endregion
 
