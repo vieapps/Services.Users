@@ -7,8 +7,8 @@ using System.Dynamic;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Collections.Generic;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -45,14 +45,22 @@ namespace net.vieapps.Services.Users
 
 		string PhoneCountryCode { get; } = UtilityService.GetAppSetting("Users:Phone:CountryCode", "84");
 
-		bool IsStatisticsUpdater { get; } = "true".IsEquals(UtilityService.GetAppSetting("Users:Statistics:Updater", "true"));
+		bool IsUpdater { get; } = "true".IsEquals(UtilityService.GetAppSetting("Users:Updater", "true"));
+
+		int UpdaterFrequency { get; } = Int32.TryParse(UtilityService.GetAppSetting("Users:Updater:Frequency", "0"), out var frequency) && frequency > 13 && frequency < 300 ? frequency : 0;
+
+		string BlackIPsServiceName { get; } = UtilityService.GetAppSetting("Users:BlackIPs:Service", "Portals");
+
+		string BlackIPsObjectName { get; } = UtilityService.GetAppSetting("Users:BlackIPs:Object", "Black.IPs");
+
+		string BlackIPsVerb { get; } = UtilityService.GetAppSetting("Users:BlackIPs:Verb", "FETCH");
 
 		public override string ServiceName => "Users";
 
 		protected override Privileges Privileges => new Privileges();
 		#endregion
 
-		#region Start/Stop the service
+		#region Start the service
 		public override async Task StartAsync(string[] args = null, bool initializeRepository = true, Action<IService> next = null)
 		{
 			// initialize static properties
@@ -71,6 +79,8 @@ namespace net.vieapps.Services.Users
 			try
 			{
 				await this.Statistics.LoadAsync(this.StatisticsFilePath, this.CancellationToken).ConfigureAwait(false);
+				if (this.IsUpdater)
+					await this.Statistics.LoadAsync(this.CancellationToken).ConfigureAwait(false);
 			}
 			catch { }
 
@@ -80,9 +90,6 @@ namespace net.vieapps.Services.Users
 			// last action
 			await base.StartAsync(args, initializeRepository, next).ConfigureAwait(false);
 		}
-
-		protected override Task StopAsync(string[] args, bool available, bool disconnect, Action<IService> next = null)
-			=> base.StopAsync(args, available, disconnect, next);
 		#endregion
 
 		public override async Task<JToken> ProcessRequestAsync(RequestInfo requestInfo, CancellationToken cancellationToken = default)
@@ -95,7 +102,6 @@ namespace net.vieapps.Services.Users
 				JToken json = null;
 				switch (requestInfo.ObjectName.ToLower())
 				{
-					case "online":
 					case "sessions":
 					case "statistics":
 						json = await this.ProcessStatisticsAsync(requestInfo, cts.Token).ConfigureAwait(false);
@@ -321,35 +327,43 @@ namespace net.vieapps.Services.Users
 
 				if (requestInfo.ObjectName.IsEquals("statistics"))
 				{
+					if ("fetch".IsEquals(requestInfo.GetObjectIdentity()))
+						return this.SendStatistics();
+
 					if (isSystemAdministrator)
 					{
 						if (requestInfo.ContainsKey("x-sync") || requestInfo.ContainsKey("x-sync-all"))
-							await this.SendSyncStatisticsAsync(requestInfo.ContainsKey("x-sync-all") || requestInfo.ContainsKey("x-all")).ConfigureAwait(false);
+							await this.SendSyncStatisticsRequestAsync(requestInfo.ContainsKey("x-sync-all") || requestInfo.ContainsKey("x-all")).ConfigureAwait(false);
 						else if (requestInfo.ContainsKey("x-reload"))
-						{
-							await this.Statistics.LoadAsync(this.StatisticsFilePath, cancellationToken).ConfigureAwait(false);
-							this.SendSyncAllStatistics();
-						}
+							new CommunicateMessage(this.ServiceName)
+							{
+								Type = "Statistics#Reload"
+							}.Send();
 						else if (requestInfo.ContainsKey("x-dump"))
 							new CommunicateMessage(this.ServiceName)
 							{
 								Type = "Statistics#Dump"
 							}.Send();
 					}
-					return this.Statistics.ToJson(requestInfo.ContainsKey("x-summary") || requestInfo.ContainsKey("x-sum") || requestInfo.ContainsKey("x-normalize"), !requestInfo.ContainsKey("x-no-hour-details"));
+
+					return this.Statistics.ToJson(requestInfo.ContainsKey("x-summary") || requestInfo.ContainsKey("x-sum"), !requestInfo.ContainsKey("x-no-day-details"), !requestInfo.ContainsKey("x-no-hour-details"));
 				}
 
-				JObject portalIPs = null;
+				var ipAddressses = string.IsNullOrWhiteSpace(this.BlackIPsServiceName) || string.IsNullOrWhiteSpace(this.BlackIPsObjectName) || string.IsNullOrWhiteSpace(this.BlackIPsVerb)
+					? new JObject
+					{
+						["BlackIPs"] = new JArray(),
+						["HarmfulIPs"] = new JArray()
+					}
+					: await this.CallServiceAsync(new RequestInfo(requestInfo)
+					{
+						ServiceName = this.BlackIPsServiceName,
+						ObjectName = this.BlackIPsObjectName,
+						Verb = this.BlackIPsVerb
+					}, cancellationToken).ConfigureAwait(false) as JObject;
 
 				if (isSystemAdministrator)
 				{
-					portalIPs = await this.CallServiceAsync(new RequestInfo(requestInfo)
-					{
-						ServiceName = "Portals",
-						ObjectName = "Black.IPs",
-						Verb = "FETCH"
-					}, cancellationToken).ConfigureAwait(false) as JObject;
-
 					if (requestInfo.ContainsKey("x-clear"))
 					{
 						new CommunicateMessage(this.ServiceName)
@@ -452,23 +466,38 @@ namespace net.vieapps.Services.Users
 				if (requestInfo.TryGetParameter("x-max", out var max) && Int32.TryParse(max, out var maxRecords) && maxRecords > 0)
 					sessions = sessions.Take(maxRecords);
 
-				return requestInfo.ContainsKey("x-statistics") || !isSystemAdministrator
-					? this.GetOnlineStatistics(sessions)
+				var onlyStatistics = requestInfo.ContainsKey("x-statistics") || !isSystemAdministrator;
+				var statistics = this.GetStatistics(onlyStatistics ? sessions : null, (_, statisticsJson) =>
+				{
+					var sessionsJson = statisticsJson;
+					if (!onlyStatistics)
+						sessionsJson["Sessions"] = sessions.Count();
+					return new JObject
+					{
+						["Sessions"] = sessionsJson,
+						["Visits"] = this.Statistics.ToJson(true, !requestInfo.ContainsKey("x-no-day-details"), requestInfo.ContainsKey("x-hour-details"), (years, json) =>
+						{
+							var counters = years.Sum(year => year.Counters);
+							return new JObject
+							{
+								["Counters"] = counters,
+								["AverageOfOneYear"] = counters / years.Count(),
+								["Years"] = json
+							};
+						}),
+						["BlackIPs"] = ipAddressses.Get<JArray>("BlackIPs"),
+						["HarmfulIPs"] = ipAddressses.Get<JArray>("HarmfulIPs")
+					};
+				});
+				return onlyStatistics
+					? statistics
 					: new JObject
 					{
-						["Statistics"] = this.GetOnlineStatistics(null, statistics =>
-						{
-							statistics["Sessions"] = sessions.Count();
-							if (portalIPs != null)
-							{
-								statistics["BlackIPs"] = portalIPs.Get<JArray>("BlackIPs");
-								statistics["HarmfulIPs"] = portalIPs.Get<JArray>("HarmfulIPs");
-							}
-						}),
+						["Statistics"] = statistics,
 						["Sessions"] = sessions.ToList().Select(info => new JObject
 						{
 							["ID"] = info.Session.ID,
-							["Time"] = info.LastAccess,
+							["Time"] = info.LastAccess.ToIsoString(),
 							["IP"] = info.Session.IP,
 							["Location"] = info.User.Location,
 							["User"] = string.IsNullOrWhiteSpace(info.Session.UserID) ? new JValue(info.User.Name ?? "Visitor") : info.User.ToJson(json =>
@@ -494,7 +523,7 @@ namespace net.vieapps.Services.Users
 			throw new MethodNotAllowedException(requestInfo.Verb);
 		}
 
-		JObject GetOnlineStatistics(IEnumerable<SessionInfo> sessions = null, Action <JObject> onCompleted = null)
+		JObject GetStatistics(IEnumerable<SessionInfo> sessions, Func<IEnumerable<SessionInfo>, JObject, JObject> transformer = null)
 		{
 			sessions ??= [.. this.Sessions.Select(kvp => kvp.Value)];
 			var total = sessions.Count();
@@ -502,12 +531,34 @@ namespace net.vieapps.Services.Users
 			var crawler = sessions.Count(sessionInfo => string.IsNullOrWhiteSpace(sessionInfo.Session.UserID) && "Crawler".IsEquals(sessionInfo.User?.Name));
 			var statistics = new JObject
 			{
-				{ "Total", total },
-				{ "User", user },
-				{ "Crawler", crawler },
-				{ "Visitor", total - user - crawler },
+				["Total"] = total,
+				["User"] = user,
+				["Visitor"] = total - user - crawler,
+				["Crawler"] = crawler
 			};
-			onCompleted?.Invoke(statistics);
+			return transformer != null ? transformer(sessions, statistics) : statistics;
+		}
+
+		JObject SendStatistics()
+		{
+			var year = this.Statistics.Years.FirstOrDefault(o => o.Name == $"{DateTime.Now:yyyy}");
+			var month = year?.Months.FirstOrDefault(o => o.Name == $"{DateTime.Now:MM}");
+			var statistics = this.GetStatistics(null, (_, sessions) => new JObject
+			{
+				["Sessions"] = sessions,
+				["Visits"] = new JObject
+				{
+					["Total"] = this.Statistics.Sum(),
+					["Year"] = year != null ? year.Counters : 0,
+					["Month"] = month != null ? month.Counters : 0
+				}
+			});
+			new UpdateMessage
+			{
+				Type = "Users#Session#Statistics",
+				DeviceID = "*",
+				Data = statistics
+			}.Send();
 			return statistics;
 		}
 		#endregion
@@ -573,15 +624,11 @@ namespace net.vieapps.Services.Users
 		#region Get a session
 		async Task<JToken> GetSessionAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
-			// verify
 			if (requestInfo.Extra == null || !requestInfo.Extra.TryGetValue("Signature", out var signature) || !signature.Equals(requestInfo.GetParameter("x-app-token")?.GetHMACSHA256(this.ValidationKey)))
 				throw new InformationInvalidException("The signature is not found or invalid");
-
-			// get information
 			var session = requestInfo.Session.User.ID.Equals("") || requestInfo.Session.User.IsSystemAccount
 				? await Utility.Cache.FetchAsync<Session>(requestInfo.Session.SessionID, cancellationToken).ConfigureAwait(false)
 				: await Session.GetAsync<Session>(requestInfo.Session.SessionID, cancellationToken).ConfigureAwait(false);
-
 			return session?.ToJson();
 		}
 		#endregion
@@ -936,10 +983,7 @@ namespace net.vieapps.Services.Users
 				throw new InformationInvalidException(ex);
 			}
 
-			var account = await Account.GetByIDAsync(id, cancellationToken).ConfigureAwait(false);
-			if (account == null)
-				throw new InformationNotFoundException();
-
+			var account = await Account.GetByIDAsync(id, cancellationToken).ConfigureAwait(false) ?? throw new InformationNotFoundException();
 			TwoFactorsAuthenticationType type;
 			string stamp;
 			try
@@ -1244,7 +1288,10 @@ namespace net.vieapps.Services.Users
 				: await Account.GetByAccessIdentityAsync(this.ValidatePhone(identity, out var phone) ? phone : identity, AccountType.BuiltIn, cancellationToken).ConfigureAwait(false)) ?? throw new InformationNotFoundException();
 
 			// response
-			return account.GetAccountJson(requestInfo.Query.ContainsKey("x-status"), this.AuthenticationKey);
+			var addStatus = requestInfo.Query.ContainsKey("x-status");
+			if (addStatus)
+				this.SendStatistics();
+			return account.GetAccountJson(addStatus, this.AuthenticationKey);
 		}
 		#endregion
 
@@ -2651,6 +2698,9 @@ namespace net.vieapps.Services.Users
 					var cacheKey = sessionID?.GetCacheKey<Session>();
 					var existed = false;
 
+					var ipAddress = data.Get<string>("IP");
+					Account account = null;
+
 					Session session;
 					if (this.Sessions.TryGetValue(sessionID, out var sessionInfo))
 					{
@@ -2664,35 +2714,35 @@ namespace net.vieapps.Services.Users
 							: await Session.GetAsync<Session>(sessionID, cancellationToken).ConfigureAwait(false);
 						session ??= new Session(Session.ToSession(data), data.Get<string>("OSInfo"));
 					}
-
-					var ip = data.Get<string>("IP");
-					var updated = ip != null && !session.IP.IsEquals(ip);
-					session.IP = updated ? ip : session.IP;
 					session.Online = data.Get("Online", false);
-					Account account = null;
 
 					if (session.Online)
 					{
-						this.Statistics.Update();
+						if (data.Get("Track", true))
+							this.Statistics.Update();
+
 						var serviceInfo = data.Get<ExpandoObject>("Service");
 						if (existed)
 						{
 							sessionInfo.Service = new ServiceInfo(serviceInfo);
 							sessionInfo.LastAccess = DateTime.Now;
-							if ((DateTime.Now - sessionInfo.User.LastAccess).TotalMinutes > 14)
+							if ((DateTime.Now - sessionInfo.User.LastAccess).TotalMinutes > 9)
 							{
 								sessionInfo.User.LastAccess = DateTime.Now;
-								account = await Account.GetAsync<Account>(sessionInfo.Session.UserID, cancellationToken).ConfigureAwait(false);
+								account = this.IsUpdater ? await Account.GetAsync<Account>(sessionInfo.Session.UserID, cancellationToken).ConfigureAwait(false) : null;
 							}
-							if (updated)
+							if (!string.IsNullOrWhiteSpace(ipAddress) && !ipAddress.Equals(session.IP))
 							{
+								session.IP = ipAddress;
+								session.AppInfo = data.Get<string>("AppInfo") ?? $"{data.Get<string>("AppName")} @ {data.Get<string>("AppPlatform")}";
+								session.OSInfo = data.Get<string>("OSInfo") ?? $"{Extensions.GetOSInfo(data.Get<string>("AppAgent"))} [{data.Get<string>("AppAgent")}]";
 								sessionInfo.User.Location = await session.ToSession().GetLocationAsync(correlationID, cancellationToken).ConfigureAwait(false);
-								await (string.IsNullOrWhiteSpace(session.UserID) ? Utility.Cache.SetAsync(cacheKey, session, 15, cancellationToken) : Session.UpdateAsync(session, true, cancellationToken)).ConfigureAwait(false);
+								if (this.IsUpdater)
+									await (string.IsNullOrWhiteSpace(session.UserID) ? Utility.Cache.SetAsync(cacheKey, session, 15, cancellationToken) : Session.UpdateAsync(session, true, cancellationToken)).ConfigureAwait(false);
 							}
 						}
 						else
 						{
-							account = await Account.GetAsync<Account>(session.UserID, cancellationToken).ConfigureAwait(false);
 							var profile = await Profile.GetAsync<Profile>(session.UserID, cancellationToken).ConfigureAwait(false);
 							this.Sessions[sessionID] = new SessionInfo
 							{
@@ -2705,9 +2755,11 @@ namespace net.vieapps.Services.Users
 								},
 								Service = new ServiceInfo(serviceInfo)
 							};
+							account = this.IsUpdater ? await Account.GetAsync<Account>(session.UserID, cancellationToken).ConfigureAwait(false) : null;
 						}
 					}
-					else if (this.Sessions.Remove(sessionID))
+
+					else if (this.Sessions.Remove(sessionID) && this.IsUpdater)
 					{
 						await (string.IsNullOrWhiteSpace(session.UserID) ? Utility.Cache.RemoveAsync(cacheKey, cancellationToken) : Session.UpdateAsync(session, true, cancellationToken)).ConfigureAwait(false);
 						account = await Account.GetAsync<Account>(session.UserID, cancellationToken).ConfigureAwait(false);
@@ -2715,12 +2767,10 @@ namespace net.vieapps.Services.Users
 
 					if (account != null)
 					{
+						this.SendStatistics();
 						account.LastAccess = DateTime.Now;
 						await Account.UpdateAsync(account, true, cancellationToken).ConfigureAwait(false);
 					}
-
-					if (this.IsDebugResultsEnabled)
-						await this.WriteLogsAsync(correlationID, $"Update state of a session successful - Online sessions: {this.Sessions.Count:###,###,##0}", null, this.ServiceName, "Communicates").ConfigureAwait(false);
 				}
 				catch (Exception ex)
 				{
@@ -2763,7 +2813,14 @@ namespace net.vieapps.Services.Users
 			else if (message.Type.IsEquals("Session#SyncRequest"))
 				this.SendSyncSessions();
 
-			else if (message.Type.IsEquals("Session#SyncStatistics"))
+			else if (message.Type.IsEquals("Session#Dump"))
+				await this.Sessions.Select(kvp => kvp.Value)
+					.OrderByDescending(sessionInfo => sessionInfo.LastAccess)
+					.Select(sessionInfo => sessionInfo.ToJson())
+					.ToJArray()
+					.SaveAsTextAsync(Path.Combine(UtilityService.GetAppSetting("Path:Status", "status"), "sessions.json"), cancellationToken).ConfigureAwait(false);
+
+			else if (message.Type.IsEquals("Statistics#Sync"))
 			{
 				var yearID = $"{DateTime.Now:yyyy}";
 				var monthID = $"{DateTime.Now:MM}";
@@ -2778,23 +2835,28 @@ namespace net.vieapps.Services.Users
 				}.Where(minuteID => minuteID != null).ToList().ForEach(minuteID => this.SendSyncStatistics(this.Statistics.Get(minuteID, hourID, dayID, monthID, yearID).Counters, minuteID, hourID, dayID, monthID, yearID));
 			}
 
-			else if (message.Type.IsEquals("Session#SyncAllStatistics"))
+			else if (message.Type.IsEquals("Statistics#SyncAll"))
 			{
 				this.SendSyncAllStatistics();
 				await this.SaveStatisticsAsync(this.CancellationToken, UtilityService.GetRandomNumber(12346, 23467)).ConfigureAwait(false);
 			}
 
-			else if (message.Type.IsEquals("Session#UpdateStatistics"))
+			else if (message.Type.IsEquals("Statistics#Reload"))
+			{
+				await this.Statistics.LoadAsync(this.StatisticsFilePath, cancellationToken).ConfigureAwait(false);
+				if (this.IsUpdater)
+					await this.Statistics.LoadAsync(cancellationToken).ConfigureAwait(false);
+				this.SendSyncAllStatistics();
+			}
+
+			else if (message.Type.IsEquals("Statistics#Update"))
 				this.Statistics.Update(data.Get("Counters", 0), data.Get<string>("Minute"), data.Get<string>("Hour"), data.Get<string>("Day"), data.Get<string>("Month"), data.Get<string>("Year"));
 
-			else if (message.Type.IsEquals("Session#Dump") || message.Type.IsEquals("Statistics#Dump"))
+			else if (message.Type.IsEquals("Statistics#Dump"))
 			{
 				await this.SaveStatisticsAsync(cancellationToken).ConfigureAwait(false);
-				await this.Sessions.Select(kvp => kvp.Value)
-					.OrderByDescending(sessionInfo => sessionInfo.LastAccess)
-					.Select(sessionInfo => sessionInfo.ToJson())
-					.ToJArray()
-					.SaveAsTextAsync(Path.Combine(UtilityService.GetAppSetting("Path:Status", "status"), "sessions.json"), cancellationToken).ConfigureAwait(false);
+				if (this.IsUpdater)
+					await this.Statistics.SaveAsync(cancellationToken).ConfigureAwait(false);
 			}
 
 			// unknown
@@ -2802,11 +2864,11 @@ namespace net.vieapps.Services.Users
 				await this.WriteLogsAsync(correlationID, $"Got an inter-communicate message => {message.ToJson().ToString(this.JsonFormat)})", null, this.ServiceName, "Communicates", LogLevel.Warning).ConfigureAwait(false);
 		}
 
-		void SendSyncSession(SessionInfo sessionInfo, string excludedNodeID = null)
+		void SendSyncSession(SessionInfo sessionInfo)
 			=> new CommunicateMessage(this.ServiceName)
 			{
 				Type = "Session#Sync",
-				ExcludedNodeID = excludedNodeID ?? this.NodeID,
+				ExcludedNodeID = this.NodeID,
 				Data = new JObject
 				{
 					["ID"] = sessionInfo.Session?.ID,
@@ -2817,36 +2879,31 @@ namespace net.vieapps.Services.Users
 				}
 			}.Send();
 
-		void SendSyncSessions(DateTime? checkpoint = null, string excludedNodeID = null, Func<Task> onNext = null)
+		void SendSyncSessions(DateTime? checkpoint = null, Func<Task> onNext = null)
 		{
 			checkpoint ??= DateTime.Now.AddMinutes(-15);
-			this.Sessions.Select(kvp => kvp.Value).Where(sessionInfo => sessionInfo.LastAccess > checkpoint.Value).ToList().ForEach(sessionInfo => this.SendSyncSession(sessionInfo, excludedNodeID));
+			this.Sessions.Select(kvp => kvp.Value).Where(sessionInfo => sessionInfo.LastAccess > checkpoint.Value).ToList().ForEach(sessionInfo => this.SendSyncSession(sessionInfo));
 			if (onNext != null)
 				onNext().Run();
 		}
 
-		void SendSyncSessionsRequest(string excludedNodeID = null)
-			=> Task.Delay(UtilityService.GetRandomNumber(1234, 5678), this.CancellationToken).ContinueWith(_ => new CommunicateMessage(this.ServiceName)
+		async Task SendSyncSessionsRequestAsync(string excludedNodeID = null)
+		{
+			await Task.Delay(UtilityService.GetRandomNumber(1234, 5678), this.CancellationToken).ConfigureAwait(false);
+			new CommunicateMessage(this.ServiceName)
 			{
 				Type = "Session#SyncRequest",
 				ExcludedNodeID = excludedNodeID ?? this.NodeID
-			}.Send(), this.CancellationToken, TaskContinuationOptions.OnlyOnRanToCompletion, TaskScheduler.Default).Run();
-
-		async Task SendSyncStatisticsAsync(bool all = false)
-		{
-			await Task.Delay(UtilityService.GetRandomNumber(1234, 2345), this.CancellationToken).ConfigureAwait(false);
-			new CommunicateMessage(this.ServiceName)
-			{
-				Type = $"Session#Sync{(all ? "All" : "")}Statistics"
 			}.Send();
-			if (!all)
-				await this.SaveStatisticsAsync(this.CancellationToken, UtilityService.GetRandomNumber(1234, 2345)).ConfigureAwait(false);
 		}
+
+		void SendSyncSessionsRequest(string excludedNodeID = null)
+			=> this.SendSyncSessionsRequestAsync(excludedNodeID).Run();
 
 		void SendSyncStatistics(int counters, string minuteID, string hourID, string dayID = null, string monthID = null, string yearID = null)
 			=> new CommunicateMessage(this.ServiceName)
 			{
-				Type = "Session#UpdateStatistics",
+				Type = "Statistics#Update",
 				ExcludedNodeID = this.NodeID,
 				Data = new JObject
 				{
@@ -2862,38 +2919,68 @@ namespace net.vieapps.Services.Users
 		void SendSyncAllStatistics()
 			=> this.Statistics.SendStatistics(this.SendSyncStatistics);
 
+		async Task SendSyncStatisticsRequestAsync(bool all = false)
+		{
+			await Task.Delay(UtilityService.GetRandomNumber(1234, 2345), this.CancellationToken).ConfigureAwait(false);
+			new CommunicateMessage(this.ServiceName)
+			{
+				Type = $"Statistics#Sync{(all ? "All" : "")}"
+			}.Send();
+
+			if (!all)
+				await this.SaveStatisticsAsync(this.CancellationToken, UtilityService.GetRandomNumber(1234, 2345)).ConfigureAwait(false);
+
+			else if (this.IsUpdater)
+			{
+				await Task.Delay(UtilityService.GetRandomNumber(1234, 2345), this.CancellationToken).ConfigureAwait(false);
+				this.SendStatistics();
+			}
+		}
+
+		void SendSyncStatisticsRequest(bool all = false)
+			=> this.SendSyncStatisticsRequestAsync(all).Run();
+
 		async Task SaveStatisticsAsync(CancellationToken cancellationToken, int waitingTimes = 0)
 		{
 			if (waitingTimes > 0)
 				await Task.Delay(waitingTimes, cancellationToken).ConfigureAwait(false);
-			await this.Statistics.ToJson().SaveAsTextAsync(this.StatisticsFilePath, cancellationToken).ConfigureAwait(false);
+			await this.Statistics.SaveAsync(this.StatisticsFilePath, cancellationToken).ConfigureAwait(false);
 		}
 		#endregion
 
 		#region Timers for working with background workers & schedulers
 		void RegisterTimers()
 		{
-			// clean expired sessions and sync all statistics (13 hours)
-			this.StartTimer(async () =>
-			{
-				var userID = UtilityService.GetAppSetting("Users:SystemAccountID", "VIEAppsNGX-MMXVII-System-Account");
-				var sessions = await Session.FindAsync(Filters<Session>.LessThan("ExpiredAt", DateTime.Now), null, 0, 1, null, this.CancellationToken).ConfigureAwait(false) ?? [];
-				await sessions.ForEachAsync(async session =>
+			// clean expired sessions (12 hours)
+			if (this.IsUpdater)
+				this.StartTimer(async () =>
 				{
-					await Session.DeleteAsync<Session>(session.ID, userID, this.CancellationToken).ConfigureAwait(false);
-					new CommunicateMessage(this.ServiceName)
+					var userID = UtilityService.GetAppSetting("Users:SystemAccountID", "VIEAppsNGX-MMXVII-System-Account");
+					var sessions = await Session.FindAsync(Filters<Session>.LessThan("ExpiredAt", DateTime.Now), null, 0, 1, null, this.CancellationToken).ConfigureAwait(false) ?? [];
+					await sessions.ForEachAsync(async session =>
 					{
-						Type = "Session#Remove",
-						Data = new JObject
+						await Session.DeleteAsync<Session>(session.ID, userID, this.CancellationToken).ConfigureAwait(false);
+						new CommunicateMessage(this.ServiceName)
 						{
-							["ID"] = session.ID
-						}
-					}.Send();
-				}, true, false).ConfigureAwait(false);
-				await this.SendSyncStatisticsAsync(true).ConfigureAwait(false);
-			}, 13 * 60 * 60);
+							Type = "Session#Remove",
+							Data = new JObject
+							{
+								["ID"] = session.ID
+							}
+						}.Send();
+					}, true, false).ConfigureAwait(false);
+					await this.WriteLogsAsync(UtilityService.NewUUID, $"Clean {sessions.Count} expired session(s) successful", null, this.ServiceName, "Task").ConfigureAwait(false);
+				}, 12 * 60 * 60);
 
-			// refresh sessions (10 minutes)
+			// sync all sessions/statistics (6 hours)
+			this.StartTimer(() => Task.WhenAll
+			(
+				this.SendSyncSessionsRequestAsync(),
+				this.SendSyncStatisticsRequestAsync(true),
+				this.WriteLogsAsync(UtilityService.NewUUID, $"Sync all sessions/statistics successful", null, this.ServiceName, "Task")
+			), 6 * 60 * 60);
+
+			// refresh sessions & save statistics (10 minutes)
 			this.StartTimer(async () =>
 			{
 				var userTimepoint = DateTime.Now.AddMinutes(-15);
@@ -2915,31 +3002,32 @@ namespace net.vieapps.Services.Users
 					{
 						var cacheKey = info.SessionID.GetCacheKey<Session>();
 						var session = await Utility.Cache.GetAsync<Session>(cacheKey, this.CancellationToken).ConfigureAwait(false);
-						if (session != null)
-							await Utility.Cache.SetAsync(cacheKey, session, 15, this.CancellationToken).ConfigureAwait(false);
-						else
+						if (session == null)
 							this.Sessions.Remove(info.SessionID);
+						else if (this.IsUpdater)
+							await Utility.Cache.SetAsync(cacheKey, session, 15, this.CancellationToken).ConfigureAwait(false);
 					}
 				}, true, false).ConfigureAwait(false);
 				await this.SaveStatisticsAsync(this.CancellationToken).ConfigureAwait(false);
-				if (this.IsStatisticsUpdater)
-				{
-					await Task.Delay(UtilityService.GetRandomNumber(1234, 5678), this.CancellationToken).ConfigureAwait(false);
-					new UpdateMessage
-					{
-						Type = "Users#Session#Statistics",
-						DeviceID = "*",
-						Data = this.GetOnlineStatistics()
-					}.Send();
-				}
+				if (this.IsUpdater)
+					await this.Statistics.SaveAsync(this.CancellationToken).ConfigureAwait(false);
 			}, 10 * 60);
 
-			// sync sessions (3 minutes)
-			this.StartTimer(() => this.SendSyncSessions(DateTime.Now.AddMinutes(-4), this.NodeID, () => this.SendSyncStatisticsAsync()), 3 * 60);
+			// sync sessions/statistics (5 minutes)
+			this.StartTimer(() =>
+			{
+				this.SendSyncSessions(DateTime.Now.AddMinutes(-5), () => this.SendSyncStatisticsRequestAsync());
+				if (this.IsUpdater && this.UpdaterFrequency < 1)
+					this.SendStatistics();
+			}, 5 * 60);
+
+			// send statistics (frequency)
+			if (this.IsUpdater && this.UpdaterFrequency > 0)
+				this.StartTimer(() => this.SendStatistics(), this.UpdaterFrequency);
 
 			// sync at the first time
 			this.SendSyncSessionsRequest();
-			this.SendSyncStatisticsAsync(true).Run();
+			this.SendSyncStatisticsRequest(true);
 		}
 		#endregion
 
