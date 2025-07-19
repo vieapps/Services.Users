@@ -246,8 +246,12 @@ namespace net.vieapps.Services.Users
 			return this;
 		}
 
-		public int Sum(bool sumOnChildren = true)
-			=> this.Years.Sum(year => year.Sum(sumOnChildren));
+		public ulong Sum(bool sumOnChildren = true)
+		{
+			ulong sum = 0;
+			this.Years.ForEach(year => sum += year.Sum(sumOnChildren).As<ulong>());
+			return sum;
+		}
 
 		public JObject ToJson(bool asSummary = false, bool addDayDetails = true, bool addHourDetails = true, Func<IEnumerable<Year>, JObject, JObject> transformer = null)
 		{

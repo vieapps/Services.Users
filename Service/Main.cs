@@ -423,6 +423,24 @@ namespace net.vieapps.Services.Users
 						{
 							Type = "Session#Dump"
 						}.Send();
+
+					if (requestInfo.ContainsKey("x-pause-harmful-request") && !string.IsNullOrWhiteSpace(this.BlackIPsServiceName))
+						new CommunicateMessage(this.BlackIPsServiceName)
+						{
+							Type = "HarmfulIPs#Pause"
+						}.Send();
+
+					if (requestInfo.ContainsKey("x-resume-harmful-request") && !string.IsNullOrWhiteSpace(this.BlackIPsServiceName))
+						new CommunicateMessage(this.BlackIPsServiceName)
+						{
+							Type = "HarmfulIPs#Resume"
+						}.Send();
+
+					if (requestInfo.ContainsKey("x-reset-blackips") && !string.IsNullOrWhiteSpace(this.BlackIPsServiceName))
+						new CommunicateMessage(this.BlackIPsServiceName)
+						{
+							Type = "BlackIPs#Reset"
+						}.Send();
 				}
 
 				var sessions = this.Sessions.Select(kvp => kvp.Value);
