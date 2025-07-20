@@ -507,7 +507,8 @@ namespace net.vieapps.Services.Users
 						["HarmfulIPs"] = ipAddressses.Get<JArray>("HarmfulIPs")
 					};
 				});
-				return onlyStatistics
+
+				statistics = onlyStatistics
 					? statistics
 					: new JObject
 					{
@@ -537,6 +538,28 @@ namespace net.vieapps.Services.Users
 							})
 						}).ToJArray()
 					};
+
+				if (requestInfo.ContainsKey("x-latest") && isSystemAdministrator && !onlyStatistics)
+				{
+					var latest = new List<JObject>();
+					var latestSessions = await Session.FindAsync<Session>(null, Sorts<Session>.Descending("RenewedAt"), requestInfo.TryGetParameter("x-latest", out var xlatest) && Int32.TryParse(xlatest, out var pageSize) && pageSize > 0 ? pageSize : 100, 1, null, false, null, 0, cancellationToken).ConfigureAwait(false);
+					await latestSessions.ForEachAsync(async session =>
+					{
+						var profile = await Profile.GetAsync<Profile>(session.UserID, cancellationToken).ConfigureAwait(false);
+						latest.Add(new JObject
+						{
+							["ID"] = session.ID,
+							["IP"] = session.IP,
+							["User"] = $"{profile?.Name} - {profile?.Email}",
+							["App"] = $"{session.AppInfo} - {session.OSInfo}",
+							["Time"] = session.RenewedAt.ToIsoString(),
+							["Elapsed"] = session.RenewedAt.GetElapsedTimes()
+						});
+					}, true, false).ConfigureAwait(false);
+					statistics["Latest"] = latest.ToJArray();
+				}
+
+				return statistics;
 			}
 			throw new MethodNotAllowedException(requestInfo.Verb);
 		}

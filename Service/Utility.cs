@@ -74,6 +74,6 @@ namespace net.vieapps.Services.Users
 
 	//  --------------------------------------------------------------------------------------------
 
-	[Repository]
+	[Repository(ServiceName = "Users")]
 	public abstract class Repository<T> : RepositoryBase<T> where T : class { }
 }
