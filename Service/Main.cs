@@ -96,6 +96,7 @@ namespace net.vieapps.Services.Users
 		{
 			var stopwatch = Stopwatch.StartNew();
 			await this.WriteLogsAsync(requestInfo, $"Begin request ({requestInfo.Verb} {requestInfo.GetURI()})").ConfigureAwait(false);
+
 			using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, this.CancellationToken);
 			try
 			{
@@ -172,10 +173,12 @@ namespace net.vieapps.Services.Users
 					default:
 						throw new InvalidRequestException($"The request is invalid ({requestInfo.Verb} {requestInfo.GetURI()})");
 				}
+
 				stopwatch.Stop();
 				await this.WriteLogsAsync(requestInfo, $"Success response - Execution times: {stopwatch.GetElapsedTimes()}").ConfigureAwait(false);
 				if (this.IsDebugResultsEnabled)
 					await this.WriteLogsAsync(requestInfo, $"- Request: {requestInfo.ToString(this.JsonFormat)}" + "\r\n" + $"- Response: {json?.ToString(this.JsonFormat)}").ConfigureAwait(false);
+
 				return json;
 			}
 			catch (Exception ex)
@@ -364,7 +367,20 @@ namespace net.vieapps.Services.Users
 
 				if (isSystemAdministrator)
 				{
-					if (requestInfo.ContainsKey("x-clear"))
+					if ((requestInfo.ContainsKey("x-blackip") || requestInfo.ContainsKey("x-blackips")) && !string.IsNullOrWhiteSpace(this.BlackIPsServiceName))
+						new CommunicateMessage(this.BlackIPsServiceName)
+						{
+							Type = $"BlackIPs#{(requestInfo.ContainsKey("x-clear") || requestInfo.ContainsKey("x-reset") ? "Reset" : requestInfo.ContainsKey("x-remove") ? "Remove" : "Update")}",
+							Data = requestInfo.ContainsKey("x-clear") || requestInfo.ContainsKey("x-reset") ? [] : (requestInfo.GetParameter("ips") ?? requestInfo.GetParameter("ip") ?? "").ToList().ToJArray()
+						}.Send();
+
+					else if ((requestInfo.ContainsKey("x-harmfulip") || requestInfo.ContainsKey("x-harmfulips")) && !string.IsNullOrWhiteSpace(this.BlackIPsServiceName))
+						new CommunicateMessage(this.BlackIPsServiceName)
+						{
+							Type = $"HarmfulIPs#{(requestInfo.ContainsKey("x-pause") ? "Pause" : requestInfo.ContainsKey("x-resume") ? "Resume" : "Sync")}"
+						}.Send();
+
+					else if (requestInfo.ContainsKey("x-clear"))
 					{
 						new CommunicateMessage(this.ServiceName)
 						{
@@ -566,7 +582,7 @@ namespace net.vieapps.Services.Users
 
 		JObject GetStatistics(IEnumerable<SessionInfo> sessions, Func<IEnumerable<SessionInfo>, JObject, JObject> transformer = null)
 		{
-			sessions ??= [.. this.Sessions.Select(kvp => kvp.Value)];
+			sessions ??= this.Sessions.Select(kvp => kvp.Value);
 			var total = sessions.Count();
 			var user = sessions.Count(sessionInfo => !string.IsNullOrWhiteSpace(sessionInfo.Session.UserID));
 			var crawler = sessions.Count(sessionInfo => string.IsNullOrWhiteSpace(sessionInfo.Session.UserID) && "Crawler".IsEquals(sessionInfo.User?.Name));
@@ -715,12 +731,8 @@ namespace net.vieapps.Services.Users
 					await Session.UpdateAsync(session.Fill(requestBody), true, cancellationToken).ConfigureAwait(false);
 				}
 
-				// make sure the cache has updated && remove duplicated sessions
-				await Task.WhenAll
-				(
-					Utility.Cache.SetAsync(session, cancellationToken),
-					Session.DeleteManyAsync(Filters<Session>.And(Filters<Session>.Equals("DeviceID", session.DeviceID), Filters<Session>.NotEquals("ID", session.ID)), null, cancellationToken)
-				).ConfigureAwait(false);
+				// remove duplicated sessions
+				await Session.DeleteManyAsync(Filters<Session>.And(Filters<Session>.Equals("DeviceID", session.DeviceID), Filters<Session>.NotEquals("ID", session.ID)), null, cancellationToken).ConfigureAwait(false);
 
 				// update account information
 				var account = await Account.GetByIDAsync(session.UserID, cancellationToken).ConfigureAwait(false);
@@ -2735,12 +2747,11 @@ namespace net.vieapps.Services.Users
 			if (message.Type.IsEquals("Session#State"))
 				try
 				{
+					Account account = null;
+					var ipAddress = data.Get<string>("IP");
 					var sessionID = data.Get<string>("SessionID") ?? data.Get<string>("ID");
 					var cacheKey = sessionID?.GetCacheKey<Session>();
 					var existed = false;
-
-					var ipAddress = data.Get<string>("IP");
-					Account account = null;
 
 					Session session;
 					if (this.Sessions.TryGetValue(sessionID, out var sessionInfo))
