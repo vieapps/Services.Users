@@ -389,7 +389,8 @@ namespace net.vieapps.Services.Users
 						}.Send();
 						var ids = this.Sessions.Where(kvp => string.IsNullOrWhiteSpace(kvp.Value.Session.UserID)).Select(kvp => kvp.Key).ToList();
 						ids.ForEach(id => this.Sessions.Remove(id));
-						await Utility.Cache.RemoveAsync(ids.Select(id => id.GetCacheKey<Session>()), cancellationToken).ConfigureAwait(false);
+						if (this.IsUpdater)
+							await Utility.Cache.RemoveAsync(ids.Select(id => id.GetCacheKey<Session>()), cancellationToken).ConfigureAwait(false);
 					}
 
 					if (requestInfo.ContainsKey("x-reload"))
@@ -600,6 +601,7 @@ namespace net.vieapps.Services.Users
 		{
 			var year = this.Statistics.Years.FirstOrDefault(o => o.Name == $"{DateTime.Now:yyyy}");
 			var month = year?.Months.FirstOrDefault(o => o.Name == $"{DateTime.Now:MM}");
+			var day = month?.Days.FirstOrDefault(o => o.Name == $"{DateTime.Now:dd}");
 			var statistics = this.GetStatistics(null, (_, sessions) => new JObject
 			{
 				["Sessions"] = sessions,
@@ -607,7 +609,8 @@ namespace net.vieapps.Services.Users
 				{
 					["Total"] = this.Statistics.Sum(),
 					["Year"] = year != null ? year.Counters : 0,
-					["Month"] = month != null ? month.Counters : 0
+					["Month"] = month != null ? month.Counters : 0,
+					["Day"] = day != null ? day.Counters : 0
 				}
 			});
 			new UpdateMessage
@@ -2348,9 +2351,7 @@ namespace net.vieapps.Services.Users
 		{
 			// get information
 			var id = requestInfo.GetObjectIdentity() ?? requestInfo.Session.User.ID;
-			var profile = await Profile.GetAsync<Profile>(id, cancellationToken).ConfigureAwait(false);
-			if (profile == null)
-				throw new InformationNotFoundException();
+			var profile = await Profile.GetAsync<Profile>(id, cancellationToken).ConfigureAwait(false) ?? throw new InformationNotFoundException();
 
 			// prepare
 			var objectName = requestInfo.GetQueryParameter("related-object");
@@ -2370,13 +2371,13 @@ namespace net.vieapps.Services.Users
 
 			// response
 			var response = profile.GetProfileJson(await this.GetProfileRelatedJsonAsync(requestInfo, cancellationToken).ConfigureAwait(false) as JObject);
-			if (requestInfo.GetHeaderParameter("x-app") != null)
-				await this.SendUpdateMessageAsync(new UpdateMessage
+			if (requestInfo.ContainsKey("x-app"))
+				new UpdateMessage
 				{
 					Type = $"{this.ServiceName}#Profile",
 					Data = response,
 					DeviceID = requestInfo.Session.DeviceID
-				}, cancellationToken).ConfigureAwait(false);
+				}.Send();
 			return response;
 		}
 		#endregion
@@ -2852,7 +2853,8 @@ namespace net.vieapps.Services.Users
 			{
 				var ids = this.Sessions.Where(kvp => string.IsNullOrWhiteSpace(kvp.Value.Session.UserID)).Select(kvp => kvp.Key).ToList();
 				ids.ForEach(id => this.Sessions.Remove(id));
-				await Utility.Cache.RemoveAsync(ids.Select(id => id.GetCacheKey<Session>()), cancellationToken).ConfigureAwait(false);
+				if (this.IsUpdater)
+					await Utility.Cache.RemoveAsync(ids.Select(id => id.GetCacheKey<Session>()), cancellationToken).ConfigureAwait(false);
 			}
 
 			else if (message.Type.IsEquals("Session#UpdateLocation"))
@@ -3021,7 +3023,7 @@ namespace net.vieapps.Services.Users
 							}
 						}.Send();
 					}, true, false).ConfigureAwait(false);
-					await this.WriteLogsAsync(UtilityService.NewUUID, $"Clean {sessions.Count} expired session(s) successful", null, this.ServiceName, "Task").ConfigureAwait(false);
+					await this.WriteLogsAsync(UtilityService.NewUUID, $"Clean {sessions.Count} expired session(s) successful [{this.NodeID}]", null, this.ServiceName, "Task").ConfigureAwait(false);
 				}, 12 * 60 * 60);
 
 			// sync all sessions/statistics (6 hours)
@@ -3029,7 +3031,7 @@ namespace net.vieapps.Services.Users
 			(
 				this.SendSyncSessionsRequestAsync(),
 				this.SendSyncStatisticsRequestAsync(true),
-				this.WriteLogsAsync(UtilityService.NewUUID, $"Sync all sessions/statistics successful", null, this.ServiceName, "Task")
+				this.WriteLogsAsync(UtilityService.NewUUID, $"Sync all sessions/statistics successful [{this.NodeID}]", null, this.ServiceName, "Task")
 			), 6 * 60 * 60);
 
 			// refresh sessions & save statistics (10 minutes)

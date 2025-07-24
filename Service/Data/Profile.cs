@@ -39,7 +39,7 @@ namespace net.vieapps.Services.Users
 		public string Address { get; set; } = "";
 
 		[Property(MaxLength = 50), Searchable, Sortable(IndexName = "Address")]
-		public string County { get; set; } = "";
+		public string Unit { get; set; } = "";
 
 		[Property(MaxLength = 50), Searchable, Sortable(IndexName = "Address")]
 		public string Province { get; set; } = "";
