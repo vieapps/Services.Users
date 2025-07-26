@@ -22,7 +22,7 @@
 
 	<ItemGroup>
 		<PackageReference Include="VIEApps.Components.Utility.Excel" Version="10.9.2507.1" />
-		<PackageReference Include="VIEApps.Services.Base" Version="10.9.2507.1" />
+		<PackageReference Include="VIEApps.Services.Base" Version="10.9.2507.2" />
 	</ItemGroup>
 
 </Project>

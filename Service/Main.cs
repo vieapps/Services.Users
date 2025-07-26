@@ -2739,22 +2739,28 @@ namespace net.vieapps.Services.Users
 		protected override async Task ProcessInterCommunicateMessageAsync(CommunicateMessage message, CancellationToken cancellationToken = default)
 		{
 			// prepare
-			var correlationID = UtilityService.NewUUID;
 			var data = message.Data?.ToExpandoObject();
 			if (data == null)
 				return;
 
-			// state of a session
-			if (message.Type.IsEquals("Session#State"))
+			var correlationID = data.Get<string>("CorrelationID") ?? data.Get<string>("X-Correlation-ID") ?? UtilityService.NewUUID;
+
+			if (message.Type.IsEquals("Session#State") || message.Type.IsEquals("Statistics#Track"))
 				try
 				{
-					Account account = null;
-					var ipAddress = data.Get<string>("IP");
+					if (message.Type.IsEquals("Statistics#Track"))
+					{
+						this.Statistics.Update();
+						return;
+					}
+
+					var existed = false;
 					var sessionID = data.Get<string>("SessionID") ?? data.Get<string>("ID");
 					var cacheKey = sessionID?.GetCacheKey<Session>();
-					var existed = false;
 
+					Account account = null;
 					Session session;
+
 					if (this.Sessions.TryGetValue(sessionID, out var sessionInfo))
 					{
 						session = sessionInfo.Session;
@@ -2784,6 +2790,7 @@ namespace net.vieapps.Services.Users
 								sessionInfo.User.LastAccess = DateTime.Now;
 								account = this.IsUpdater ? await Account.GetAsync<Account>(sessionInfo.Session.UserID, cancellationToken).ConfigureAwait(false) : null;
 							}
+							var ipAddress = data.Get<string>("IP");
 							if (!string.IsNullOrWhiteSpace(ipAddress) && !ipAddress.Equals(session.IP))
 							{
 								session.IP = ipAddress;
