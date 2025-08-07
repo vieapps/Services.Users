@@ -2705,8 +2705,10 @@ namespace net.vieapps.Services.Users
 				await Session.UpdateAsync(session, false, cancellationToken).ConfigureAwait(false);
 			}
 
+			var sendUpdateMessage = false;
 			if (updateTimes && token.LastAccess < DateTime.Now.AddMinutes(-5))
 			{
+				sendUpdateMessage = true;
 				token.LastAccess = DateTime.Now;
 				await Token.UpdateAsync(token, false, cancellationToken).ConfigureAwait(false);
 			}
@@ -2724,12 +2726,24 @@ namespace net.vieapps.Services.Users
 				payload["tid"] = token.ID;
 			});
 
+			if (sendUpdateMessage)
+				new UpdateMessage
+				{
+					Type = "Users#Token#Update",
+					DeviceID = "*",
+					Data = token.ToJson(json => json["Token"] = new JObject
+					{
+						["Bearer"] = $"Bearer {authenticateToken}",
+						["Basic"] = $"Basic {$"{token.ID}:{$"{token.UserID}:{token.SessionID}".Encrypt(this.EncryptionKey, true)}".ToBase64()}"
+					})
+				}.Send();
+
 			return asJSON
 				? token.ToJson(json => json["Token"] = new JObject
-				{
-					["Bearer"] = $"Bearer {authenticateToken}",
-					["Basic"] = $"Basic {$"{token.ID}:{$"{token.UserID}:{UtilityService.NewUUID}:{token.SessionID}".Encrypt(this.EncryptionKey, true)}".ToBase64()}"
-				})
+					{
+						["Bearer"] = $"Bearer {authenticateToken}",
+						["Basic"] = $"Basic {$"{token.ID}:{$"{token.UserID}:{token.SessionID}".Encrypt(this.EncryptionKey, true)}".ToBase64()}"
+					})
 				: new JObject
 				{
 					["Token"] = authenticateToken,
@@ -2738,7 +2752,7 @@ namespace net.vieapps.Services.Users
 						obj.User = user;
 						obj.IP = requestInfo.Session.IP;
 						obj.AppName = token.Title;
-						obj.AppPlatform = requestInfo.Session.AppPlatform;
+						obj.AppPlatform = $"APIs based ({requestInfo.Session.AppPlatform})";
 						obj.AppAgent = requestInfo.Session.AppAgent;
 						obj.AppOrigin = requestInfo.Session.AppOrigin;
 						obj.AppMode = "APIs";
