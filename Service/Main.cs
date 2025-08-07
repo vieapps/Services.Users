@@ -7,8 +7,8 @@ using System.Dynamic;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -126,6 +126,10 @@ namespace net.vieapps.Services.Users
 
 					case "activate":
 						json = await this.ProcessActivationAsync(requestInfo, cts.Token).ConfigureAwait(false);
+						break;
+
+					case "token":
+						json = await this.ProcessTokenAsync(requestInfo, cts.Token).ConfigureAwait(false);
 						break;
 
 					case "privileges":
@@ -895,6 +899,36 @@ namespace net.vieapps.Services.Users
 
 			// response
 			return new JObject();
+		}
+		#endregion
+
+		#region Get the sessions of an account
+		async Task<JToken> GetAccountSessionsAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		{
+			var userID = requestInfo.GetObjectIdentity() ?? requestInfo.Session.User.ID;
+			var account = !userID.Equals("") && !requestInfo.Session.User.IsSystemAccount
+				? await Account.GetByIDAsync(userID, cancellationToken).ConfigureAwait(false)
+				: null;
+
+			if (account != null && account.Sessions == null)
+				await account.GetSessionsAsync(cancellationToken).ConfigureAwait(false);
+
+			return new JObject
+			{
+				{ "ID", userID },
+				{
+					"Sessions",
+					account != null
+						? account.Sessions.ToJArray(session => new JObject
+						{
+							{ "SessionID", session.ID },
+							{ "DeviceID", session.DeviceID },
+							{ "AppInfo", session.AppInfo },
+							{ "IsOnline", session.Online }
+						})
+						: new JArray()
+				}
+			};
 		}
 		#endregion
 
@@ -1979,36 +2013,6 @@ namespace net.vieapps.Services.Users
 		}
 		#endregion
 
-		#region Get the sessions of an account
-		async Task<JToken> GetAccountSessionsAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
-		{
-			var userID = requestInfo.GetObjectIdentity() ?? requestInfo.Session.User.ID;
-			var account = !userID.Equals("") && !requestInfo.Session.User.IsSystemAccount
-				? await Account.GetByIDAsync(userID, cancellationToken).ConfigureAwait(false)
-				: null;
-
-			if (account != null && account.Sessions == null)
-				await account.GetSessionsAsync(cancellationToken).ConfigureAwait(false);
-
-			return new JObject
-			{
-				{ "ID", userID },
-				{
-					"Sessions",
-					account != null
-						? account.Sessions.ToJArray(session => new JObject
-						{
-							{ "SessionID", session.ID },
-							{ "DeviceID", session.DeviceID },
-							{ "AppInfo", session.AppInfo },
-							{ "IsOnline", session.Online }
-						})
-						: new JArray()
-				}
-			};
-		}
-		#endregion
-
 		Task<JToken> ProcessProfileAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			switch (requestInfo.Verb)
@@ -2646,6 +2650,240 @@ namespace net.vieapps.Services.Users
 			if (this.IsDebugResultsEnabled)
 				await this.WriteLogsAsync(requestInfo, $"Active new password sucessful [ID: {account.ID}]").ConfigureAwait(false);
 			return account.GetAccountJson();
+		}
+		#endregion
+
+		Task<JToken> ProcessTokenAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		{
+			switch (requestInfo.Verb)
+			{
+				case "GET":
+					return "search".IsEquals(requestInfo.GetObjectIdentity())
+						? this.SearchTokensAsync(requestInfo, cancellationToken)
+						: this.GetTokenAsync(requestInfo, cancellationToken);
+
+				case "POST":
+				case "PUT":
+					return this.CreateTokenAsync(requestInfo, cancellationToken);
+
+				case "DELETE":
+					return this.DeleteTokenAsync(requestInfo, cancellationToken);
+
+				default:
+					return Task.FromException<JToken>(new MethodNotAllowedException(requestInfo.Verb));
+			}
+		}
+
+		#region Working with tokens
+		async Task<JToken> PrepareTokenAsync(RequestInfo requestInfo, Token token, bool updateTimes, bool asJSON, CancellationToken cancellationToken)
+		{
+			Account account = null;
+			User user = null;
+
+			var session = await Session.GetAsync<Session>(token.SessionID, cancellationToken).ConfigureAwait(false);
+			if (session == null)
+			{
+				account = await Account.GetAsync<Account>(token.UserID, cancellationToken).ConfigureAwait(false) ?? throw new TokenNotFoundException("Token is not found");
+				user = new User(account.ID, token.SessionID, account.Roles, account.AccessPrivileges ?? [], "APIs");
+
+				session = new Session(requestInfo.Session)
+				{
+					ID = token.SessionID,
+					UserID = token.UserID,
+					DeviceID = $"{UtilityService.NewUUID}@vieapps-ngx-apis",
+					ExpiredAt = token.Expires,
+					AccessToken = user.GetAccessToken(this.ECCKey, payload => payload["exp"] = token.Expires.ToUnixTimestamp()),
+					Verified = true,
+					Online = true
+				};
+				await Session.CreateAsync(session, cancellationToken).ConfigureAwait(false);
+			}
+			else if (updateTimes && session.RenewedAt < DateTime.Now.AddMinutes(-15))
+			{
+				session.IssuedAt = session.RenewedAt = DateTime.Now;
+				session.Online = true;
+				await Session.UpdateAsync(session, false, cancellationToken).ConfigureAwait(false);
+			}
+
+			if (updateTimes && token.LastAccess < DateTime.Now.AddMinutes(-5))
+			{
+				token.LastAccess = DateTime.Now;
+				await Token.UpdateAsync(token, false, cancellationToken).ConfigureAwait(false);
+			}
+
+			account ??= await Account.GetAsync<Account>(token.UserID, cancellationToken).ConfigureAwait(false);
+			user ??= new User(account.ID, token.SessionID, account.Roles, account.AccessPrivileges ?? [], "APIs");
+
+			var authenticateToken = user.GetAuthenticateToken(this.EncryptionKey, this.JWTKey, payload =>
+			{
+				payload["exp"] = session.ExpiredAt.ToUnixTimestamp();
+				payload["2fa"] = $"{session.Verified}|{UtilityService.NewUUID}".Encrypt(this.EncryptionKey, true);
+				payload["dev"] = (session.DeveloperID ?? "").Encrypt(this.EncryptionKey, true);
+				payload["app"] = (session.AppID ?? "").Encrypt(this.EncryptionKey, true);
+				payload["did"] = session.DeviceID;
+				payload["tid"] = token.ID;
+			});
+
+			return asJSON
+				? token.ToJson(json => json["Token"] = new JObject
+				{
+					["Bearer"] = $"Bearer {authenticateToken}",
+					["Basic"] = $"Basic {$"{token.ID}:{$"{token.UserID}:{UtilityService.NewUUID}:{token.SessionID}".Encrypt(this.EncryptionKey, true)}".ToBase64()}"
+				})
+				: new JObject
+				{
+					["Token"] = authenticateToken,
+					["Session"] = session.ToSession(account, obj =>
+					{
+						obj.User = user;
+						obj.IP = requestInfo.Session.IP;
+						obj.AppName = token.Title;
+						obj.AppPlatform = requestInfo.Session.AppPlatform;
+						obj.AppAgent = requestInfo.Session.AppAgent;
+						obj.AppOrigin = requestInfo.Session.AppOrigin;
+						obj.AppMode = "APIs";
+					}).ToJson()
+				};
+		}
+
+		async Task<JToken> SearchTokensAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		{
+			// check permissions
+			if (!await this.IsSystemAdministratorAsync(requestInfo.Session.User, requestInfo.CorrelationID, cancellationToken).ConfigureAwait(false))
+				throw new AccessDeniedException();
+
+			// prepare
+			var request = requestInfo.GetRequestExpando();
+
+			var query = request.Get<string>("FilterBy.Query");
+			var filter = request.Get<ExpandoObject>("FilterBy")?.ToFilterBy<Token>();
+			var sort = request.Get<ExpandoObject>("SortBy")?.ToSortBy<Token>();
+			if (sort == null && string.IsNullOrWhiteSpace(query))
+				sort = Sorts<Token>.Ascending("Title");
+
+			// prepare pagination
+			var (totalRecords, totalPages, pageSize, pageNumber) = request.Get<ExpandoObject>("Pagination")?.GetPagination() ?? (-1, 0, 20, 1);
+			totalRecords = totalRecords > -1
+				? totalRecords
+				: string.IsNullOrWhiteSpace(query)
+					? await Token.CountAsync(filter, null, cancellationToken).ConfigureAwait(false)
+					: await Token.CountAsync(query, filter, cancellationToken).ConfigureAwait(false);
+
+			totalPages = (totalRecords, pageSize).GetTotalPages();
+			if (totalPages > 0 && pageNumber > totalPages)
+				pageNumber = totalPages;
+
+			// search
+			var tokens = totalRecords > 0
+				? string.IsNullOrWhiteSpace(query)
+					? await Token.FindAsync(filter, sort, pageSize, pageNumber, null, cancellationToken).ConfigureAwait(false)
+					: await Token.SearchAsync(query, filter, null, pageSize, pageNumber, cancellationToken).ConfigureAwait(false)
+				: [];
+
+			// build result
+			var objects = new JArray();
+			await tokens.ForEachAsync(async token => objects.Add(await this.PrepareTokenAsync(requestInfo, token, false, true, cancellationToken).ConfigureAwait(false)), true, false).ConfigureAwait(false);
+
+			return new JObject
+			{
+				{ "FilterBy", (filter ?? new FilterBys<Token>()).ToClientJson(query) },
+				{ "SortBy", sort?.ToClientJson() },
+				{ "Pagination", (totalRecords, totalPages, pageSize, pageNumber).GetPagination() },
+				{ "Objects", objects }
+			};
+		}
+
+		async Task<JToken> GetTokenAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		{
+			string userID = null, sessionID = null;
+			var identity = requestInfo.GetHeaderParameter("x-authorization-token");
+			if (!requestInfo.TryGetHeaderParameter("x-authorization-signature", out var signature) || !signature.Equals(identity?.GetHMACSHA256(this.ValidationKey)))
+				throw new InvalidTokenException("Token is invalid");
+			
+			try
+			{
+				if ("Basic".IsEquals(requestInfo.GetHeaderParameter("x-authorization-mode")))
+				{
+					var data = identity.FromBase64().ToList(":");
+					identity = data.First();
+					data = data.Last().Decrypt(this.EncryptionKey, true).ToList(":");
+					userID = data.First();
+					sessionID = data.Last();
+				}
+				else
+					identity.ParseAuthenticateToken(this.EncryptionKey, this.JWTKey, 123456789, (payload, user) =>
+					{
+						identity = payload.Get<string>("tid");
+						userID = user.ID;
+						sessionID = user.SessionID;
+					});
+			}
+			catch (Exception ex)
+			{
+				throw new InvalidTokenException("Token is invalid", ex);
+			}
+
+			var token = await Token.GetAsync<Token>(identity, cancellationToken).ConfigureAwait(false) ?? throw new TokenNotFoundException("Token is not found");
+			if (!token.UserID.IsEquals(userID) || !token.SessionID.IsEquals(sessionID))
+				throw new InvalidTokenException("Token is invalid");
+
+			return token.Expires > DateTime.Now
+				? await this.PrepareTokenAsync(requestInfo, token, true, false, cancellationToken).ConfigureAwait(false)
+				: throw new TokenExpiredException("Token is expired");
+		}
+
+		async Task<JToken> CreateTokenAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		{
+			// check permissions
+			if (!await this.IsSystemAdministratorAsync(requestInfo.Session.User, requestInfo.CorrelationID, cancellationToken).ConfigureAwait(false))
+				throw new AccessDeniedException();
+
+			var request = requestInfo.GetBodyExpando();
+			var token = new Token
+			{
+				ID = UtilityService.NewUUID,
+				Title = request.Get<string>("Title"),
+				UserID = request.Get<string>("UserID"),
+				SessionID = UtilityService.NewUUID,
+				Expires = DateTime.TryParse(request.Get<string>("Expires"), out var expires) && expires > DateTime.Now ? expires : DateTime.Now.AddYears(10),
+				CreatedID = requestInfo.Session.User.ID
+			};
+
+			if (await Account.GetAsync<Account>(token.UserID, cancellationToken).ConfigureAwait(false) == null)
+				throw new InformationNotFoundException("User is not found");
+
+			await Token.CreateAsync(token, cancellationToken).ConfigureAwait(false);
+			var response = await this.PrepareTokenAsync(requestInfo, token, false, true, cancellationToken).ConfigureAwait(false);
+			new UpdateMessage
+			{
+				Type = "Users#Token#Create",
+				DeviceID = "*",
+				Data = response
+			}.Send();
+			return response;
+		}
+
+		async Task<JToken> DeleteTokenAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		{
+			// check permissions
+			if (!await this.IsSystemAdministratorAsync(requestInfo.Session.User, requestInfo.CorrelationID, cancellationToken).ConfigureAwait(false))
+				throw new AccessDeniedException();
+
+			var token = await Token.GetAsync<Token>(requestInfo.GetObjectIdentity(), cancellationToken).ConfigureAwait(false) ?? throw new TokenNotFoundException("Token is not found");
+			await Task.WhenAll
+			(
+				Token.DeleteAsync<Token>(token.ID, requestInfo.Session.User.ID, cancellationToken),
+				Session.DeleteAsync<Session>(token.SessionID, requestInfo.Session.User.ID, cancellationToken)
+			).ConfigureAwait(false);
+
+			var response = token.ToJson();
+			new UpdateMessage
+			{
+				Type = "Users#Token#Delete",
+				DeviceID = "*",
+				Data = response
+			}.Send();
+			return response;
 		}
 		#endregion
 

@@ -31,8 +31,9 @@ namespace net.vieapps.Services.Users
 			this.OSInfo = osInfo ?? $"{Extensions.GetOSInfo(session?.AppAgent)} [{session?.AppAgent ?? "N/A"}]";
 		}
 
-		internal Services.Session ToSession(Account account = null)
-			=> new Services.Session
+		internal Services.Session ToSession(Account account = null, Action<Services.Session> onCompleted = null)
+		{
+			var session = new Services.Session
 			{
 				SessionID = this.ID,
 				User = account != null ? new User(account.ID, this.ID, account.Roles, account.AccessPrivileges ?? [], "APIs") : User.GetDefault(this.ID),
@@ -43,8 +44,11 @@ namespace net.vieapps.Services.Users
 				AppID = this.AppID,
 				AppMode = "Client"
 			};
+			onCompleted?.Invoke(session);
+			return session;
+		}
 
-		internal static Services.Session ToSession(System.Dynamic.ExpandoObject data)
+		internal static Services.Session ToSession(ExpandoObject data)
 			=> new Services.Session
 			{
 				SessionID = data.Get<string>("SessionID"),
