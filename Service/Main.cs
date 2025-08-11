@@ -2653,24 +2653,30 @@ namespace net.vieapps.Services.Users
 		}
 		#endregion
 
-		Task<JToken> ProcessTokenAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		async Task<JToken> ProcessTokenAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
+			var isSystemAdministrator = await this.IsSystemAdministratorAsync(requestInfo.Session.User, requestInfo.CorrelationID, cancellationToken).ConfigureAwait(false);
 			switch (requestInfo.Verb)
 			{
 				case "GET":
 					return "search".IsEquals(requestInfo.GetObjectIdentity())
-						? this.SearchTokensAsync(requestInfo, cancellationToken)
-						: this.GetTokenAsync(requestInfo, cancellationToken);
+						? isSystemAdministrator
+							? await this.SearchTokensAsync(requestInfo, cancellationToken).ConfigureAwait(false)
+							: throw new AccessDeniedException()
+						: await this.GetTokenAsync(requestInfo, isSystemAdministrator && requestInfo.ContainsKey("x-as-json"), cancellationToken).ConfigureAwait(false);
 
 				case "POST":
-				case "PUT":
-					return this.CreateTokenAsync(requestInfo, cancellationToken);
+					return isSystemAdministrator
+						? await this.CreateTokenAsync(requestInfo, cancellationToken).ConfigureAwait(false)
+						: throw new AccessDeniedException();
 
 				case "DELETE":
-					return this.DeleteTokenAsync(requestInfo, cancellationToken);
+					return isSystemAdministrator
+						? await this.DeleteTokenAsync(requestInfo, cancellationToken).ConfigureAwait(false)
+						: throw new AccessDeniedException();
 
 				default:
-					return Task.FromException<JToken>(new MethodNotAllowedException(requestInfo.Verb));
+					throw new MethodNotAllowedException(requestInfo.Verb);
 			}
 		}
 
@@ -2693,15 +2699,14 @@ namespace net.vieapps.Services.Users
 					DeviceID = $"{UtilityService.NewUUID}@vieapps-ngx-apis",
 					ExpiredAt = token.Expires,
 					AccessToken = user.GetAccessToken(this.ECCKey, payload => payload["exp"] = token.Expires.ToUnixTimestamp()),
-					Verified = true,
-					Online = true
+					Verified = true
 				};
 				await Session.CreateAsync(session, cancellationToken).ConfigureAwait(false);
 			}
 			else if (updateTimes && session.RenewedAt < DateTime.Now.AddMinutes(-15))
 			{
-				session.IssuedAt = session.RenewedAt = DateTime.Now;
-				session.Online = true;
+				session.IssuedAt = DateTime.Now;
+				session.RenewedAt = DateTime.Now;
 				await Session.UpdateAsync(session, false, cancellationToken).ConfigureAwait(false);
 			}
 
@@ -2731,11 +2736,7 @@ namespace net.vieapps.Services.Users
 				{
 					Type = "Users#Token#Update",
 					DeviceID = "*",
-					Data = token.ToJson(json => json["Token"] = new JObject
-					{
-						["Bearer"] = $"Bearer {authenticateToken}",
-						["Basic"] = $"Basic {$"{token.ID}:{$"{token.UserID}:{token.SessionID}".Encrypt(this.EncryptionKey, true)}".ToBase64()}"
-					})
+					Data = token.ToJson(json => json["Token"] = null)
 				}.Send();
 
 			return asJSON
@@ -2762,10 +2763,6 @@ namespace net.vieapps.Services.Users
 
 		async Task<JToken> SearchTokensAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
-			// check permissions
-			if (!await this.IsSystemAdministratorAsync(requestInfo.Session.User, requestInfo.CorrelationID, cancellationToken).ConfigureAwait(false))
-				throw new AccessDeniedException();
-
 			// prepare
 			var request = requestInfo.GetRequestExpando();
 
@@ -2807,51 +2804,52 @@ namespace net.vieapps.Services.Users
 			};
 		}
 
-		async Task<JToken> GetTokenAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		async Task<JToken> GetTokenAsync(RequestInfo requestInfo, bool asJSON, CancellationToken cancellationToken)
 		{
 			string userID = null, sessionID = null;
-			var identity = requestInfo.GetHeaderParameter("x-authorization-token");
-			if (!requestInfo.TryGetHeaderParameter("x-authorization-signature", out var signature) || !signature.Equals(identity?.GetHMACSHA256(this.ValidationKey)))
+			var identity = asJSON
+				? requestInfo.GetObjectIdentity()
+				: requestInfo.GetHeaderParameter("x-authorization-token");
+
+			if (!asJSON && (!requestInfo.TryGetHeaderParameter("x-authorization-signature", out var signature) || !signature.Equals(identity?.GetHMACSHA256(this.ValidationKey))))
 				throw new InvalidTokenException("Token is invalid");
-			
-			try
-			{
-				if ("Basic".IsEquals(requestInfo.GetHeaderParameter("x-authorization-mode")))
+
+			if (!asJSON)
+				try
 				{
-					var data = identity.FromBase64().ToList(":");
-					identity = data.First();
-					data = data.Last().Decrypt(this.EncryptionKey, true).ToList(":");
-					userID = data.First();
-					sessionID = data.Last();
-				}
-				else
-					identity.ParseAuthenticateToken(this.EncryptionKey, this.JWTKey, 123456789, (payload, user) =>
+					if ("Basic".IsEquals(requestInfo.GetHeaderParameter("x-authorization-mode")))
 					{
-						identity = payload.Get<string>("tid");
-						userID = user.ID;
-						sessionID = user.SessionID;
-					});
-			}
-			catch (Exception ex)
-			{
-				throw new InvalidTokenException("Token is invalid", ex);
-			}
+						var data = identity.FromBase64().ToList(":");
+						identity = data.First();
+						data = data.Last().Decrypt(this.EncryptionKey, true).ToList(":");
+						userID = data.First();
+						sessionID = data.Last();
+					}
+					else
+						identity.ParseAuthenticateToken(this.EncryptionKey, this.JWTKey, 123456789, (payload, user) =>
+						{
+							identity = payload.Get<string>("tid");
+							userID = user.ID;
+							sessionID = user.SessionID;
+						});
+				}
+				catch (Exception ex)
+				{
+					throw new InvalidTokenException("Token is invalid", ex);
+				}
 
 			var token = await Token.GetAsync<Token>(identity, cancellationToken).ConfigureAwait(false) ?? throw new TokenNotFoundException("Token is not found");
-			if (!token.UserID.IsEquals(userID) || !token.SessionID.IsEquals(sessionID))
+
+			if (!asJSON && (!token.UserID.IsEquals(userID) || !token.SessionID.IsEquals(sessionID)))
 				throw new InvalidTokenException("Token is invalid");
 
 			return token.Expires > DateTime.Now
-				? await this.PrepareTokenAsync(requestInfo, token, true, false, cancellationToken).ConfigureAwait(false)
+				? await this.PrepareTokenAsync(requestInfo, token, true, asJSON, cancellationToken).ConfigureAwait(false)
 				: throw new TokenExpiredException("Token is expired");
 		}
 
 		async Task<JToken> CreateTokenAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
-			// check permissions
-			if (!await this.IsSystemAdministratorAsync(requestInfo.Session.User, requestInfo.CorrelationID, cancellationToken).ConfigureAwait(false))
-				throw new AccessDeniedException();
-
 			var request = requestInfo.GetBodyExpando();
 			var token = new Token
 			{
@@ -2879,10 +2877,6 @@ namespace net.vieapps.Services.Users
 
 		async Task<JToken> DeleteTokenAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
-			// check permissions
-			if (!await this.IsSystemAdministratorAsync(requestInfo.Session.User, requestInfo.CorrelationID, cancellationToken).ConfigureAwait(false))
-				throw new AccessDeniedException();
-
 			var token = await Token.GetAsync<Token>(requestInfo.GetObjectIdentity(), cancellationToken).ConfigureAwait(false) ?? throw new TokenNotFoundException("Token is not found");
 			await Task.WhenAll
 			(
