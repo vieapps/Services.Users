@@ -174,7 +174,7 @@ namespace net.vieapps.Services.Users
 				? Task.FromResult<Account>(null)
 				: Account.GetAsync<Account>(this.AccessMapIdentity, cancellationToken);
 
-		public JObject GetAccountJson(bool addStatus = false, string authenticationKey = null)
+		public JObject GetAccountJson(bool addStatus = false, string authenticationKey = null, Action<JObject> onCompleted = null)
 		{
 			var json = new JObject
 			{
@@ -185,9 +185,10 @@ namespace net.vieapps.Services.Users
 			};
 			if (addStatus)
 			{
-				json["Statistics"] = $"{this.Status}";
+				json["Status"] = $"{this.Status}";
 				json["TwoFactorsAuthentication"] = this.TwoFactorsAuthentication.ToJson(authenticationKey ?? UtilityService.GetAppSetting("Keys:Authentication"));
 			}
+			onCompleted?.Invoke(json);
 			return json;
 		}
 

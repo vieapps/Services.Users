@@ -1378,10 +1378,17 @@ namespace net.vieapps.Services.Users
 				: await Account.GetByAccessIdentityAsync(this.ValidatePhone(identity, out var phone) ? phone : identity, AccountType.BuiltIn, cancellationToken).ConfigureAwait(false)) ?? throw new InformationNotFoundException();
 
 			// response
-			var addStatus = requestInfo.Query.ContainsKey("x-status");
-			if (addStatus)
+			if (requestInfo.ContainsKey("x-status") || account.TwoFactorsAuthentication.Required)
+			{
+				var location = await requestInfo.GetLocationAsync(cancellationToken).ConfigureAwait(false);
 				this.SendStatistics();
-			return account.GetAccountJson(addStatus, this.AuthenticationKey);
+				return account.GetAccountJson(true, this.AuthenticationKey, json =>
+				{
+					json["IP"] = requestInfo.Session.IP;
+					json["Location"] = location;
+				});
+			}
+			return account.GetAccountJson();
 		}
 		#endregion
 
