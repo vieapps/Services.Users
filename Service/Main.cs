@@ -23,6 +23,7 @@ namespace net.vieapps.Services.Users
 {
 	public class ServiceComponent : ServiceBase
 	{
+		public override string ServiceName => "Users";
 
 		#region Properties
 		ConcurrentDictionary<string, SessionInfo> Sessions { get; } = [];
@@ -55,16 +56,42 @@ namespace net.vieapps.Services.Users
 
 		string BlackIPsVerb { get; } = UtilityService.GetAppSetting("Users:BlackIPs:Verb", "FETCH");
 
-		public override string ServiceName => "Users";
-
 		protected override Privileges Privileges => new Privileges();
+
+		IDisposable CacheCommunicator { get; set; }
 		#endregion
 
-		#region Start the service
+		public override Task RegisterServiceAsync(IEnumerable<string> args, Action<IService> onSuccess = null, Action<Exception> onError = null)
+			=> base.RegisterServiceAsync
+			(
+				args,
+				_ =>
+				{
+					this.CacheCommunicator?.Dispose();
+					this.CacheCommunicator = Router.IncomingChannel.AssignProcessL1CacheRequest(Utility.Cache, this);
+					Utility.Cache.AssignSendL1CacheRequest(this);
+					onSuccess?.Invoke(this);
+				},
+				onError
+			);
+
+		public override Task UnregisterServiceAsync(IEnumerable<string> args, bool available = true, Action<IService> onSuccess = null, Action<Exception> onError = null)
+			=> base.UnregisterServiceAsync
+			(
+				args,
+				available,
+				_ =>
+				{
+					this.CacheCommunicator?.Dispose();
+					this.CacheCommunicator = null;
+					onSuccess?.Invoke(this);
+				},
+				onError
+			);
+
 		public override async Task StartAsync(string[] args = null, bool initializeRepository = true, Action<IService> next = null)
 		{
 			// initialize static properties
-			Utility.Cache = new Cache($"VIEApps-Services-{this.ServiceName}", Components.Utility.Logger.GetLoggerFactory());
 			Utility.OAuths = UtilityService.GetAppSetting("Users:OAuths", "").ToList();
 			if ("false".IsEquals(UtilityService.GetAppSetting("Users:AllowRegister", "true")))
 				Utility.AllowRegister = false;
@@ -90,7 +117,6 @@ namespace net.vieapps.Services.Users
 			// last action
 			await base.StartAsync(args, initializeRepository, next).ConfigureAwait(false);
 		}
-		#endregion
 
 		public override async Task<JToken> ProcessRequestAsync(RequestInfo requestInfo, CancellationToken cancellationToken = default)
 		{

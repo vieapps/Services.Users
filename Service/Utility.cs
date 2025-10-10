@@ -11,7 +11,7 @@ namespace net.vieapps.Services.Users
 {
 	public static class Utility
 	{
-		public static Cache Cache { get; internal set; }
+		public static Cache Cache { get; } = Cache.CreateInstance("VIEApps-Services-Users", Logger.GetLoggerFactory(), "true".IsEquals(UtilityService.GetAppSetting("Users:Cache:L1")));
 
 		public static List<string> OAuths { get; internal set; } = [];
 
