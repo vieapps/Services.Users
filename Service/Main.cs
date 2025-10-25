@@ -3050,7 +3050,7 @@ namespace net.vieapps.Services.Users
 						session = string.IsNullOrWhiteSpace(data.Get<string>("UserID"))
 							? await Utility.Cache.GetAsync<Session>(cacheKey, cancellationToken).ConfigureAwait(false)
 							: await Session.GetAsync<Session>(sessionID, cancellationToken).ConfigureAwait(false);
-						session ??= new Session(Session.ToSession(data), data.Get<string>("OSInfo"));
+						session ??= new(Session.ToSession(data), data.Get<string>("OSInfo"));
 					}
 					session.Online = data.Get("Online", false);
 
@@ -3062,7 +3062,7 @@ namespace net.vieapps.Services.Users
 						var serviceInfo = data.Get<ExpandoObject>("Service");
 						if (existed)
 						{
-							sessionInfo.Service = new ServiceInfo(serviceInfo);
+							sessionInfo.Service = new(serviceInfo);
 							sessionInfo.LastAccess = DateTime.Now;
 							if ((DateTime.Now - sessionInfo.User.LastAccess).TotalMinutes > 9)
 							{
@@ -3083,16 +3083,16 @@ namespace net.vieapps.Services.Users
 						else
 						{
 							var profile = await Profile.GetAsync<Profile>(session.UserID, cancellationToken).ConfigureAwait(false);
-							this.Sessions[sessionID] = new SessionInfo
+							this.Sessions[sessionID] = new()
 							{
 								Session = session,
-								User = new UserInfo
+								User = new()
 								{
 									Name = profile?.Name ?? (data.Get("Crawler", false) ? "Crawler" : null),
 									Email = profile?.Email,
 									Location = await session.ToSession().GetLocationAsync(correlationID, cancellationToken).ConfigureAwait(false)
 								},
-								Service = new ServiceInfo(serviceInfo)
+								Service = new(serviceInfo)
 							};
 							account = this.IsUpdater ? await Account.GetAsync<Account>(session.UserID, cancellationToken).ConfigureAwait(false) : null;
 						}

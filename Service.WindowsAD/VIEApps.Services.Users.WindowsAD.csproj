@@ -13,7 +13,7 @@
 		<Copyright>© $([System.DateTime]::Now.Year) VIEApps.net</Copyright>
 		<AssemblyVersion>10.9$(ReleaseVersion)</AssemblyVersion>
 		<FileVersion>10.9$(ReleaseVersion)</FileVersion>
-		<InformationalVersion>10.9.$([System.DateTime]::Now.Year).$([System.DateTime]::Now.Month).$([System.DateTime]::Now.Day)@$(TargetFramework)#$(ReleaseRevision)</InformationalVersion>
+		<InformationalVersion>10.9.$([System.DateTime]::Now.Year).$([System.DateTime]::Now.Month).$([System.DateTime]::Now.Day)#$(ReleaseRevision)</InformationalVersion>
 	</PropertyGroup>
 
 	<ItemGroup>
@@ -22,8 +22,6 @@
 
 	<ItemGroup>
 		<PackageReference Include="System.DirectoryServices.AccountManagement" Version="9.0.9" />
-		<PackageReference Include="System.IO.FileSystem" Version="4.3.0" />
-		<PackageReference Include="System.Threading.Tasks" Version="4.3.0" />
 		<PackageReference Include="VIEApps.Services.Base" Version="10.9.2510.1" />
 	</ItemGroup>
 
