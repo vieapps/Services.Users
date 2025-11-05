@@ -3224,7 +3224,7 @@ namespace net.vieapps.Services.Users
 			checkpoint ??= DateTime.Now.AddMinutes(-15);
 			this.Sessions.Select(kvp => kvp.Value).Where(sessionInfo => sessionInfo.LastAccess > checkpoint.Value).ToList().ForEach(sessionInfo => this.SendSyncSession(sessionInfo));
 			if (onNext != null)
-				onNext().Run();
+				onNext().Execute();
 		}
 
 		async Task SendSyncSessionsRequestAsync(string excludedNodeID = null)
@@ -3238,7 +3238,7 @@ namespace net.vieapps.Services.Users
 		}
 
 		void SendSyncSessionsRequest(string excludedNodeID = null)
-			=> this.SendSyncSessionsRequestAsync(excludedNodeID).Run();
+			=> this.SendSyncSessionsRequestAsync(excludedNodeID).Execute();
 
 		void SendSyncStatistics(int counters, string minuteID, string hourID, string dayID = null, string monthID = null, string yearID = null)
 			=> new CommunicateMessage(this.ServiceName)
@@ -3278,7 +3278,7 @@ namespace net.vieapps.Services.Users
 		}
 
 		void SendSyncStatisticsRequest(bool all = false)
-			=> this.SendSyncStatisticsRequestAsync(all).Run();
+			=> this.SendSyncStatisticsRequestAsync(all).Execute();
 
 		async Task SaveStatisticsAsync(CancellationToken cancellationToken, int waitingTimes = 0)
 		{
