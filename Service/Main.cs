@@ -488,6 +488,18 @@ namespace net.vieapps.Services.Users
 						{
 							Type = "BlackIPs#Reset"
 						}.Send();
+
+					if (requestInfo.ContainsKey("x-enable-track"))
+					{
+						new CommunicateMessage("Portals") { Type = "Sessions#Track#Enable" }.Send();
+						new CommunicateMessage("Files") { Type = "Sessions#Track#Enable" }.Send();
+					}
+
+					if (requestInfo.ContainsKey("x-disable-track"))
+					{
+						new CommunicateMessage("Portals") { Type = "Sessions#Track#Disable" }.Send();
+						new CommunicateMessage("Files") { Type = "Sessions#Track#Disable" }.Send();
+					}
 				}
 
 				var sessions = this.Sessions.Select(kvp => kvp.Value);
