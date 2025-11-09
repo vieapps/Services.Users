@@ -59,6 +59,8 @@ namespace net.vieapps.Services.Users
 		protected override Privileges Privileges => new Privileges();
 
 		IDisposable CacheCommunicator { get; set; }
+
+		IDisposable SecondaryCommunicator { get; set; }
 		#endregion
 
 		public override Task RegisterServiceAsync(IEnumerable<string> args, Action<IService> onSuccess = null, Action<Exception> onError = null)
@@ -68,8 +70,20 @@ namespace net.vieapps.Services.Users
 				_ =>
 				{
 					this.CacheCommunicator?.Dispose();
-					this.CacheCommunicator = Router.IncomingChannel.AssignProcessL1CacheRequest(Utility.Cache, this);
-					Utility.Cache.AssignSendL1CacheRequest(this);
+					this.CacheCommunicator = Router.GotBackupRouter()
+						? Router.BackupChannel.AssignProcessL1CacheRequest(Utility.Cache, this)
+						: Router.IncomingChannel.AssignProcessL1CacheRequest(Utility.Cache, this);
+					Utility.Cache.AssignSendL1CacheRequest(this, Router.GotBackupRouter());
+					if (Router.GotBackupRouter())
+					{
+						this.SecondaryCommunicator?.Dispose();
+						this.SecondaryCommunicator = Router.BackupChannel.Subscribe<CommunicateMessage>
+						(
+							"messages.services.users",
+							message => this.NodeID.IsEquals(message.ExcludedNodeID) ? Task.CompletedTask : this.ProcessInterCommunicateMessageAsync(message, this.CancellationToken),
+							exception => this.WriteLogsAsync(UtilityService.NewUUID, this.Logger, $"Error occurred while processing an inter-communicate message of {this.ServiceName} service => {exception.Message}", exception, this.ServiceName, "Errors", LogLevel.Error)
+						);
+					}
 					onSuccess?.Invoke(this);
 				},
 				onError
@@ -84,6 +98,8 @@ namespace net.vieapps.Services.Users
 				{
 					this.CacheCommunicator?.Dispose();
 					this.CacheCommunicator = null;
+					this.SecondaryCommunicator?.Dispose();
+					this.SecondaryCommunicator = null;
 					onSuccess?.Invoke(this);
 				},
 				onError
@@ -371,12 +387,12 @@ namespace net.vieapps.Services.Users
 							new CommunicateMessage(this.ServiceName)
 							{
 								Type = "Statistics#Reload"
-							}.Send();
+							}.Send(Router.GotBackupRouter());
 						else if (requestInfo.ContainsKey("x-dump"))
 							new CommunicateMessage(this.ServiceName)
 							{
 								Type = "Statistics#Dump"
-							}.Send();
+							}.Send(Router.GotBackupRouter());
 					}
 
 					return this.Statistics.ToJson(requestInfo.ContainsKey("x-summary") || requestInfo.ContainsKey("x-sum"), !requestInfo.ContainsKey("x-no-day-details"), !requestInfo.ContainsKey("x-no-hour-details"));
@@ -416,7 +432,7 @@ namespace net.vieapps.Services.Users
 						{
 							Type = "Session#Clear",
 							ExcludedNodeID = this.NodeID
-						}.Send();
+						}.Send(Router.GotBackupRouter());
 						var ids = this.Sessions.Where(kvp => string.IsNullOrWhiteSpace(kvp.Value.Session.UserID)).Select(kvp => kvp.Key).ToList();
 						ids.ForEach(id => this.Sessions.Remove(id));
 						if (this.IsUpdater)
@@ -463,13 +479,13 @@ namespace net.vieapps.Services.Users
 						new CommunicateMessage(this.ServiceName)
 						{
 							Type = "Session#UpdateLocation"
-						}.Send();
+						}.Send(Router.GotBackupRouter());
 
 					if (requestInfo.ContainsKey("x-dump"))
 						new CommunicateMessage(this.ServiceName)
 						{
 							Type = "Session#Dump"
-						}.Send();
+						}.Send(Router.GotBackupRouter());
 
 					if (requestInfo.ContainsKey("x-pause-harmful-request") && !string.IsNullOrWhiteSpace(this.BlackIPsServiceName))
 						new CommunicateMessage(this.BlackIPsServiceName)
@@ -3229,12 +3245,12 @@ namespace net.vieapps.Services.Users
 					["Service"] = sessionInfo.Service?.ToJson(),
 					["LastAccess"] = sessionInfo.LastAccess
 				}
-			}.Send();
+			}.Send(Router.GotBackupRouter());
 
 		void SendSyncSessions(DateTime? checkpoint = null, Func<Task> onNext = null)
 		{
 			checkpoint ??= DateTime.Now.AddMinutes(-15);
-			this.Sessions.Select(kvp => kvp.Value).Where(sessionInfo => sessionInfo.LastAccess > checkpoint.Value).ToList().ForEach(sessionInfo => this.SendSyncSession(sessionInfo));
+			this.Sessions.Select(kvp => kvp.Value).Where(sessionInfo => sessionInfo.LastAccess > checkpoint.Value).ToList().ForEach(this.SendSyncSession);
 			if (onNext != null)
 				onNext().Execute();
 		}
@@ -3246,7 +3262,7 @@ namespace net.vieapps.Services.Users
 			{
 				Type = "Session#SyncRequest",
 				ExcludedNodeID = excludedNodeID ?? this.NodeID
-			}.Send();
+			}.Send(Router.GotBackupRouter());
 		}
 
 		void SendSyncSessionsRequest(string excludedNodeID = null)
@@ -3266,7 +3282,7 @@ namespace net.vieapps.Services.Users
 					["Minute"] = minuteID,
 					["Counters"] = counters
 				}
-			}.Send();
+			}.Send(Router.GotBackupRouter());
 
 		void SendSyncAllStatistics()
 			=> this.Statistics.SendStatistics(this.SendSyncStatistics);
@@ -3277,7 +3293,7 @@ namespace net.vieapps.Services.Users
 			new CommunicateMessage(this.ServiceName)
 			{
 				Type = $"Statistics#Sync{(all ? "All" : "")}"
-			}.Send();
+			}.Send(Router.GotBackupRouter());
 
 			if (!all)
 				await this.SaveStatisticsAsync(this.CancellationToken, UtilityService.GetRandomNumber(1234, 2345)).ConfigureAwait(false);
@@ -3319,7 +3335,7 @@ namespace net.vieapps.Services.Users
 							{
 								["ID"] = session.ID
 							}
-						}.Send();
+						}.Send(Router.GotBackupRouter());
 					}, true, false).ConfigureAwait(false);
 					await this.WriteLogsAsync(UtilityService.NewUUID, $"Clean {sessions.Count} expired session(s) successful [{this.NodeID}]", null, this.ServiceName, "Task").ConfigureAwait(false);
 				}, 12 * 60 * 60);
@@ -3349,7 +3365,7 @@ namespace net.vieapps.Services.Users
 								["UserID"] = info.UserID,
 								["Online"] = false
 							}
-						}.Send();
+						}.Send(Router.GotBackupRouter());
 					else if (info.IsAnonymous)
 					{
 						var cacheKey = info.SessionID.GetCacheKey<Session>();
