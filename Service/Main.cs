@@ -63,27 +63,33 @@ namespace net.vieapps.Services.Users
 		IDisposable SecondaryCommunicator { get; set; }
 		#endregion
 
+		#region Register & Start the service
+		void RegisterCommunicators()
+		{
+			this.CacheCommunicator?.Dispose();
+			this.CacheCommunicator = Router.GotBackupRouter()
+				? Router.BackupChannel.AssignProcessL1CacheRequest(Utility.Cache, this)
+				: Router.IncomingChannel.AssignProcessL1CacheRequest(Utility.Cache, this);
+			Utility.Cache.AssignSendL1CacheRequest(this, Router.GotBackupRouter());
+			if (Router.GotBackupRouter())
+			{
+				this.SecondaryCommunicator?.Dispose();
+				this.SecondaryCommunicator = Router.BackupChannel.Subscribe<CommunicateMessage>
+				(
+					"messages.services.users",
+					message => this.NodeID.IsEquals(message.ExcludedNodeID) ? Task.CompletedTask : this.ProcessInterCommunicateMessageAsync(message, this.CancellationToken),
+					exception => this.WriteLogsAsync(UtilityService.NewUUID, this.Logger, $"Error occurred while processing an inter-communicate message of {this.ServiceName} service => {exception.Message}", exception, this.ServiceName, "Errors", LogLevel.Error)
+				);
+			}
+		}
+
 		public override Task RegisterServiceAsync(IEnumerable<string> args, Action<IService> onSuccess = null, Action<Exception> onError = null)
 			=> base.RegisterServiceAsync
 			(
 				args,
 				_ =>
 				{
-					this.CacheCommunicator?.Dispose();
-					this.CacheCommunicator = Router.GotBackupRouter()
-						? Router.BackupChannel.AssignProcessL1CacheRequest(Utility.Cache, this)
-						: Router.IncomingChannel.AssignProcessL1CacheRequest(Utility.Cache, this);
-					Utility.Cache.AssignSendL1CacheRequest(this, Router.GotBackupRouter());
-					if (Router.GotBackupRouter())
-					{
-						this.SecondaryCommunicator?.Dispose();
-						this.SecondaryCommunicator = Router.BackupChannel.Subscribe<CommunicateMessage>
-						(
-							"messages.services.users",
-							message => this.NodeID.IsEquals(message.ExcludedNodeID) ? Task.CompletedTask : this.ProcessInterCommunicateMessageAsync(message, this.CancellationToken),
-							exception => this.WriteLogsAsync(UtilityService.NewUUID, this.Logger, $"Error occurred while processing an inter-communicate message of {this.ServiceName} service => {exception.Message}", exception, this.ServiceName, "Errors", LogLevel.Error)
-						);
-					}
+					this.RegisterCommunicators();
 					onSuccess?.Invoke(this);
 				},
 				onError
@@ -131,8 +137,9 @@ namespace net.vieapps.Services.Users
 			this.RegisterTimers();
 
 			// last action
-			await base.StartAsync(args, initializeRepository, next).ConfigureAwait(false);
+			await this.StartAsync(args, (_, _) => this.RegisterCommunicators(), initializeRepository, next).ConfigureAwait(false);
 		}
+		#endregion
 
 		public override async Task<JToken> ProcessRequestAsync(RequestInfo requestInfo, CancellationToken cancellationToken = default)
 		{
