@@ -19,7 +19,7 @@ namespace net.vieapps.Services.Users
 		/// <summary>
 		/// Gets or sets the identity of the user
 		/// </summary>
-		[Property(MaxLength = 32, NotNull = true, NotEmpty = true)]
+		[Property(MaxLength = 32)]
 		[Sortable(IndexName = "IDs")]
 		public string UserID { get; set; }
 

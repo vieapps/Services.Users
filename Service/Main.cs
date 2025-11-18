@@ -2757,8 +2757,10 @@ namespace net.vieapps.Services.Users
 			var session = await Session.GetAsync<Session>(token.SessionID, cancellationToken).ConfigureAwait(false);
 			if (session == null)
 			{
-				account = await Account.GetAsync<Account>(token.UserID, cancellationToken).ConfigureAwait(false) ?? throw new TokenNotFoundException("Token is not found");
-				user = new User(account.ID, token.SessionID, account.Roles, account.AccessPrivileges ?? [], "APIs");
+				account = string.IsNullOrWhiteSpace(token.UserID)
+					? null
+					: await Account.GetAsync<Account>(token.UserID, cancellationToken).ConfigureAwait(false) ?? throw new InformationNotFoundException("User is not found");
+				user = new User(account?.ID ?? "", token.SessionID, account?.Roles ?? [$"{SystemRole.All}"], account?.AccessPrivileges ?? [], "APIs");
 
 				session = new Session(requestInfo.Session)
 				{
@@ -2787,7 +2789,7 @@ namespace net.vieapps.Services.Users
 			}
 
 			account ??= await Account.GetAsync<Account>(token.UserID, cancellationToken).ConfigureAwait(false);
-			user ??= new User(account.ID, token.SessionID, account.Roles, account.AccessPrivileges ?? [], "APIs");
+			user ??= new User(account?.ID ?? "", token.SessionID, account?.Roles ?? [$"{SystemRole.All}"], account?.AccessPrivileges ?? [], "APIs");
 
 			var authenticateToken = user.GetAuthenticateToken(this.EncryptionKey, this.JWTKey, payload =>
 			{
@@ -2929,7 +2931,7 @@ namespace net.vieapps.Services.Users
 				CreatedID = requestInfo.Session.User.ID
 			};
 
-			if (await Account.GetAsync<Account>(token.UserID, cancellationToken).ConfigureAwait(false) == null)
+			if (!string.IsNullOrWhiteSpace(token.UserID) && await Account.GetAsync<Account>(token.UserID, cancellationToken).ConfigureAwait(false) == null)
 				throw new InformationNotFoundException("User is not found");
 
 			await Token.CreateAsync(token, cancellationToken).ConfigureAwait(false);
