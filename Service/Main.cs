@@ -2925,7 +2925,7 @@ namespace net.vieapps.Services.Users
 			{
 				ID = UtilityService.NewUUID,
 				Title = request.Get<string>("Title"),
-				UserID = request.Get<string>("UserID"),
+				UserID = request.Get("UserID", ""),
 				SessionID = UtilityService.NewUUID,
 				Expires = DateTime.TryParse(request.Get<string>("Expires"), out var expires) && expires > DateTime.Now ? expires : DateTime.Now.AddYears(10),
 				CreatedID = requestInfo.Session.User.ID
