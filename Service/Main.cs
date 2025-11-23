@@ -2813,7 +2813,7 @@ namespace net.vieapps.Services.Users
 				? token.ToJson(json => json["Token"] = new JObject
 					{
 						["Bearer"] = $"Bearer {authenticateToken}",
-						["Basic"] = $"Basic {$"{token.ID}:{$"{token.UserID}:{token.SessionID}".Encrypt(this.EncryptionKey, true)}".ToBase64()}"
+						["Basic"] = $"Basic {$"{token.ID}:{$"{token.UserID}:{token.SessionID}".Encrypt(this.EncryptionKey, true)}".ToBase64Url()}"
 					})
 				: new JObject
 				{
@@ -2889,7 +2889,7 @@ namespace net.vieapps.Services.Users
 				{
 					if ("Basic".IsEquals(requestInfo.GetHeaderParameter("x-authorization-mode")))
 					{
-						var data = identity.FromBase64().ToList(":");
+						var data = identity.FromBase64Url().ToList(":");
 						identity = data.First();
 						data = data.Last().Decrypt(this.EncryptionKey, true).ToList(":");
 						userID = data.First();
