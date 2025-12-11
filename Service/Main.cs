@@ -3337,8 +3337,10 @@ namespace net.vieapps.Services.Users
 					await sessions.ForEachAsync(async session =>
 					{
 						await Session.DeleteAsync<Session>(session.ID, userID, this.CancellationToken).ConfigureAwait(false);
+						this.Sessions.Remove(session.ID);
 						new CommunicateMessage(this.ServiceName)
 						{
+							ExcludedNodeID = this.NodeID,
 							Type = "Session#Remove",
 							Data = new JObject
 							{
@@ -3365,8 +3367,10 @@ namespace net.vieapps.Services.Users
 				await this.Sessions.Select(kvp => (SessionID: kvp.Key, kvp.Value.LastAccess, kvp.Value.Session.UserID, IsAnonymous: string.IsNullOrWhiteSpace(kvp.Value.Session.UserID))).ToList().ForEachAsync(async info =>
 				{
 					if (info.LastAccess < (info.IsAnonymous ? visitorTimepoint : userTimepoint))
-						new CommunicateMessage(this.ServiceName)
+					{
+						var messsage = new CommunicateMessage(this.ServiceName)
 						{
+							ExcludedNodeID = this.NodeID,
 							Type = "Session#State",
 							Data = new JObject
 							{
@@ -3374,7 +3378,10 @@ namespace net.vieapps.Services.Users
 								["UserID"] = info.UserID,
 								["Online"] = false
 							}
-						}.Send(Router.GotBackupRouter());
+						};
+						messsage.Send(Router.GotBackupRouter());
+						await this.ProcessInterCommunicateMessageAsync(messsage, this.CancellationToken).ConfigureAwait(false);
+					}
 					else if (info.IsAnonymous)
 					{
 						var cacheKey = info.SessionID.GetCacheKey<Session>();

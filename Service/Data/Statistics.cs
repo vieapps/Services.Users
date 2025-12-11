@@ -231,18 +231,21 @@ namespace net.vieapps.Services.Users
 
 		public async Task<Statistics> SaveAsync(CancellationToken cancellationToken)
 		{
-			var objects = new List<Info>();
-			this.Years.OrderByDescending(year => year.Name).ForEach(year => year.Months.OrderBy(month => month.Name).ForEach(month => month.Days.OrderBy(day => day.Name).ForEach(day => objects.Add(new Info
+			await this.Years.OrderByDescending(year => year.Name).ForEachAsync(year => year.Months.OrderBy(month => month.Name).ForEachAsync(month => month.Days.OrderBy(day => day.Name).ForEachAsync(async day =>
 			{
-				ID = $"{year.Name}{month.Name}{day.Name}{UtilityService.BlankUUID}".Left(32),
-				Year = year.Name.As<int>(),
-				Month = month.Name.As<int>(),
-				Day = day.Name.As<int>(),
-				Statistics = day.ToJson(false).ToString(Formatting.None)
-			}))));
-			await objects.ForEachAsync(info => Info.DeleteAsync<Info>(info.ID, null, cancellationToken), true, false).ConfigureAwait(false);
-			await Task.Delay(UtilityService.GetRandomNumber(456, 789), cancellationToken).ConfigureAwait(false);
-			await objects.ForEachAsync(info => Info.CreateAsync(info, cancellationToken), true, false).ConfigureAwait(false);
+				var id = $"{year.Name}{month.Name}{day.Name}{UtilityService.BlankUUID}".Left(32);
+				var info = await Info.GetAsync<Info>(id, cancellationToken).ConfigureAwait(false);
+				var doUpdate = info != null;
+				info ??= new()
+				{
+					ID = id,
+					Year = year.Name.As<int>(),
+					Month = month.Name.As<int>(),
+					Day = day.Name.As<int>()
+				};
+				info.Statistics = day.ToJson(false).ToString(Formatting.None);
+				await (doUpdate ? Info.UpdateAsync(info, true, cancellationToken) : Info.CreateAsync(info, cancellationToken)).ConfigureAwait(false);
+			}, true, false), true, false), true, false).ConfigureAwait(false);
 			return this;
 		}
 
