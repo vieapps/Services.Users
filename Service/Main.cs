@@ -3070,81 +3070,78 @@ namespace net.vieapps.Services.Users
 						return;
 					}
 
-					var existed = false;
+					var existed = true;
 					var sessionID = data.Get<string>("SessionID") ?? data.Get<string>("ID");
 					var cacheKey = sessionID?.GetCacheKey<Session>();
 
-					Account account = null;
-					Session session;
-
-					if (this.Sessions.TryGetValue(sessionID, out var sessionInfo))
+					var sessionInfo = this.Sessions.GetOrAdd(sessionID, _ => new());
+					if (sessionInfo.Session == null)
 					{
-						session = sessionInfo.Session;
-						existed = true;
-					}
-					else
-					{
-						session = string.IsNullOrWhiteSpace(data.Get<string>("UserID"))
+						var session = string.IsNullOrWhiteSpace(data.Get<string>("UserID"))
 							? await Utility.Cache.GetAsync<Session>(cacheKey, cancellationToken).ConfigureAwait(false)
 							: await Session.GetAsync<Session>(sessionID, cancellationToken).ConfigureAwait(false);
-						session ??= new(Session.ToSession(data), data.Get<string>("OSInfo"));
+						lock (sessionInfo.Locker)
+						{
+							existed = sessionInfo.Session != null;
+							sessionInfo.Session ??= session ?? new(Session.ToSession(data), data.Get<string>("OSInfo"));
+						}
 					}
-					session.Online = data.Get("Online", false);
 
-					if (session.Online)
+					var now = DateTime.Now;
+					Account account = null;
+
+					if (data.Get("Online", false))
 					{
 						if (data.Get("Track", true))
 							this.Statistics.Update();
 
+						if (this.IsUpdater && (!existed || (now - sessionInfo.User.LastAccess).TotalMinutes > 9))
+							account = await Account.GetAsync<Account>(sessionInfo.Session.UserID, cancellationToken).ConfigureAwait(false);
+
 						var serviceInfo = data.Get<ExpandoObject>("Service");
-						if (existed)
+						var profile = existed ? null : await Profile.GetAsync<Profile>(sessionInfo.Session.UserID, cancellationToken).ConfigureAwait(false);
+
+						lock (sessionInfo.Locker)
 						{
-							sessionInfo.Service = new(serviceInfo);
-							sessionInfo.LastAccess = DateTime.Now;
-							if ((DateTime.Now - sessionInfo.User.LastAccess).TotalMinutes > 9)
+							sessionInfo.Session.Online = true;
+							if (existed)
 							{
-								sessionInfo.User.LastAccess = DateTime.Now;
-								account = this.IsUpdater ? await Account.GetAsync<Account>(sessionInfo.Session.UserID, cancellationToken).ConfigureAwait(false) : null;
+								sessionInfo.LastAccess = now;
+								if ((now - sessionInfo.User.LastAccess).TotalMinutes > 9)
+									sessionInfo.User.LastAccess = now;
+								var ipAddress = data.Get<string>("IP");
+								if (!string.IsNullOrWhiteSpace(ipAddress) && !ipAddress.Equals(sessionInfo.Session.IP))
+								{
+									sessionInfo.Session.IP = ipAddress;
+									sessionInfo.Session.AppInfo = data.Get<string>("AppInfo") ?? $"{data.Get<string>("AppName")} @ {data.Get<string>("AppPlatform")}";
+									sessionInfo.Session.OSInfo = data.Get<string>("OSInfo") ?? $"{Extensions.GetOSInfo(data.Get<string>("AppAgent"))} [{data.Get<string>("AppAgent")}]";
+									sessionInfo.UpdateAsync(correlationID, this.IsUpdater).Execute();
+								}
+								sessionInfo.Service.CopyFrom(serviceInfo);
 							}
-							var ipAddress = data.Get<string>("IP");
-							if (!string.IsNullOrWhiteSpace(ipAddress) && !ipAddress.Equals(session.IP))
+							else
 							{
-								session.IP = ipAddress;
-								session.AppInfo = data.Get<string>("AppInfo") ?? $"{data.Get<string>("AppName")} @ {data.Get<string>("AppPlatform")}";
-								session.OSInfo = data.Get<string>("OSInfo") ?? $"{Extensions.GetOSInfo(data.Get<string>("AppAgent"))} [{data.Get<string>("AppAgent")}]";
-								sessionInfo.User.Location = await session.ToSession().GetLocationAsync(correlationID, cancellationToken).ConfigureAwait(false);
-								if (this.IsUpdater)
-									await (string.IsNullOrWhiteSpace(session.UserID) ? Utility.Cache.SetAsync(cacheKey, session, 15, cancellationToken) : Session.UpdateAsync(session, true, cancellationToken)).ConfigureAwait(false);
-							}
-						}
-						else
-						{
-							var profile = await Profile.GetAsync<Profile>(session.UserID, cancellationToken).ConfigureAwait(false);
-							this.Sessions[sessionID] = new()
-							{
-								Session = session,
-								User = new()
+								sessionInfo.User = new()
 								{
 									Name = profile?.Name ?? (data.Get("Crawler", false) ? "Crawler" : null),
-									Email = profile?.Email,
-									Location = await session.ToSession().GetLocationAsync(correlationID, cancellationToken).ConfigureAwait(false)
-								},
-								Service = new(serviceInfo)
-							};
-							account = this.IsUpdater ? await Account.GetAsync<Account>(session.UserID, cancellationToken).ConfigureAwait(false) : null;
+									Email = profile?.Email
+								};
+								sessionInfo.Service = new(serviceInfo);
+								sessionInfo.UpdateAsync(correlationID, false).Execute();
+							}
 						}
 					}
 
 					else if (this.Sessions.Remove(sessionID) && this.IsUpdater)
 					{
-						await (string.IsNullOrWhiteSpace(session.UserID) ? Utility.Cache.RemoveAsync(cacheKey, cancellationToken) : Session.UpdateAsync(session, true, cancellationToken)).ConfigureAwait(false);
-						account = await Account.GetAsync<Account>(session.UserID, cancellationToken).ConfigureAwait(false);
+						await (string.IsNullOrWhiteSpace(sessionInfo.Session.UserID) ? Utility.Cache.RemoveAsync(cacheKey, cancellationToken) : Session.UpdateAsync(sessionInfo.Session, true, cancellationToken)).ConfigureAwait(false);
+						account = await Account.GetAsync<Account>(sessionInfo.Session.UserID, cancellationToken).ConfigureAwait(false);
 					}
 
 					if (account != null)
 					{
 						this.SendStatistics();
-						account.LastAccess = DateTime.Now;
+						account.LastAccess = now;
 						await Account.UpdateAsync(account, true, cancellationToken).ConfigureAwait(false);
 					}
 				}
@@ -3156,9 +3153,7 @@ namespace net.vieapps.Services.Users
 			else if (message.Type.IsEquals("Session#Sync"))
 				try
 				{
-					var sessionID = data.Get<string>("ID");
-					if (!this.Sessions.ContainsKey(sessionID))
-						this.Sessions[sessionID] = new SessionInfo(data);
+					this.Sessions.GetOrAdd(data.Get<string>("ID"), _ => new SessionInfo(data));
 				}
 				catch (Exception ex)
 				{
@@ -3181,11 +3176,8 @@ namespace net.vieapps.Services.Users
 			}
 
 			else if (message.Type.IsEquals("Session#UpdateLocation"))
-				try
-				{
-					await this.Sessions.Where(kvp => string.IsNullOrWhiteSpace(kvp.Value.User.Location) || kvp.Value.User.Location.IsEquals(", ")).Select(kvp => kvp.Value).ToList().ForEachAsync(async sessionInfo => sessionInfo.User.Location = await sessionInfo.Session.ToSession().GetLocationAsync(correlationID, cancellationToken).ConfigureAwait(false), true, false).ConfigureAwait(false);
-				}
-				catch { }
+				this.Sessions.Where(kvp => string.IsNullOrWhiteSpace(kvp.Value.User.Location) || kvp.Value.User.Location.IsEquals(", "))
+					.Select(kvp => kvp.Value).ToList().ForEach(sessionInfo => sessionInfo.UpdateAsync(correlationID, false).Execute());
 
 			else if (message.Type.IsEquals("Session#SyncRequest"))
 				this.SendSyncSessions();
@@ -3199,16 +3191,17 @@ namespace net.vieapps.Services.Users
 
 			else if (message.Type.IsEquals("Statistics#Sync"))
 			{
-				var yearID = $"{DateTime.Now:yyyy}";
-				var monthID = $"{DateTime.Now:MM}";
-				var dayID = $"{DateTime.Now:dd}";
-				var hourID = $"{DateTime.Now:HH}";
+				var now = DateTime.Now;
+				var yearID = $"{now:yyyy}";
+				var monthID = $"{now:MM}";
+				var dayID = $"{now:dd}";
+				var hourID = $"{now:HH}";
 				new[] {
-					DateTime.Now.Minute < 5 ? null : $"{DateTime.Now.AddMinutes(-4):mm}",
-					DateTime.Now.Minute < 4 ? null : $"{DateTime.Now.AddMinutes(-3):mm}",
-					DateTime.Now.Minute < 3 ? null : $"{DateTime.Now.AddMinutes(-2):mm}",
-					DateTime.Now.Minute < 2 ? null : $"{DateTime.Now.AddMinutes(-1):mm}",
-					$"{DateTime.Now:mm}"
+					now.Minute < 5 ? null : $"{now.AddMinutes(-4):mm}",
+					now.Minute < 4 ? null : $"{now.AddMinutes(-3):mm}",
+					now.Minute < 3 ? null : $"{now.AddMinutes(-2):mm}",
+					now.Minute < 2 ? null : $"{now.AddMinutes(-1):mm}",
+					$"{now:mm}"
 				}.Where(minuteID => minuteID != null).ToList().ForEach(minuteID => this.SendSyncStatistics(this.Statistics.Get(minuteID, hourID, dayID, monthID, yearID).Counters, minuteID, hourID, dayID, monthID, yearID));
 			}
 

@@ -2,6 +2,7 @@
 using System;
 using System.Dynamic;
 using System.Diagnostics;
+using System.Threading.Tasks;
 using System.Xml.Serialization;
 using MongoDB.Bson.Serialization.Attributes;
 using Newtonsoft.Json;
@@ -165,6 +166,7 @@ namespace net.vieapps.Services.Users
 
 	public class SessionInfo
 	{
+		internal readonly object Locker = new();
 		public SessionInfo(ExpandoObject data = null)
 		{
 			if (data != null)
@@ -179,6 +181,12 @@ namespace net.vieapps.Services.Users
 		public UserInfo User { get; set; }
 		public ServiceInfo Service { get; set; }
 		public DateTime LastAccess { get; set; } = DateTime.Now;
+		internal async Task UpdateAsync(string correlationID, bool updateSession)
+		{
+			if (updateSession)
+				await (string.IsNullOrWhiteSpace(this.Session.UserID) ? Utility.Cache.SetAsync(this.Session.GetCacheKey(), this.Session, 15) : Session.UpdateAsync(this.Session, true, null)).ConfigureAwait(false);
+			this.User.Location = await this.Session.ToSession().GetLocationAsync(correlationID).ConfigureAwait(false);
+		}
 	}
 
 	public class UserInfo
