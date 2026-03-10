@@ -125,13 +125,7 @@ namespace net.vieapps.Services.Users
 			this.Logger?.LogInformation($"System Administrators: {User.SystemAdministrators.Join(",")}");
 
 			// statistics
-			try
-			{
-				await this.Statistics.LoadAsync(this.StatisticsFilePath, this.CancellationToken).ConfigureAwait(false);
-				if (this.IsUpdater)
-					await this.Statistics.LoadAsync(this.CancellationToken).ConfigureAwait(false);
-			}
-			catch { }
+			this.LoadStatisticsAsync(UtilityService.GetRandomNumber(123, 456)).Execute();
 
 			// timers
 			this.RegisterTimers();
@@ -375,6 +369,28 @@ namespace net.vieapps.Services.Users
 		#endregion
 
 		#region Statistics
+		async Task LoadStatisticsAsync(int wating = 0)
+		{
+			try
+			{
+				// load statistics
+				await this.Statistics.LoadAsync(this.StatisticsFilePath, this.CancellationToken).ConfigureAwait(false);
+
+				// wait for few times
+				if (wating > 0)
+					await Task.Delay(wating, this.CancellationToken).ConfigureAwait(false);
+
+				// load statistics as updater
+				if (this.IsUpdater)
+					await this.Statistics.LoadAsync(this.CancellationToken).ConfigureAwait(false);
+
+				// sync at the first time
+				this.SendSyncSessionsRequest();
+				this.SendSyncStatisticsRequest(true);
+			}
+			catch { }
+		}
+
 		async Task<JToken> ProcessStatisticsAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			if (requestInfo.Verb.IsEquals("GET"))
@@ -650,8 +666,8 @@ namespace net.vieapps.Services.Users
 		{
 			sessions ??= this.Sessions.Select(kvp => kvp.Value);
 			var total = sessions.Count();
-			var user = sessions.Count(sessionInfo => !string.IsNullOrWhiteSpace(sessionInfo.Session.UserID));
-			var crawler = sessions.Count(sessionInfo => string.IsNullOrWhiteSpace(sessionInfo.Session.UserID) && "Crawler".IsEquals(sessionInfo.User?.Name));
+			var user = sessions.Count(sessionInfo => !string.IsNullOrWhiteSpace(sessionInfo.Session?.UserID));
+			var crawler = sessions.Count(sessionInfo => string.IsNullOrWhiteSpace(sessionInfo.Session?.UserID) && "Crawler".IsEquals(sessionInfo.User?.Name));
 			var statistics = new JObject
 			{
 				["Total"] = total,
@@ -3180,7 +3196,10 @@ namespace net.vieapps.Services.Users
 					.Select(kvp => kvp.Value).ToList().ForEach(sessionInfo => sessionInfo.UpdateAsync(correlationID, false).Execute());
 
 			else if (message.Type.IsEquals("Session#SyncRequest"))
+			{
+				await Task.Delay(UtilityService.GetRandomNumber(456, 789), this.CancellationToken).ConfigureAwait(false);
 				this.SendSyncSessions();
+			}
 
 			else if (message.Type.IsEquals("Session#Dump"))
 				await this.Sessions.Select(kvp => kvp.Value)
@@ -3249,12 +3268,12 @@ namespace net.vieapps.Services.Users
 				}
 			}.Send(Router.GotBackupRouter());
 
-		void SendSyncSessions(DateTime? checkpoint = null, Func<Task> onNext = null)
+		void SendSyncSessions(DateTime? checkpoint = null, Func<Task> onNextAsync = null)
 		{
 			checkpoint ??= DateTime.Now.AddMinutes(-15);
 			this.Sessions.Select(kvp => kvp.Value).Where(sessionInfo => sessionInfo.LastAccess > checkpoint.Value).ToList().ForEach(this.SendSyncSession);
-			if (onNext != null)
-				onNext().Execute();
+			if (onNextAsync != null)
+				onNextAsync().Execute();
 		}
 
 		async Task SendSyncSessionsRequestAsync(string excludedNodeID = null)
@@ -3401,10 +3420,6 @@ namespace net.vieapps.Services.Users
 			// send statistics (frequency)
 			if (this.IsUpdater && this.UpdaterFrequency > 0)
 				this.StartTimer(() => this.SendStatistics(), this.UpdaterFrequency);
-
-			// sync at the first time
-			this.SendSyncSessionsRequest();
-			this.SendSyncStatisticsRequest(true);
 		}
 		#endregion
 
