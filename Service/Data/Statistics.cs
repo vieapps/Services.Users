@@ -9,6 +9,7 @@ using System.Xml.Serialization;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using MongoDB.Bson.Serialization.Attributes;
+using MsgPack.Serialization;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using net.vieapps.Components.Repository;
@@ -20,68 +21,89 @@ namespace net.vieapps.Services.Users
 {
 	public class Statistics
 	{
-		public Statistics() { }
-
-		internal Statistics(JObject json)
+		public Statistics(JObject json = null)
 			=> this.Load(json);
 
-		internal ConcurrentBag<Year> Years { get; } = [];
+		internal Year Current { get; } = new();
 
+		internal ConcurrentDictionary<string, Year> Years { get; } = [];
+
+		#region Year
 		public class Year : StatisticInfo
 		{
 			public Year() : this($"{DateTime.Now:yyyy}") { }
 
-			internal Year(string yearID, int counters = 0) : base()
+			internal Year(string yearID, int counters = 0)
 			{
 				this.Name = yearID;
 				this.Counters = counters;
 			}
 
-			internal ConcurrentBag<Month> Months { get; } = [];
+			internal ConcurrentDictionary<string, Month> Months { get; } = [];
+
+			internal int Increase(int counter)
+				=> this.Counters += counter;
 
 			public int Sum(bool sumOnChildren = false)
-				=> this.Counters = this.Months.Sum(month => sumOnChildren ? month.Sum(true) : month.Counters);
+			{
+				var sum = 0;
+				foreach (var month in this.Months.Values)
+					sum += sumOnChildren ? month.Sum(true) : month.Counters;
+				return this.Counters = sum;
+			}
 
 			internal JObject ToJson(bool asSummary, bool addDayDetails, bool addHourDetails)
 			{
 				var json = new JObject();
-				this.Months.OrderBy(month => month.Name).ForEach(month => json[month.Name] = month.ToJson(asSummary, addDayDetails, addHourDetails));
+				this.Months.Values.OrderBy(month => month.Name).ForEach(month => json[month.Name] = month.ToJson(asSummary, addDayDetails, addHourDetails));
 				if (asSummary)
 					json = new JObject
 					{
 						["Counters"] = this.Sum(),
-						["AverageOfOneMonth"] = this.Counters / this.Months.Count,
+						["AverageOfOneMonth"] = this.Months.IsEmpty ? 0 : this.Counters / this.Months.Count,
 						["Months"] = json
 					};
 				return json;
 			}
 		}
+		#endregion
 
+		#region Month
 		public class Month : StatisticInfo
 		{
+			internal int Year { get; set; } = DateTime.Now.Year;
+
 			public Month() : this($"{DateTime.Now:MM}") { }
 
-			internal Month(string monthID, int counters = 0) : base()
+			internal Month(string monthID, int counters = 0)
 			{
 				this.Name = monthID;
 				this.Counters = counters;
 			}
 
-			internal ConcurrentBag<Day> Days { get; } = [];
+			internal ConcurrentDictionary<string, Day> Days { get; } = [];
+
+			internal int Increase(int counter)
+				=> this.Counters += counter;
 
 			public int Sum(bool sumOnChildren = false)
-				=> this.Counters = this.Days.Sum(day => sumOnChildren ? day.Sum(true) : day.Counters);
+			{
+				var sum = 0;
+				foreach (var day in this.Days.Values)
+					sum += sumOnChildren ? day.Sum() : day.Counters;
+				return this.Counters = sum;
+			}
 
 			internal JObject ToJson(bool asSummary, bool addDayDetails, bool addHourDetails)
 			{
 				var json = new JObject();
-				this.Days.OrderBy(day => day.Name).ForEach(day => json[day.Name] = day.ToJson(asSummary, addHourDetails));
+				this.Days.Values.OrderBy(day => day.Name).ForEach(day => json[day.Name] = day.ToJson(asSummary, addHourDetails));
 				if (asSummary)
 				{
 					json = new JObject
 					{
-						["Counters"] = this.Sum(),
-						["AverageOfOneDay"] = this.Counters / this.Days.Count,
+						["Counters"] = Sum(),
+						["AverageOfOneDay"] = this.Days.IsEmpty ? 0 : this.Counters / this.Days.Count,
 						["Days"] = json
 					};
 					if (!addDayDetails)
@@ -90,86 +112,290 @@ namespace net.vieapps.Services.Users
 				return json;
 			}
 		}
+		#endregion
 
+		#region Day
 		public class Day : StatisticInfo
 		{
+			internal readonly int[] Minutes = new int[1440];
+
 			public Day() : this($"{DateTime.Now:dd}") { }
 
-			internal Day(string dayID, int counters = 0) : base()
+			internal Day(string dayID, int counters = 0)
 			{
 				this.Name = dayID;
 				this.Counters = counters;
 			}
 
-			internal ConcurrentBag<Hour> Hours { get; } = [];
+			public int Sum()
+			{
+				var sum = 0;
+				var minutes = this.Minutes;
+				for (var i = 0; i < minutes.Length; i++)
+					sum += minutes[i];
+				return this.Counters = sum;
+			}
 
-			public int Sum(bool sumOnChildren = false)
-				=> this.Counters = this.Hours.Sum(hour => sumOnChildren ? hour.Sum() : hour.Counters);
+			internal int Increase(int hour, int minute)
+			{
+				var index = hour * 60 + minute;
+				var counter = Interlocked.Increment(ref this.Minutes[index]);
+				this.Counters++;
+				return counter;
+			}
+
+			internal int Set(int hour, int minute, int counter)
+			{
+				var index = hour * 60 + minute;
+				var current = this.Minutes[index];
+				this.Minutes[index] = counter;
+				this.Counters += counter - current;
+				return counter;
+			}
+
+			internal int Merge(int hour, int minute, int counter)
+			{
+				var index = hour * 60 + minute;
+				int current;
+				do
+				{
+					current = this.Minutes[index];
+					if (current >= counter)
+						return current;
+				} while (Interlocked.CompareExchange(ref this.Minutes[index], counter, current) != current);
+				var delta = counter - current;
+				this.Counters += delta;
+				return delta;
+			}
 
 			internal JObject ToJson(bool asSummary, bool addHourDetails = true)
 			{
-				var json = new JObject();
-				this.Hours.OrderBy(hour => hour.Name).ForEach(hour => json[hour.Name] = hour.ToJson(asSummary));
-				if (asSummary)
+				var hours = new JObject();
+				for (var hour = 0; hour < 24; hour++)
 				{
-					json = new JObject
+					var start = hour * 60;
+					var hourSum = 0;
+					var minutes = new JObject();
+					for (var minute = 0; minute < 60; minute++)
 					{
-						["Counters"] = this.Sum(),
-						["AverageOfOneHour"] = this.Counters / this.Hours.Count,
-						["Hours"] = json
-					};
-					if (!addHourDetails)
-						json.Remove("Hours");
+						var value = this.Minutes[start + minute];
+						hourSum += value;
+						minutes[$"{minute:00}"] = value;
+					}
+					if (asSummary)
+						hours[$"{hour:00}"] = new JObject
+						{
+							["Counters"] = hourSum,
+							["AverageOfOneMinute"] = hourSum / 60
+						};
+					else
+						hours[$"{hour:00}"] = minutes;
 				}
+
+				if (!asSummary)
+					return hours;
+
+				var total = this.Sum();
+				var json = new JObject
+				{
+					["Counters"] = total,
+					["AverageOfOneHour"] = total / 24					
+				};
+				if (addHourDetails)
+					json["Hours"] = hours;
 				return json;
 			}
 		}
+		#endregion
 
-		public class Hour : StatisticInfo
+		public long Total
 		{
-			public Hour() : this($"{DateTime.Now:HH}") { }
-
-			internal Hour(string hourID, int counters = 0) : base()
+			get
 			{
-				this.Name = hourID;
-				this.Counters = counters;
+				long total = 0;
+				foreach (var year in this.Years.Values)
+					total += year.Counters == 0 ? year.Sum(true) : year.Counters;
+				return total;
 			}
+		}
 
-			internal ConcurrentBag<Minute> Minutes { get; } = [];
-
-			public int Sum()
-				=> this.Counters = this.Minutes.Sum(minute => minute.Counters);
-
-			internal JObject ToJson(bool asSummary)
+		public long TotalOfCurrentYear
+		{
+			get
 			{
-				var json = new JObject();
-				if (asSummary)
-					json = new JObject
+				var year = this.GetYear(null, false);
+				return year.Counters == 0 ? year.Sum(true) : year.Counters;
+			}
+		}
+
+		public long TotalOfCurrentMonth
+		{
+			get
+			{
+				var month = this.GetMonth(null, null, false);
+				return month.Counters == 0 ? month.Sum(true) : month.Counters;
+			}
+		}
+
+		public long TotalOfCurrentDay
+		{
+			get
+			{
+				var day = this.GetDay();
+				return day.Counters == 0 ? day.Sum() : day.Counters;
+			}
+		}
+
+		public Year GetYear(string yearID = null, bool currentFirst = true)
+		{
+			yearID ??= $"{DateTime.Now:yyyy}";
+			return currentFirst && yearID == $"{DateTime.Now:yyyy}" ? this.Current : this.Years.GetOrAdd(yearID, _ => new Year(yearID));
+		}
+
+		public Month GetMonth(string monthID = null, string yearID = null, bool currentFirst = true)
+		{
+			monthID ??= $"{DateTime.Now:MM}";
+			return this.GetYear(yearID, currentFirst).Months.GetOrAdd(monthID, _ => new Month(monthID) { Year = (yearID ?? $"{DateTime.Now:yyyy}").As<int>() });
+		}
+
+		public Day GetDay(string dayID = null, string monthID = null, string yearID = null, bool currentFirst = true)
+		{
+			dayID ??= $"{DateTime.Now:dd}";
+			return this.GetMonth(monthID, yearID, currentFirst).Days.GetOrAdd(dayID, _ => new Day(dayID));
+		}
+
+		public int Get(string minuteID = null, string hourID = null, string dayID = null, string monthID = null, string yearID = null)
+		{
+			var day = this.GetDay(dayID, monthID, yearID);
+			var hour = (hourID ?? $"{DateTime.Now:HH}").As<int>();
+			var minute = (minuteID ?? $"{DateTime.Now:mm}").As<int>();
+			var index = hour * 60 + minute;
+			return index < 0 || index >= 1440 ? 0 : day.Minutes[index];
+		}
+
+		public int Update(int counters = 0, string minuteID = null, string hourID = null, string dayID = null, string monthID = null, string yearID = null)
+		{
+			var day = this.GetDay(dayID, monthID, yearID);
+			var hour = (hourID ?? $"{DateTime.Now:HH}").As<int>();
+			var minute = (minuteID ?? $"{DateTime.Now:mm}").As<int>();
+			var delta = counters > 0 ? day.Merge(hour, minute, counters) : day.Increase(hour, minute);
+			if (delta > 0)
+			{
+				this.GetMonth(monthID, yearID).Increase(delta);
+				this.GetYear(yearID).Increase(delta);
+			}
+			return delta;
+		}
+
+		public JObject ToJson(bool asSummary = false, bool addDayDetails = true, bool addHourDetails = true, Func<IEnumerable<Year>, JObject, JObject> transformer = null)
+		{
+			var years = this.Years.Values.OrderByDescending(year => year.Name).ToList();
+			var json = new JObject();
+			years.ForEach(year => json[year.Name] = year.ToJson(asSummary, addDayDetails, addHourDetails));
+			return transformer != null ? transformer(years, json) : json;
+		}
+
+		public void SendStatistics(Action<int, string, string, string, string, string> sendStatistics)
+		{
+			foreach (var month in this.Current.Months.Values)
+				foreach (var day in month.Days.Values)
+					for (var hour = 0; hour < 24; hour++)
+						for (var minute = 0; minute < 60; minute++)
+							sendStatistics(day.Minutes[hour * 60 + minute], $"{minute:00}", $"{hour:00}", day.Name, month.Name, this.Current.Name);
+		}
+
+		Statistics Load(JObject hours, string dayID, string monthID, string yearID, bool currentFirst = true)
+		{
+			var day = this.GetDay(dayID, monthID, yearID, currentFirst);
+			hours.ForEach(hour => (hour.Value as JObject).ForEach(minute => day.Set(hour.Key.As<int>(), minute.Key.As<int>(), (minute.Value as JValue ?? new JValue(0)).Value.As<int>())));
+			return this;
+		}
+
+		Statistics Load(JObject json)
+		{
+			json?.ForEach(year => (year.Value as JObject).ForEach(month => (month.Value as JObject).ForEach(day => this.Load(day.Value as JObject, day.Key, month.Key, year.Key))));
+			return this;
+		}
+
+		public async Task<Statistics> LoadAsync(string filePath, CancellationToken cancellationToken)
+			=> File.Exists(filePath) ? this.Load(await UtilityService.ReadAsJsonAsync(filePath, cancellationToken).ConfigureAwait(false) as JObject) : this;
+
+		async Task<Statistics> LoadAsync(bool current, CancellationToken cancellationToken)
+		{
+			var filter = current
+				? Filters<Info>.And
+				(
+					Filters<Info>.Equals("Year", DateTime.Now.Year),
+					Filters<Info>.Equals("Month", DateTime.Now.Month),
+					Filters<Info>.Equals("Day", DateTime.Now.Day)
+				)
+				: null;
+			var objects = await Info.FindAsync(filter, Sorts<Info>.Descending("Year").ThenByDescending("Month").ThenByDescending("Day"), 0, 1, null, cancellationToken).ConfigureAwait(false);
+			objects?.ForEach(info => this.Load(info.Statistics.ToJson() as JObject, info.Day.ToString("00"), info.Month.ToString("00"), info.Year.ToString("0000"), current));
+			return this;
+		}
+
+		public Task<Statistics> LoadAsync(CancellationToken cancellationToken)
+			=> this.LoadAsync(true, cancellationToken);
+
+		public async Task<Statistics> LoadStatisticsAsync(CancellationToken cancellationToken)
+		{
+			await this.LoadAsync(false, cancellationToken).ConfigureAwait(false);
+			this.GetMonth(null, null, false).Days[$"{DateTime.Now:dd}"] = this.GetDay();
+			return this;
+		}
+
+		public async Task<Statistics> SaveAsync(string filePath, CancellationToken cancellationToken)
+		{
+			await new JObject { [this.Current.Name] = this.Current.ToJson(false, true, true) }.SaveAsTextAsync(filePath, cancellationToken).ConfigureAwait(false);
+			return this;
+		}
+
+		public async Task<Statistics> SaveAsync(CancellationToken cancellationToken)
+		{
+			var data = this.Current.Months.Values.Select(month => month.Days.Values.Select(day => (month.Year, Month: month.Name, Day: day))).SelectMany(info => info).ToList();
+			await data.ForEachAsync(async datax =>
+			{
+				var id = $"{datax.Year}{datax.Month}{datax.Day.Name}{UtilityService.BlankUUID}".Left(32);
+				var info = await Info.GetAsync<Info>(id, cancellationToken).ConfigureAwait(false);
+				var doUpdate = info != null;
+				info ??= new()
+				{
+					ID = id,
+					Year = datax.Year,
+					Month = datax.Month.As<int>(),
+					Day = datax.Day.Name.As<int>()
+				};
+				info.Statistics = datax.Day.ToJson(false).ToString(Formatting.None);
+				await (doUpdate ? Info.UpdateAsync(info, true, cancellationToken) : Info.CreateAsync(info, cancellationToken)).ConfigureAwait(false);
+			}, true, false).ConfigureAwait(false);
+
+			this.Current.Months.Values.ForEach(month =>
+			{
+				if (month.Days.Count > 1)
+				{
+					var thisDay = DateTime.Now.Day.ToString("00");
+					var dayIDs = month.Days.Where(kvp => kvp.Key != thisDay).Select(kvp => kvp.Key).ToList();
+					dayIDs.ForEach(dayID => month.Days.Remove(dayID));
+					if (!month.Days.IsEmpty)
 					{
-						["Counters"] = this.Sum(),
-						["AverageOfOneMinute"] = this.Counters / this.Minutes.Count
-					};
-				else
-					this.Minutes.OrderBy(minute => minute.Name).ForEach(minute => json[minute.Name] = minute.Counters);
-				return json;
-			}
-		}
+						var currentMonth = this.GetMonth(month.Name, this.Current.Name, false);
+						month.Days.ForEach(kvp => currentMonth.Days[kvp.Key] = kvp.Value);
+					}
+				}
+			});
 
-		public class Minute : StatisticInfo
-		{
-			public Minute() : this($"{DateTime.Now:mm}") { }
-
-			internal Minute(string minuteID, int counters = 0) : base()
+			if (this.Current.Months.Count > 1)
 			{
-				this.Name = minuteID;
-				this.Counters = counters;
+				var thisMonth = DateTime.Now.Month.ToString("00");
+				var months = this.Current.Months.Where(kvp => kvp.Key != thisMonth).Select(kvp => kvp.Key).ToList();
+				months.ForEach(monthID => this.Current.Months.Remove(monthID));
+				var day = this.Current.Months.First().Value.Days.First().Value;
+				var currentMonth = this.GetMonth(this.Current.Months.First().Value.Name, this.Current.Name, false);
+				currentMonth.Days[day.Name] = day;
 			}
 
-			internal Minute Update(int counters = 0)
-			{
-				this.Counters = counters > this.Counters ? counters : this.Counters + (counters == 0 ? 1 : 0);
-				return this;
-			}
+			return this;
 		}
 
 		[BsonIgnoreExtraElements, DebuggerDisplay("Year = {Year}, Month = {Month}, Day = {Day}")]
@@ -185,116 +411,16 @@ namespace net.vieapps.Services.Users
 			public int Day { get; set; }
 			[Property(IsCLOB = true)]
 			public string Statistics { get; set; }
-			[Ignore, JsonIgnore, BsonIgnore, XmlIgnore]
+			[Ignore, JsonIgnore, BsonIgnore, XmlIgnore, MessagePackIgnore]
 			public override string Title { get; set; }
-			[Ignore, JsonIgnore, BsonIgnore, XmlIgnore]
+			[Ignore, JsonIgnore, BsonIgnore, XmlIgnore, MessagePackIgnore]
 			public override string SystemID { get; set; }
-			[Ignore, JsonIgnore, BsonIgnore, XmlIgnore]
+			[Ignore, JsonIgnore, BsonIgnore, XmlIgnore, MessagePackIgnore]
 			public override string RepositoryID { get; set; }
-			[Ignore, JsonIgnore, BsonIgnore, XmlIgnore]
+			[Ignore, JsonIgnore, BsonIgnore, XmlIgnore, MessagePackIgnore]
 			public override string RepositoryEntityID { get; set; }
-			[Ignore, JsonIgnore, BsonIgnore, XmlIgnore]
+			[Ignore, JsonIgnore, BsonIgnore, XmlIgnore, MessagePackIgnore]
 			public override Privileges OriginalPrivileges { get; set; }
 		}
-
-		public void SendStatistics(Action<int, string, string, string, string, string> sendStatistics)
-			=> this.Years.ForEach(year => year.Months.ForEach(month => month.Days.ForEach(day => day.Hours.ForEach(hour => hour.Minutes.ForEach(minute => sendStatistics(minute.Counters, minute.Name, hour.Name, day.Name, month.Name, year.Name))))));
-
-		void Load(JObject hours, string dayID, string monthID, string yearID)
-			=> hours.ForEach(hour => (hour.Value as JObject).ForEach(minute => this.Update((minute.Value as JValue ?? new JValue(0)).Value.As<int>(), minute.Key, hour.Key, dayID, monthID, yearID)));
-
-		public Statistics Load(JObject json)
-		{
-			this.Years.Clear();
-			(json ?? new()).ForEach(year => (year.Value as JObject).ForEach(month => (month.Value as JObject).ForEach(day => this.Load(day.Value as JObject, day.Key, month.Key, year.Key))));
-			return this;
-		}
-
-		public async Task<Statistics> LoadAsync(FileInfo fileInfo, CancellationToken cancellationToken)
-			=> this.Load(await fileInfo.ReadAsJsonAsync(cancellationToken).ConfigureAwait(false) as JObject);
-
-		public Task<Statistics> LoadAsync(string filePath, CancellationToken cancellationToken)
-			=> this.LoadAsync(new FileInfo(filePath), cancellationToken);
-
-		public async Task<Statistics> LoadAsync(CancellationToken cancellationToken)
-		{
-			var objects = await Info.FindAsync(null, Sorts<Info>.Descending("Year").ThenByDescending("Month").ThenByDescending("Day"), 0, 1, null, cancellationToken).ConfigureAwait(false);
-			objects.ForEach(info => this.Load(info.Statistics.ToJson() as JObject, info.Day.ToString("00"), info.Month.ToString("00"), info.Year.ToString("0000")));
-			return this;
-		}
-
-		public async Task<Statistics> SaveAsync(string filePath, CancellationToken cancellationToken)
-		{
-			await this.ToJson().SaveAsTextAsync(filePath, cancellationToken).ConfigureAwait(false);
-			return this;
-		}
-
-		public async Task<Statistics> SaveAsync(CancellationToken cancellationToken)
-		{
-			await this.Years.OrderByDescending(year => year.Name).ForEachAsync(year => year.Months.OrderBy(month => month.Name).ForEachAsync(month => month.Days.OrderBy(day => day.Name).ForEachAsync(async day =>
-			{
-				var id = $"{year.Name}{month.Name}{day.Name}{UtilityService.BlankUUID}".Left(32);
-				var info = await Info.GetAsync<Info>(id, cancellationToken).ConfigureAwait(false);
-				var doUpdate = info != null;
-				info ??= new()
-				{
-					ID = id,
-					Year = year.Name.As<int>(),
-					Month = month.Name.As<int>(),
-					Day = day.Name.As<int>()
-				};
-				info.Statistics = day.ToJson(false).ToString(Formatting.None);
-				await (doUpdate ? Info.UpdateAsync(info, true, cancellationToken) : Info.CreateAsync(info, cancellationToken)).ConfigureAwait(false);
-			}, true, false), true, false), true, false).ConfigureAwait(false);
-			return this;
-		}
-
-		public ulong Sum(bool sumOnChildren = true)
-		{
-			ulong sum = 0;
-			this.Years.ForEach(year => sum += year.Sum(sumOnChildren).As<ulong>());
-			return sum;
-		}
-
-		public JObject ToJson(bool asSummary = false, bool addDayDetails = true, bool addHourDetails = true, Func<IEnumerable<Year>, JObject, JObject> transformer = null)
-		{
-			var json = new JObject();
-			this.Years.OrderByDescending(year => year.Name).ForEach(year => json[year.Name] = year.ToJson(asSummary, addDayDetails, addHourDetails));
-			return transformer != null ? transformer(this.Years, json) : json;
-		}
-
-		public Minute Get(string minuteID = null, string hourID = null, string dayID = null, string monthID = null, string yearID = null)
-		{
-			yearID ??= $"{DateTime.Now:yyyy}";
-			var year = this.Years.FirstOrDefault(o => o.Name == yearID);
-			if (year == null)
-				this.Years.Add(year = new(yearID));
-
-			monthID ??= $"{DateTime.Now:MM}";
-			var month = year.Months.FirstOrDefault(o => o.Name == monthID);
-			if (month == null)
-				year.Months.Add(month = new(monthID));
-
-			dayID ??= $"{DateTime.Now:dd}";
-			var day = month.Days.FirstOrDefault(o => o.Name == dayID);
-			if (day == null)
-				month.Days.Add(day = new(dayID));
-
-			hourID ??= $"{DateTime.Now:HH}";
-			var hour = day.Hours.FirstOrDefault(o => o.Name == hourID);
-			if (hour == null)
-				day.Hours.Add(hour = new(hourID));
-
-			minuteID ??= $"{DateTime.Now:mm}";
-			var minute = hour.Minutes.FirstOrDefault(o => o.Name == minuteID);
-			if (minute == null)
-				hour.Minutes.Add(minute = new(minuteID));
-
-			return minute;
-		}
-
-		public Minute Update(int counters = 0, string minuteID = null, string hourID = null, string dayID = null, string monthID = null, string yearID = null)
-			=> this.Get(minuteID, hourID, dayID, monthID, yearID).Update(counters);
 	}
-
 }

@@ -125,7 +125,7 @@ namespace net.vieapps.Services.Users
 			this.Logger?.LogInformation($"System Administrators: {User.SystemAdministrators.Join(",")}");
 
 			// statistics
-			this.LoadStatisticsAsync(UtilityService.GetRandomNumber(123, 456)).Execute();
+			this.LoadStatisticsAsync().Execute();
 
 			// timers
 			this.RegisterTimers();
@@ -369,26 +369,29 @@ namespace net.vieapps.Services.Users
 		#endregion
 
 		#region Statistics
-		async Task LoadStatisticsAsync(int wating = 0)
+		async Task LoadStatisticsAsync()
 		{
 			try
 			{
-				// load statistics
 				await this.Statistics.LoadAsync(this.StatisticsFilePath, this.CancellationToken).ConfigureAwait(false);
-
-				// wait for few times
-				if (wating > 0)
-					await Task.Delay(wating, this.CancellationToken).ConfigureAwait(false);
-
-				// load statistics as updater
 				if (this.IsUpdater)
 					await this.Statistics.LoadAsync(this.CancellationToken).ConfigureAwait(false);
-
-				// sync at the first time
 				this.SendSyncSessionsRequest();
 				this.SendSyncStatisticsRequest(true);
+				await Task.Delay(UtilityService.GetRandomNumber(12345, 23456), this.CancellationToken).ConfigureAwait(false);
+				await this.LoadAllStatisticsAsync().ConfigureAwait(false);
 			}
 			catch { }
+		}
+
+		async Task LoadAllStatisticsAsync()
+		{
+			if (this.Statistics.Years.IsEmpty)
+			{
+				await this.Statistics.LoadStatisticsAsync(this.CancellationToken).ConfigureAwait(false);
+				this.Statistics.Current.Sum(true);
+				this.Statistics.Years.Values.ForEach(year => year.Sum(true));
+			}
 		}
 
 		async Task<JToken> ProcessStatisticsAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
@@ -400,7 +403,10 @@ namespace net.vieapps.Services.Users
 				if (requestInfo.ObjectName.IsEquals("statistics"))
 				{
 					if ("fetch".IsEquals(requestInfo.GetObjectIdentity()))
+					{
+						await this.LoadAllStatisticsAsync().ConfigureAwait(false);
 						return this.SendStatistics();
+					}
 
 					if (isSystemAdministrator)
 					{
@@ -418,6 +424,7 @@ namespace net.vieapps.Services.Users
 							}.Send(Router.GotBackupRouter());
 					}
 
+					await this.LoadAllStatisticsAsync().ConfigureAwait(false);
 					return this.Statistics.ToJson(requestInfo.ContainsKey("x-summary") || requestInfo.ContainsKey("x-sum"), !requestInfo.ContainsKey("x-no-day-details"), !requestInfo.ContainsKey("x-no-hour-details"));
 				}
 
@@ -582,6 +589,7 @@ namespace net.vieapps.Services.Users
 				if (requestInfo.TryGetParameter("x-max", out var max) && Int32.TryParse(max, out var maxRecords) && maxRecords > 0)
 					sessions = sessions.Take(maxRecords);
 
+				await this.LoadAllStatisticsAsync().ConfigureAwait(false);
 				var onlyStatistics = requestInfo.ContainsKey("x-statistics") || !isSystemAdministrator;
 				var statistics = this.GetStatistics(onlyStatistics ? sessions : null, (_, statisticsJson) =>
 				{
@@ -680,18 +688,15 @@ namespace net.vieapps.Services.Users
 
 		JObject SendStatistics()
 		{
-			var year = this.Statistics.Years.FirstOrDefault(o => o.Name == $"{DateTime.Now:yyyy}");
-			var month = year?.Months.FirstOrDefault(o => o.Name == $"{DateTime.Now:MM}");
-			var day = month?.Days.FirstOrDefault(o => o.Name == $"{DateTime.Now:dd}");
 			var statistics = this.GetStatistics(null, (_, sessions) => new JObject
 			{
 				["Sessions"] = sessions,
 				["Visits"] = new JObject
 				{
-					["Total"] = this.Statistics.Sum(),
-					["Year"] = year != null ? year.Counters : 0,
-					["Month"] = month != null ? month.Counters : 0,
-					["Day"] = day != null ? day.Counters : 0
+					["Total"] = this.Statistics.Total,
+					["Year"] = this.Statistics.TotalOfCurrentYear,
+					["Month"] = this.Statistics.TotalOfCurrentMonth,
+					["Day"] = this.Statistics.TotalOfCurrentDay
 				}
 			});
 			new UpdateMessage
@@ -1458,6 +1463,7 @@ namespace net.vieapps.Services.Users
 			if (requestInfo.ContainsKey("x-status") || account.TwoFactorsAuthentication.Required)
 			{
 				var location = await requestInfo.GetLocationAsync(cancellationToken).ConfigureAwait(false);
+				await this.LoadAllStatisticsAsync().ConfigureAwait(false);
 				this.SendStatistics();
 				return account.GetAccountJson(true, this.AuthenticationKey, json =>
 				{
@@ -3156,6 +3162,7 @@ namespace net.vieapps.Services.Users
 
 					if (account != null)
 					{
+						await this.LoadAllStatisticsAsync().ConfigureAwait(false);
 						this.SendStatistics();
 						account.LastAccess = now;
 						await Account.UpdateAsync(account, true, cancellationToken).ConfigureAwait(false);
@@ -3221,7 +3228,7 @@ namespace net.vieapps.Services.Users
 					now.Minute < 3 ? null : $"{now.AddMinutes(-2):mm}",
 					now.Minute < 2 ? null : $"{now.AddMinutes(-1):mm}",
 					$"{now:mm}"
-				}.Where(minuteID => minuteID != null).ToList().ForEach(minuteID => this.SendSyncStatistics(this.Statistics.Get(minuteID, hourID, dayID, monthID, yearID).Counters, minuteID, hourID, dayID, monthID, yearID));
+				}.Where(minuteID => minuteID != null).ToList().ForEach(minuteID => this.SendSyncStatistics(this.Statistics.Get(minuteID, hourID, dayID, monthID, yearID), minuteID, hourID, dayID, monthID, yearID));
 			}
 
 			else if (message.Type.IsEquals("Statistics#SyncAll"))
@@ -3322,6 +3329,7 @@ namespace net.vieapps.Services.Users
 			else if (this.IsUpdater)
 			{
 				await Task.Delay(UtilityService.GetRandomNumber(1234, 2345), this.CancellationToken).ConfigureAwait(false);
+				await this.LoadAllStatisticsAsync().ConfigureAwait(false);
 				this.SendStatistics();
 			}
 		}
@@ -3371,7 +3379,7 @@ namespace net.vieapps.Services.Users
 				this.WriteLogsAsync(UtilityService.NewUUID, $"Sync all sessions/statistics successful [{this.NodeID}]", null, this.ServiceName, "Task")
 			), 6 * 60 * 60);
 
-			// refresh sessions & save statistics (10 minutes)
+			// refresh sessions & statistics (10 minutes)
 			this.StartTimer(async () =>
 			{
 				var userTimepoint = DateTime.Now.AddMinutes(-15);
