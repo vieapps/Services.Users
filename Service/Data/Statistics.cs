@@ -59,7 +59,7 @@ namespace net.vieapps.Services.Users
 				if (asSummary)
 					json = new JObject
 					{
-						["Counters"] = this.Sum(),
+						["Counters"] = this.Counters == 0 ? this.Sum() : this.Counters,
 						["AverageOfOneMonth"] = this.Months.IsEmpty ? 0 : this.Counters / this.Months.Count,
 						["Months"] = json
 					};
@@ -71,12 +71,13 @@ namespace net.vieapps.Services.Users
 		#region Month
 		public class Month : StatisticInfo
 		{
-			internal int Year { get; set; } = DateTime.Now.Year;
+			internal int Year { get; } = DateTime.Now.Year;
 
-			public Month() : this($"{DateTime.Now:MM}") { }
+			public Month() : this(DateTime.Now.Year, $"{DateTime.Now:MM}") { }
 
-			internal Month(string monthID, int counters = 0)
+			internal Month(int year, string monthID, int counters = 0)
 			{
+				this.Year = year;
 				this.Name = monthID;
 				this.Counters = counters;
 			}
@@ -96,19 +97,17 @@ namespace net.vieapps.Services.Users
 
 			internal JObject ToJson(bool asSummary, bool addDayDetails, bool addHourDetails)
 			{
-				var json = new JObject();
-				this.Days.Values.OrderBy(day => day.Name).ForEach(day => json[day.Name] = day.ToJson(asSummary, addHourDetails));
-				if (asSummary)
+				var days = new JObject();
+				this.Days.Values.OrderBy(day => day.Name).ForEach(day => days[day.Name] = day.ToJson(asSummary, addHourDetails));
+				if (!asSummary)
+					return days;
+				var json = new JObject
 				{
-					json = new JObject
-					{
-						["Counters"] = Sum(),
-						["AverageOfOneDay"] = this.Days.IsEmpty ? 0 : this.Counters / this.Days.Count,
-						["Days"] = json
-					};
-					if (!addDayDetails)
-						json.Remove("Days");
-				}
+					["Counters"] = this.Counters == 0 ? this.Sum() : this.Counters,
+					["AverageOfOneDay"] = this.Days.IsEmpty ? 0 : this.Counters / this.Days.Count					
+				};
+				if (addDayDetails)
+					json["Days"] = days;
 				return json;
 			}
 		}
@@ -161,7 +160,7 @@ namespace net.vieapps.Services.Users
 				{
 					current = this.Minutes[index];
 					if (current >= counter)
-						return current;
+						return 0;
 				} while (Interlocked.CompareExchange(ref this.Minutes[index], counter, current) != current);
 				var delta = counter - current;
 				this.Counters += delta;
@@ -170,7 +169,7 @@ namespace net.vieapps.Services.Users
 
 			internal JObject ToJson(bool asSummary, bool addHourDetails = true)
 			{
-				var hours = new JObject();
+				var json = new JObject();
 				for (var hour = 0; hour < 24; hour++)
 				{
 					var start = hour * 60;
@@ -183,26 +182,21 @@ namespace net.vieapps.Services.Users
 						minutes[$"{minute:00}"] = value;
 					}
 					if (asSummary)
-						hours[$"{hour:00}"] = new JObject
+						json[$"{hour:00}"] = new JObject
 						{
 							["Counters"] = hourSum,
 							["AverageOfOneMinute"] = hourSum / 60
 						};
 					else
-						hours[$"{hour:00}"] = minutes;
+						json[$"{hour:00}"] = minutes;
 				}
-
-				if (!asSummary)
-					return hours;
-
-				var total = this.Sum();
-				var json = new JObject
-				{
-					["Counters"] = total,
-					["AverageOfOneHour"] = total / 24					
-				};
-				if (addHourDetails)
-					json["Hours"] = hours;
+				if (asSummary)
+					json = new JObject
+					{
+						["Counters"] = this.Counters == 0 ? this.Sum() : this.Counters,
+						["AverageOfOneHour"] = this.Counters / 24,
+						["Hours"] = json
+					};
 				return json;
 			}
 		}
@@ -246,22 +240,33 @@ namespace net.vieapps.Services.Users
 			}
 		}
 
-		public Year GetYear(string yearID = null, bool currentFirst = true)
+		public Year GetYear(string yearID, bool currentFirst = true)
 		{
-			yearID ??= $"{DateTime.Now:yyyy}";
-			return currentFirst && yearID == $"{DateTime.Now:yyyy}" ? this.Current : this.Years.GetOrAdd(yearID, _ => new Year(yearID));
+			var now = $"{DateTime.Now:yyyy}";
+			yearID ??= now;
+			return currentFirst && yearID == now
+				? this.Current
+				: this.Years.TryGetValue(yearID, out var year)
+					? year
+					: this.Years.TryAdd(yearID, year = new Year(yearID)) ? year : this.Years[yearID];
 		}
 
-		public Month GetMonth(string monthID = null, string yearID = null, bool currentFirst = true)
+		public Month GetMonth(string monthID, string yearID, bool currentFirst = true)
 		{
 			monthID ??= $"{DateTime.Now:MM}";
-			return this.GetYear(yearID, currentFirst).Months.GetOrAdd(monthID, _ => new Month(monthID) { Year = (yearID ?? $"{DateTime.Now:yyyy}").As<int>() });
+			var year = this.GetYear(yearID, currentFirst);
+			return year.Months.TryGetValue(monthID, out var month)
+				? month
+				: year.Months.TryAdd(monthID, month = new Month(year.Name.As<int>(), monthID)) ? month : year.Months[monthID];
 		}
 
 		public Day GetDay(string dayID = null, string monthID = null, string yearID = null, bool currentFirst = true)
 		{
 			dayID ??= $"{DateTime.Now:dd}";
-			return this.GetMonth(monthID, yearID, currentFirst).Days.GetOrAdd(dayID, _ => new Day(dayID));
+			var month = this.GetMonth(monthID, yearID, currentFirst);
+			return month.Days.TryGetValue(dayID, out var day)
+				? day
+				: month.Days.TryAdd(dayID, day = new Day(dayID)) ? day : month.Days[dayID];
 		}
 
 		public int Get(string minuteID = null, string hourID = null, string dayID = null, string monthID = null, string yearID = null)
@@ -354,20 +359,20 @@ namespace net.vieapps.Services.Users
 		public async Task<Statistics> SaveAsync(CancellationToken cancellationToken)
 		{
 			var data = this.Current.Months.Values.Select(month => month.Days.Values.Select(day => (month.Year, Month: month.Name, Day: day))).SelectMany(info => info).ToList();
-			await data.ForEachAsync(async datax =>
+			await data.ForEachAsync(async info =>
 			{
-				var id = $"{datax.Year}{datax.Month}{datax.Day.Name}{UtilityService.BlankUUID}".Left(32);
-				var info = await Info.GetAsync<Info>(id, cancellationToken).ConfigureAwait(false);
-				var doUpdate = info != null;
-				info ??= new()
+				var id = $"{info.Year}{info.Month}{info.Day.Name}{UtilityService.BlankUUID}".Left(32);
+				var instance = await Info.GetAsync<Info>(id, cancellationToken).ConfigureAwait(false);
+				var doUpdate = instance != null;
+				instance ??= new()
 				{
 					ID = id,
-					Year = datax.Year,
-					Month = datax.Month.As<int>(),
-					Day = datax.Day.Name.As<int>()
+					Year = info.Year,
+					Month = info.Month.As<int>(),
+					Day = info.Day.Name.As<int>()
 				};
-				info.Statistics = datax.Day.ToJson(false).ToString(Formatting.None);
-				await (doUpdate ? Info.UpdateAsync(info, true, cancellationToken) : Info.CreateAsync(info, cancellationToken)).ConfigureAwait(false);
+				instance.Statistics = info.Day.ToJson(false).ToString(Formatting.None);
+				await (doUpdate ? Info.UpdateAsync(instance, true, cancellationToken) : Info.CreateAsync(instance, cancellationToken)).ConfigureAwait(false);
 			}, true, false).ConfigureAwait(false);
 
 			this.Current.Months.Values.ForEach(month =>
@@ -391,8 +396,7 @@ namespace net.vieapps.Services.Users
 				var months = this.Current.Months.Where(kvp => kvp.Key != thisMonth).Select(kvp => kvp.Key).ToList();
 				months.ForEach(monthID => this.Current.Months.Remove(monthID));
 				var day = this.Current.Months.First().Value.Days.First().Value;
-				var currentMonth = this.GetMonth(this.Current.Months.First().Value.Name, this.Current.Name, false);
-				currentMonth.Days[day.Name] = day;
+				this.GetMonth(this.Current.Months.First().Value.Name, this.Current.Name, false).Days[day.Name] = day;
 			}
 
 			return this;

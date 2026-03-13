@@ -3096,7 +3096,12 @@ namespace net.vieapps.Services.Users
 					var sessionID = data.Get<string>("SessionID") ?? data.Get<string>("ID");
 					var cacheKey = sessionID?.GetCacheKey<Session>();
 
-					var sessionInfo = this.Sessions.GetOrAdd(sessionID, _ => new());
+					if (!this.Sessions.TryGetValue(sessionID, out var sessionInfo))
+					{
+						var newInfo = new SessionInfo();
+						sessionInfo = this.Sessions.TryAdd(sessionID, newInfo) ? newInfo : this.Sessions[sessionID];
+					}
+
 					if (sessionInfo.Session == null)
 					{
 						var session = string.IsNullOrWhiteSpace(data.Get<string>("UserID"))
@@ -3137,7 +3142,7 @@ namespace net.vieapps.Services.Users
 									sessionInfo.Session.IP = ipAddress;
 									sessionInfo.Session.AppInfo = data.Get<string>("AppInfo") ?? $"{data.Get<string>("AppName")} @ {data.Get<string>("AppPlatform")}";
 									sessionInfo.Session.OSInfo = data.Get<string>("OSInfo") ?? $"{Extensions.GetOSInfo(data.Get<string>("AppAgent"))} [{data.Get<string>("AppAgent")}]";
-									sessionInfo.UpdateAsync(correlationID, this.IsUpdater).Execute();
+									sessionInfo.UpdateAsync(correlationID, this.IsUpdater).Execute(false, null, 0, 90000);
 								}
 								sessionInfo.Service.CopyFrom(serviceInfo);
 							}
@@ -3149,7 +3154,7 @@ namespace net.vieapps.Services.Users
 									Email = profile?.Email
 								};
 								sessionInfo.Service = new(serviceInfo);
-								sessionInfo.UpdateAsync(correlationID, false).Execute();
+								sessionInfo.UpdateAsync(correlationID, false).Execute(false, null, 0, 90000);
 							}
 						}
 					}
@@ -3200,7 +3205,7 @@ namespace net.vieapps.Services.Users
 
 			else if (message.Type.IsEquals("Session#UpdateLocation"))
 				this.Sessions.Where(kvp => string.IsNullOrWhiteSpace(kvp.Value.User.Location) || kvp.Value.User.Location.IsEquals(", "))
-					.Select(kvp => kvp.Value).ToList().ForEach(sessionInfo => sessionInfo.UpdateAsync(correlationID, false).Execute());
+					.Select(kvp => kvp.Value).ToList().ForEach(sessionInfo => sessionInfo.UpdateAsync(correlationID, false).Execute(false, null, 0, 90000));
 
 			else if (message.Type.IsEquals("Session#SyncRequest"))
 			{
