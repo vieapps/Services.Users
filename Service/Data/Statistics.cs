@@ -129,9 +129,8 @@ namespace net.vieapps.Services.Users
 			public int Sum()
 			{
 				var sum = 0;
-				var minutes = this.Minutes;
-				for (var i = 0; i < minutes.Length; i++)
-					sum += minutes[i];
+				for (var index = 0; index < 1440; index++)
+					sum += this.Minutes[index];
 				return this.Counters = sum;
 			}
 
@@ -202,6 +201,7 @@ namespace net.vieapps.Services.Users
 		}
 		#endregion
 
+		#region Total
 		public long Total
 		{
 			get
@@ -239,6 +239,7 @@ namespace net.vieapps.Services.Users
 				return day.Counters == 0 ? day.Sum() : day.Counters;
 			}
 		}
+		#endregion
 
 		public Year GetYear(string yearID, bool currentFirst = true)
 		{
@@ -271,11 +272,10 @@ namespace net.vieapps.Services.Users
 
 		public int Get(string minuteID = null, string hourID = null, string dayID = null, string monthID = null, string yearID = null)
 		{
-			var day = this.GetDay(dayID, monthID, yearID);
 			var hour = (hourID ?? $"{DateTime.Now:HH}").As<int>();
 			var minute = (minuteID ?? $"{DateTime.Now:mm}").As<int>();
 			var index = hour * 60 + minute;
-			return index < 0 || index >= 1440 ? 0 : day.Minutes[index];
+			return index < 0 || index >= 1440 ? 0 : this.GetDay(dayID, monthID, yearID).Minutes[index];
 		}
 
 		public int Update(int counters = 0, string minuteID = null, string hourID = null, string dayID = null, string monthID = null, string yearID = null)
@@ -352,7 +352,10 @@ namespace net.vieapps.Services.Users
 
 		public async Task<Statistics> SaveAsync(string filePath, CancellationToken cancellationToken)
 		{
-			await new JObject { [this.Current.Name] = this.Current.ToJson(false, true, true) }.SaveAsTextAsync(filePath, cancellationToken).ConfigureAwait(false);
+			await new JObject
+			{
+				[this.Current.Name] = this.Current.ToJson(false, true, true)
+			}.SaveAsTextAsync(filePath, cancellationToken).ConfigureAwait(false);
 			return this;
 		}
 
@@ -375,11 +378,13 @@ namespace net.vieapps.Services.Users
 				await (doUpdate ? Info.UpdateAsync(instance, true, cancellationToken) : Info.CreateAsync(instance, cancellationToken)).ConfigureAwait(false);
 			}, true, false).ConfigureAwait(false);
 
+			var thisDay = DateTime.Now.Day.ToString("00");
+			var thisMonth = DateTime.Now.Month.ToString("00");
+
 			this.Current.Months.Values.ForEach(month =>
 			{
 				if (month.Days.Count > 1)
 				{
-					var thisDay = DateTime.Now.Day.ToString("00");
 					var dayIDs = month.Days.Where(kvp => kvp.Key != thisDay).Select(kvp => kvp.Key).ToList();
 					dayIDs.ForEach(dayID => month.Days.Remove(dayID));
 					if (!month.Days.IsEmpty)
@@ -392,7 +397,6 @@ namespace net.vieapps.Services.Users
 
 			if (this.Current.Months.Count > 1)
 			{
-				var thisMonth = DateTime.Now.Month.ToString("00");
 				var months = this.Current.Months.Where(kvp => kvp.Key != thisMonth).Select(kvp => kvp.Key).ToList();
 				months.ForEach(monthID => this.Current.Months.Remove(monthID));
 				var day = this.Current.Months.First().Value.Days.First().Value;
