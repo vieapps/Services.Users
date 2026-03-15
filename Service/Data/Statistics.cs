@@ -24,18 +24,16 @@ namespace net.vieapps.Services.Users
 		public Statistics(JObject json = null)
 			=> this.Load(json);
 
-		internal Year Current { get; } = new();
+		internal Year Current { get; } = new(null);
 
 		internal ConcurrentDictionary<string, Year> Years { get; } = [];
 
 		#region Year
 		public class Year : StatisticInfo
 		{
-			public Year() : this($"{DateTime.Now:yyyy}") { }
-
-			internal Year(string yearID, int counters = 0)
+			internal Year(string yearID	, int counters = 0)
 			{
-				this.Name = yearID;
+				this.Name = yearID ?? DateTime.Now.Year.ToString("0000");
 				this.Counters = counters;
 			}
 
@@ -73,12 +71,10 @@ namespace net.vieapps.Services.Users
 		{
 			internal int Year { get; } = DateTime.Now.Year;
 
-			public Month() : this(DateTime.Now.Year, $"{DateTime.Now:MM}") { }
-
 			internal Month(int year, string monthID, int counters = 0)
 			{
 				this.Year = year;
-				this.Name = monthID;
+				this.Name = monthID ?? DateTime.Now.Month.ToString("00");
 				this.Counters = counters;
 			}
 
@@ -118,11 +114,9 @@ namespace net.vieapps.Services.Users
 		{
 			internal readonly int[] Minutes = new int[1440];
 
-			public Day() : this($"{DateTime.Now:dd}") { }
-
 			internal Day(string dayID, int counters = 0)
 			{
-				this.Name = dayID;
+				this.Name = dayID ?? DateTime.Now.Day.ToString("00");
 				this.Counters = counters;
 			}
 
@@ -243,7 +237,7 @@ namespace net.vieapps.Services.Users
 
 		public Year GetYear(string yearID, bool currentFirst = true)
 		{
-			var now = $"{DateTime.Now:yyyy}";
+			var now = DateTime.Now.Year.ToString("0000");
 			yearID ??= now;
 			return currentFirst && yearID == now
 				? this.Current
@@ -254,7 +248,7 @@ namespace net.vieapps.Services.Users
 
 		public Month GetMonth(string monthID, string yearID, bool currentFirst = true)
 		{
-			monthID ??= $"{DateTime.Now:MM}";
+			monthID ??= DateTime.Now.Month.ToString("00");
 			var year = this.GetYear(yearID, currentFirst);
 			return year.Months.TryGetValue(monthID, out var month)
 				? month
@@ -263,7 +257,7 @@ namespace net.vieapps.Services.Users
 
 		public Day GetDay(string dayID = null, string monthID = null, string yearID = null, bool currentFirst = true)
 		{
-			dayID ??= $"{DateTime.Now:dd}";
+			dayID ??= DateTime.Now.Day.ToString("00");
 			var month = this.GetMonth(monthID, yearID, currentFirst);
 			return month.Days.TryGetValue(dayID, out var day)
 				? day
@@ -272,8 +266,8 @@ namespace net.vieapps.Services.Users
 
 		public int Get(string minuteID = null, string hourID = null, string dayID = null, string monthID = null, string yearID = null)
 		{
-			var hour = (hourID ?? $"{DateTime.Now:HH}").As<int>();
-			var minute = (minuteID ?? $"{DateTime.Now:mm}").As<int>();
+			var hour = (hourID ?? DateTime.Now.Hour.ToString("00")).As<int>();
+			var minute = (minuteID ?? DateTime.Now.Minute.ToString("00")).As<int>();
 			var index = hour * 60 + minute;
 			return index < 0 || index >= 1440 ? 0 : this.GetDay(dayID, monthID, yearID).Minutes[index];
 		}
@@ -281,8 +275,8 @@ namespace net.vieapps.Services.Users
 		public int Update(int counters = 0, string minuteID = null, string hourID = null, string dayID = null, string monthID = null, string yearID = null)
 		{
 			var day = this.GetDay(dayID, monthID, yearID);
-			var hour = (hourID ?? $"{DateTime.Now:HH}").As<int>();
-			var minute = (minuteID ?? $"{DateTime.Now:mm}").As<int>();
+			var hour = (hourID ?? DateTime.Now.Hour.ToString("00")).As<int>();
+			var minute = (minuteID ?? DateTime.Now.Minute.ToString("00")).As<int>();
 			var delta = counters > 0 ? day.Merge(hour, minute, counters) : day.Increase(hour, minute);
 			if (delta > 0)
 			{
@@ -376,7 +370,7 @@ namespace net.vieapps.Services.Users
 		public async Task<Statistics> LoadStatisticsAsync(CancellationToken cancellationToken)
 		{
 			await this.LoadAsync(false, cancellationToken).ConfigureAwait(false);
-			this.GetMonth(null, null, false).Days[$"{DateTime.Now:dd}"] = this.GetDay();
+			this.GetMonth(null, null, false).Days[DateTime.Now.Day.ToString("00")] = this.GetDay();
 			return this;
 		}
 
@@ -394,7 +388,7 @@ namespace net.vieapps.Services.Users
 			var data = this.Current.Months.Values.Select(month => month.Days.Values.Select(day => (month.Year, Month: month.Name, Day: day))).SelectMany(info => info).ToList();
 			await data.ForEachAsync(async info =>
 			{
-				var id = $"{info.Year}{info.Month}{info.Day.Name}{UtilityService.BlankUUID}".Left(32);
+				var id = $"{info.Year:0000}{info.Month}{info.Day.Name}{UtilityService.BlankUUID}".Left(32);
 				var instance = await Info.GetAsync<Info>(id, cancellationToken).ConfigureAwait(false);
 				var update = instance != null;
 				instance ??= new()
