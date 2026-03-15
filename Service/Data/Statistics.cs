@@ -331,8 +331,9 @@ namespace net.vieapps.Services.Users
 				var thisMonth = DateTime.Now.Month.ToString("00");
 				var months = this.Current.Months.Where(kvp => kvp.Key != thisMonth).Select(kvp => kvp.Key).ToList();
 				months.ForEach(monthID => this.Current.Months.Remove(monthID));
-				var day = this.Current.Months.First().Value.Days.First().Value;
-				this.GetMonth(this.Current.Months.First().Value.Name, this.Current.Name, false).Days[day.Name] = day;
+				var month = this.Current.Months.First().Value;
+				var day = month.Days.First().Value;
+				this.GetMonth(month.Name, this.Current.Name, false).Days[day.Name] = day;
 			}
 
 			return this;
