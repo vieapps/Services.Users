@@ -309,6 +309,35 @@ namespace net.vieapps.Services.Users
 							sendStatistics(day.Minutes[hour * 60 + minute], $"{minute:00}", $"{hour:00}", day.Name, month.Name, this.Current.Name);
 		}
 
+		public Statistics Normalize()
+		{
+			var thisDay = DateTime.Now.Day.ToString("00");
+			this.Current.Months.Values.ForEach(month =>
+			{
+				if (month.Days.Count > 1)
+				{
+					var dayIDs = month.Days.Where(kvp => kvp.Key != thisDay).Select(kvp => kvp.Key).ToList();
+					dayIDs.ForEach(dayID => month.Days.Remove(dayID));
+					if (!month.Days.IsEmpty)
+					{
+						var currentMonth = this.GetMonth(month.Name, this.Current.Name, false);
+						month.Days.ForEach(kvp => currentMonth.Days[kvp.Key] = kvp.Value);
+					}
+				}
+			});
+
+			if (this.Current.Months.Count > 1)
+			{
+				var thisMonth = DateTime.Now.Month.ToString("00");
+				var months = this.Current.Months.Where(kvp => kvp.Key != thisMonth).Select(kvp => kvp.Key).ToList();
+				months.ForEach(monthID => this.Current.Months.Remove(monthID));
+				var day = this.Current.Months.First().Value.Days.First().Value;
+				this.GetMonth(this.Current.Months.First().Value.Name, this.Current.Name, false).Days[day.Name] = day;
+			}
+
+			return this;
+		}
+
 		Statistics Load(JObject hours, string dayID, string monthID, string yearID, bool currentFirst = true)
 		{
 			var day = this.GetDay(dayID, monthID, yearID, currentFirst);
@@ -366,7 +395,7 @@ namespace net.vieapps.Services.Users
 			{
 				var id = $"{info.Year}{info.Month}{info.Day.Name}{UtilityService.BlankUUID}".Left(32);
 				var instance = await Info.GetAsync<Info>(id, cancellationToken).ConfigureAwait(false);
-				var doUpdate = instance != null;
+				var update = instance != null;
 				instance ??= new()
 				{
 					ID = id,
@@ -375,35 +404,9 @@ namespace net.vieapps.Services.Users
 					Day = info.Day.Name.As<int>()
 				};
 				instance.Statistics = info.Day.ToJson(false).ToString(Formatting.None);
-				await (doUpdate ? Info.UpdateAsync(instance, true, cancellationToken) : Info.CreateAsync(instance, cancellationToken)).ConfigureAwait(false);
+				await (update ? Info.UpdateAsync(instance, true, cancellationToken) : Info.CreateAsync(instance, cancellationToken)).ConfigureAwait(false);
 			}, true, false).ConfigureAwait(false);
-
-			var thisDay = DateTime.Now.Day.ToString("00");
-			var thisMonth = DateTime.Now.Month.ToString("00");
-
-			this.Current.Months.Values.ForEach(month =>
-			{
-				if (month.Days.Count > 1)
-				{
-					var dayIDs = month.Days.Where(kvp => kvp.Key != thisDay).Select(kvp => kvp.Key).ToList();
-					dayIDs.ForEach(dayID => month.Days.Remove(dayID));
-					if (!month.Days.IsEmpty)
-					{
-						var currentMonth = this.GetMonth(month.Name, this.Current.Name, false);
-						month.Days.ForEach(kvp => currentMonth.Days[kvp.Key] = kvp.Value);
-					}
-				}
-			});
-
-			if (this.Current.Months.Count > 1)
-			{
-				var months = this.Current.Months.Where(kvp => kvp.Key != thisMonth).Select(kvp => kvp.Key).ToList();
-				months.ForEach(monthID => this.Current.Months.Remove(monthID));
-				var day = this.Current.Months.First().Value.Days.First().Value;
-				this.GetMonth(this.Current.Months.First().Value.Name, this.Current.Name, false).Days[day.Name] = day;
-			}
-
-			return this;
+			return this.Normalize();
 		}
 
 		[BsonIgnoreExtraElements, DebuggerDisplay("Year = {Year}, Month = {Month}, Day = {Day}")]

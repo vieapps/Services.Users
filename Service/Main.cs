@@ -384,15 +384,8 @@ namespace net.vieapps.Services.Users
 			catch { }
 		}
 
-		async Task LoadAllStatisticsAsync()
-		{
-			if (this.Statistics.Years.IsEmpty)
-			{
-				await this.Statistics.LoadStatisticsAsync(this.CancellationToken).ConfigureAwait(false);
-				this.Statistics.Current.Sum(true);
-				this.Statistics.Years.Values.ForEach(year => year.Sum(true));
-			}
-		}
+		Task LoadAllStatisticsAsync()
+			=> this.Statistics.Years.IsEmpty ? this.Statistics.LoadStatisticsAsync(this.CancellationToken) : Task.CompletedTask;
 
 		async Task<JToken> ProcessStatisticsAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
@@ -3353,8 +3346,9 @@ namespace net.vieapps.Services.Users
 		#region Timers for working with background workers & schedulers
 		void RegisterTimers()
 		{
-			// clean expired sessions (12 hours)
 			if (this.IsUpdater)
+			{
+				// clean expired sessions (12 hours)
 				this.StartTimer(async () =>
 				{
 					var userID = UtilityService.GetAppSetting("Users:SystemAccountID", "VIEAppsNGX-MMXVII-System-Account");
@@ -3375,6 +3369,11 @@ namespace net.vieapps.Services.Users
 					}, true, false).ConfigureAwait(false);
 					await this.WriteLogsAsync(UtilityService.NewUUID, $"Clean {sessions.Count} expired session(s) successful [{this.NodeID}]", null, this.ServiceName, "Task").ConfigureAwait(false);
 				}, 12 * 60 * 60);
+
+				// send statistics (frequency)
+				if (this.UpdaterFrequency > 0)
+					this.StartTimer(() => this.SendStatistics(), this.UpdaterFrequency);
+			}
 
 			// sync all sessions/statistics (6 hours)
 			this.StartTimer(() => Task.WhenAll
@@ -3420,6 +3419,8 @@ namespace net.vieapps.Services.Users
 				await this.SaveStatisticsAsync(this.CancellationToken).ConfigureAwait(false);
 				if (this.IsUpdater)
 					await this.Statistics.SaveAsync(this.CancellationToken).ConfigureAwait(false);
+				else
+					this.Statistics.Normalize();
 			}, 10 * 60);
 
 			// sync sessions/statistics (5 minutes)
@@ -3429,10 +3430,6 @@ namespace net.vieapps.Services.Users
 				if (this.IsUpdater && this.UpdaterFrequency < 1)
 					this.SendStatistics();
 			}, 5 * 60);
-
-			// send statistics (frequency)
-			if (this.IsUpdater && this.UpdaterFrequency > 0)
-				this.StartTimer(() => this.SendStatistics(), this.UpdaterFrequency);
 		}
 		#endregion
 
