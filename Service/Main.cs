@@ -3160,7 +3160,7 @@ namespace net.vieapps.Services.Users
 				return;
 
 			if (message.Type.IsEquals("Session#State") || message.Type.IsEquals("Session#Track"))
-				this.Sessions.Track(message);
+				this.Sessions.Track(data);
 
 			else if (message.Type.IsEquals("Session#Sync"))
 				this.Sessions.Sync(data.Get<string>("ID"), new SessionInfo().CopyFrom(data));

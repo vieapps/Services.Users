@@ -671,8 +671,8 @@ namespace net.vieapps.Services.Users
 		public bool Track(TrackingInfo info)
 			=> info != null && (!this._trackAuthenticatedOnly || !string.IsNullOrWhiteSpace(info.UserID)) && this._trackingQueue.Writer.TryWrite(info);
 
-		public bool Track(CommunicateMessage message)
-			=> this.Track(message?.Data is not JObject data ? null : new TrackingInfo(data));
+		public bool Track(JObject data)
+			=> data != null && this.Track(new TrackingInfo(data));
 
 		public bool Exist(string sessionID)
 			=> !string.IsNullOrWhiteSpace(sessionID) && this._sessions.ContainsKey(sessionID);
