@@ -8,7 +8,6 @@ using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Collections.Generic;
-using System.Collections.Concurrent;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -25,8 +24,24 @@ namespace net.vieapps.Services.Users
 	{
 		public override string ServiceName => "Users";
 
+		public ServiceComponent() : base()
+			=> this.Sessions = new(
+				() => this.Statistics.Update(),
+				this.IsUpdater ? () => {
+					if (!this.Statistics.Years.IsEmpty)
+						this.SendStatistics();
+				} : null,
+				(correlationID, ex) => this.WriteLogsAsync(correlationID, $"Error occured while tracking sessions => {ex.Message}", ex)
+			);
+
+		public override void Dispose()
+		{
+			this.Sessions.Dispose();
+			base.Dispose();
+		}
+
 		#region Properties
-		ConcurrentDictionary<string, SessionInfo> Sessions { get; } = [];
+		Sessions Sessions { get; }
 
 		Statistics Statistics { get; } = new();
 
@@ -368,7 +383,7 @@ namespace net.vieapps.Services.Users
 		}
 		#endregion
 
-		#region Statistics
+		#region Statistics & Sessions
 		async Task LoadStatisticsAsync()
 		{
 			try
@@ -456,36 +471,16 @@ namespace net.vieapps.Services.Users
 							Type = "Session#Clear",
 							ExcludedNodeID = this.NodeID
 						}.Send(Router.GotBackupRouter());
-						var ids = this.Sessions.Where(kvp => string.IsNullOrWhiteSpace(kvp.Value.Session.UserID)).Select(kvp => kvp.Key).ToList();
-						ids.ForEach(id => this.Sessions.Remove(id));
-						if (this.IsUpdater)
-							await Utility.Cache.RemoveAsync(ids.Select(id => id.GetCacheKey<Session>()), cancellationToken).ConfigureAwait(false);
+						await this.Sessions.ClearAsync(this.IsUpdater ? ids => Utility.Cache.RemoveAsync(ids.Select(id => id.GetCacheKey<Session>()), cancellationToken) : null).ConfigureAwait(false);
 					}
 
 					if (requestInfo.ContainsKey("x-reload"))
-					{
-						var reloadedSessions = await Session.FindAsync<Session>(Filters<Session>.Equals("Online", true), Sorts<Session>.Descending("RenewedAt"), 0, 1, null, false, null, 0, cancellationToken).ConfigureAwait(false);
-						await reloadedSessions.ForEachAsync(async session =>
+						await this.Sessions.ReloadAsync(requestInfo.CorrelationID, cancellationToken, sessions =>
 						{
-							var profile = await Profile.GetAsync<Profile>(session.UserID, this.CancellationToken).ConfigureAwait(false);
-							var sessionInfo = new SessionInfo
-							{
-								Session = session,
-								User = new UserInfo
-								{
-									Name = profile?.Name,
-									Email = profile?.Email,
-									Location = await session.ToSession().GetLocationAsync(requestInfo.CorrelationID, cancellationToken).ConfigureAwait(false),
-									LastAccess = session.RenewedAt
-								},
-								Service = new ServiceInfo(),
-								LastAccess = session.RenewedAt
-							};
-							this.Sessions[session.ID] = sessionInfo;
-							this.SendSyncSession(sessionInfo);
-						}, true, false).ConfigureAwait(false);
-						this.SendSyncSessionsRequest();
-					}
+							sessions.ForEach(sessionInfo => this.SendSyncSession(sessionInfo));
+							this.SendSyncSessionsRequest();
+							return Task.CompletedTask;
+						}).ConfigureAwait(false);
 					else if (requestInfo.ContainsKey("x-clear"))
 					{
 						this.SendSyncSessionsRequest();
@@ -541,7 +536,7 @@ namespace net.vieapps.Services.Users
 					}
 				}
 
-				var sessions = this.Sessions.Select(kvp => kvp.Value);
+				var sessions = this.Sessions.Get();
 
 				if (requestInfo.TryGetParameter("x-user-id", out var userID))
 					sessions = sessions.Where(info => userID.IsEquals(info.Session.UserID));
@@ -665,10 +660,18 @@ namespace net.vieapps.Services.Users
 
 		JObject GetStatistics(IEnumerable<SessionInfo> sessions, Func<IEnumerable<SessionInfo>, JObject, JObject> transformer = null)
 		{
-			sessions ??= this.Sessions.Select(kvp => kvp.Value);
-			var total = sessions.Count();
-			var user = sessions.Count(sessionInfo => !string.IsNullOrWhiteSpace(sessionInfo.Session?.UserID));
-			var crawler = sessions.Count(sessionInfo => string.IsNullOrWhiteSpace(sessionInfo.Session?.UserID) && "Crawler".IsEquals(sessionInfo.User?.Name));
+			sessions ??= this.Sessions.Get();
+			var total = 0;
+			var user = 0;
+			var crawler = 0;
+			foreach (var sessionInfo in sessions)
+			{
+				total++;
+				if (!string.IsNullOrWhiteSpace(sessionInfo.Session?.UserID))
+					user++;
+				else if ("Crawler".IsEquals(sessionInfo.User?.Name))
+					crawler++;
+			}
 			var statistics = new JObject
 			{
 				["Total"] = total,
@@ -699,6 +702,90 @@ namespace net.vieapps.Services.Users
 				Data = statistics
 			}.Send();
 			return statistics;
+		}
+
+		void SendSyncSession(SessionInfo sessionInfo)
+			=> new CommunicateMessage(this.ServiceName)
+			{
+				Type = "Session#Sync",
+				ExcludedNodeID = this.NodeID,
+				Data = new JObject
+				{
+					["ID"] = sessionInfo.Session?.ID,
+					["Session"] = sessionInfo.Session?.ToJson(),
+					["User"] = sessionInfo.User?.ToJson(),
+					["Service"] = sessionInfo.Service?.ToJson(),
+					["LastAccess"] = sessionInfo.LastAccess
+				}
+			}.Send(Router.GotBackupRouter());
+
+		void SendSyncSessions(DateTime? checkpoint = null, Func<Task> onNextAsync = null)
+		{
+			checkpoint ??= DateTime.Now.AddMinutes(-15);
+			this.Sessions.Get().Where(sessionInfo => sessionInfo.LastAccess > checkpoint.Value).ToList().ForEach(this.SendSyncSession);
+			if (onNextAsync != null)
+				onNextAsync().Execute();
+		}
+
+		async Task SendSyncSessionsRequestAsync(string excludedNodeID = null)
+		{
+			await Task.Delay(UtilityService.GetRandomNumber(1234, 5678), this.CancellationToken).ConfigureAwait(false);
+			new CommunicateMessage(this.ServiceName)
+			{
+				Type = "Session#SyncRequest",
+				ExcludedNodeID = excludedNodeID ?? this.NodeID
+			}.Send(Router.GotBackupRouter());
+		}
+
+		void SendSyncSessionsRequest(string excludedNodeID = null)
+			=> this.SendSyncSessionsRequestAsync(excludedNodeID).Execute();
+
+		void SendSyncStatistics(int counters, string minuteID, string hourID, string dayID = null, string monthID = null, string yearID = null)
+			=> new CommunicateMessage(this.ServiceName)
+			{
+				Type = "Statistics#Track",
+				ExcludedNodeID = this.NodeID,
+				Data = new JObject
+				{
+					["Year"] = yearID,
+					["Month"] = monthID,
+					["Day"] = dayID,
+					["Hour"] = hourID,
+					["Minute"] = minuteID,
+					["Counters"] = counters
+				}
+			}.Send(Router.GotBackupRouter());
+
+		void SendSyncAllStatistics()
+			=> this.Statistics.SendStatistics(this.SendSyncStatistics);
+
+		async Task SendSyncStatisticsRequestAsync(bool all = false)
+		{
+			await Task.Delay(UtilityService.GetRandomNumber(1234, 2345), this.CancellationToken).ConfigureAwait(false);
+			new CommunicateMessage(this.ServiceName)
+			{
+				Type = $"Statistics#Sync{(all ? "All" : "")}"
+			}.Send(Router.GotBackupRouter());
+
+			if (!all)
+				await this.SaveStatisticsAsync(this.CancellationToken, UtilityService.GetRandomNumber(1234, 2345)).ConfigureAwait(false);
+
+			else if (this.IsUpdater)
+			{
+				await Task.Delay(UtilityService.GetRandomNumber(1234, 2345), this.CancellationToken).ConfigureAwait(false);
+				await this.LoadAllStatisticsAsync().ConfigureAwait(false);
+				this.SendStatistics();
+			}
+		}
+
+		void SendSyncStatisticsRequest(bool all = false)
+			=> this.SendSyncStatisticsRequestAsync(all).Execute();
+
+		async Task SaveStatisticsAsync(CancellationToken cancellationToken, int waitingTimes = 0)
+		{
+			if (waitingTimes > 0)
+				await Task.Delay(waitingTimes, cancellationToken).ConfigureAwait(false);
+			await this.Statistics.SaveAsync(this.StatisticsFilePath, cancellationToken).ConfigureAwait(false);
 		}
 		#endregion
 
@@ -741,7 +828,7 @@ namespace net.vieapps.Services.Users
 					{ "ID", requestInfo.Session?.SessionID },
 					{ "Existed", false }
 				};
-			else if (this.Sessions.ContainsKey(requestInfo.Session.SessionID))
+			else if (this.Sessions.Exist(requestInfo.Session.SessionID))
 				return new JObject
 				{
 					{ "ID", requestInfo.Session.SessionID },
@@ -3069,149 +3156,33 @@ namespace net.vieapps.Services.Users
 		#region Process inter-communicate messages
 		protected override async Task ProcessInterCommunicateMessageAsync(CommunicateMessage message, CancellationToken cancellationToken = default)
 		{
-			// prepare
-			var data = message.Data?.ToExpandoObject();
-			if (data == null)
+			if (message.Data is not JObject data)
 				return;
 
-			var correlationID = data.Get<string>("CorrelationID") ?? data.Get<string>("X-Correlation-ID") ?? UtilityService.NewUUID;
-
-			if (message.Type.IsEquals("Session#State") || message.Type.IsEquals("Statistics#Track"))
-				try
-				{
-					if (message.Type.IsEquals("Statistics#Track"))
-					{
-						this.Statistics.Update();
-						return;
-					}
-
-					var existed = true;
-					var sessionID = data.Get<string>("SessionID") ?? data.Get<string>("ID");
-					var cacheKey = sessionID?.GetCacheKey<Session>();
-
-					if (!this.Sessions.TryGetValue(sessionID, out var sessionInfo))
-					{
-						var newInfo = new SessionInfo();
-						sessionInfo = this.Sessions.TryAdd(sessionID, newInfo) ? newInfo : this.Sessions[sessionID];
-					}
-
-					if (sessionInfo.Session == null)
-					{
-						var session = string.IsNullOrWhiteSpace(data.Get<string>("UserID"))
-							? await Utility.Cache.GetAsync<Session>(cacheKey, cancellationToken).ConfigureAwait(false)
-							: await Session.GetAsync<Session>(sessionID, cancellationToken).ConfigureAwait(false);
-						lock (sessionInfo.Locker)
-						{
-							existed = sessionInfo.Session != null;
-							sessionInfo.Session ??= session ?? new(Session.ToSession(data), data.Get<string>("OSInfo"));
-						}
-					}
-
-					var now = DateTime.Now;
-					Account account = null;
-
-					if (data.Get("Online", false))
-					{
-						if (data.Get("Track", true))
-							this.Statistics.Update();
-
-						if (this.IsUpdater && (!existed || (now - sessionInfo.User.LastAccess).TotalMinutes > 9))
-							account = await Account.GetAsync<Account>(sessionInfo.Session.UserID, cancellationToken).ConfigureAwait(false);
-
-						var serviceInfo = data.Get<ExpandoObject>("Service");
-						var profile = existed ? null : await Profile.GetAsync<Profile>(sessionInfo.Session.UserID, cancellationToken).ConfigureAwait(false);
-
-						lock (sessionInfo.Locker)
-						{
-							sessionInfo.Session.Online = true;
-							if (existed)
-							{
-								sessionInfo.LastAccess = now;
-								if ((now - sessionInfo.User.LastAccess).TotalMinutes > 9)
-									sessionInfo.User.LastAccess = now;
-								var ipAddress = data.Get<string>("IP");
-								if (!string.IsNullOrWhiteSpace(ipAddress) && !ipAddress.Equals(sessionInfo.Session.IP))
-								{
-									sessionInfo.Session.IP = ipAddress;
-									sessionInfo.Session.AppInfo = data.Get<string>("AppInfo") ?? $"{data.Get<string>("AppName")} @ {data.Get<string>("AppPlatform")}";
-									sessionInfo.Session.OSInfo = data.Get<string>("OSInfo") ?? $"{Extensions.GetOSInfo(data.Get<string>("AppAgent"))} [{data.Get<string>("AppAgent")}]";
-									sessionInfo.UpdateAsync(correlationID, this.IsUpdater).Execute(false, null, 0, 90000);
-								}
-								sessionInfo.Service.CopyFrom(serviceInfo);
-							}
-							else
-							{
-								sessionInfo.User = new()
-								{
-									Name = profile?.Name ?? (data.Get("Crawler", false) ? "Crawler" : null),
-									Email = profile?.Email
-								};
-								sessionInfo.Service = new(serviceInfo);
-								sessionInfo.UpdateAsync(correlationID, false).Execute(false, null, 0, 90000);
-							}
-						}
-					}
-
-					else if (this.Sessions.Remove(sessionID) && this.IsUpdater)
-					{
-						await (string.IsNullOrWhiteSpace(sessionInfo.Session.UserID) ? Utility.Cache.RemoveAsync(cacheKey, cancellationToken) : Session.UpdateAsync(sessionInfo.Session, true, cancellationToken)).ConfigureAwait(false);
-						account = await Account.GetAsync<Account>(sessionInfo.Session.UserID, cancellationToken).ConfigureAwait(false);
-					}
-
-					if (account != null)
-					{
-						await this.LoadAllStatisticsAsync().ConfigureAwait(false);
-						this.SendStatistics();
-						account.LastAccess = now;
-						await Account.UpdateAsync(account, true, cancellationToken).ConfigureAwait(false);
-					}
-				}
-				catch (Exception ex)
-				{
-					await this.WriteLogsAsync(correlationID, $"Error occurred while updating state of a session => {ex.Message}", ex, this.ServiceName, "Communicates", LogLevel.Error).ConfigureAwait(false); ;
-				}
+			if (message.Type.IsEquals("Session#State") || message.Type.IsEquals("Session#Track"))
+				this.Sessions.Track(message);
 
 			else if (message.Type.IsEquals("Session#Sync"))
-				try
-				{
-					this.Sessions.GetOrAdd(data.Get<string>("ID"), _ => new SessionInfo(data));
-				}
-				catch (Exception ex)
-				{
-					await this.WriteLogsAsync(correlationID, $"Error occurred while syncing state of a session => {ex.Message}", ex, this.ServiceName, "Communicates", LogLevel.Error).ConfigureAwait(false); ;
-				}
+				this.Sessions.Sync(data.Get<string>("ID"), new SessionInfo().CopyFrom(data));
 
 			else if (message.Type.IsEquals("Session#Remove"))
-				try
-				{
-					this.Sessions.Remove(data.Get<string>("ID"));
-				}
-				catch { }
+				this.Sessions.Remove(data.Get<string>("ID"));
 
 			else if (message.Type.IsEquals("Session#Clear"))
-			{
-				var ids = this.Sessions.Where(kvp => string.IsNullOrWhiteSpace(kvp.Value.Session.UserID)).Select(kvp => kvp.Key).ToList();
-				ids.ForEach(id => this.Sessions.Remove(id));
-				if (this.IsUpdater)
-					await Utility.Cache.RemoveAsync(ids.Select(id => id.GetCacheKey<Session>()), cancellationToken).ConfigureAwait(false);
-			}
-
-			else if (message.Type.IsEquals("Session#UpdateLocation"))
-				this.Sessions.Where(kvp => string.IsNullOrWhiteSpace(kvp.Value.User.Location) || kvp.Value.User.Location.IsEquals(", "))
-					.Select(kvp => kvp.Value).ToList().ForEach(sessionInfo => sessionInfo.UpdateAsync(correlationID, false).Execute(false, null, 0, 90000));
+				await this.Sessions.ClearAsync(this.IsUpdater ? ids => Utility.Cache.RemoveAsync(ids.Select(id => id.GetCacheKey<Session>()), cancellationToken) : null).ConfigureAwait(false);
 
 			else if (message.Type.IsEquals("Session#SyncRequest"))
-			{
-				await Task.Delay(UtilityService.GetRandomNumber(456, 789), this.CancellationToken).ConfigureAwait(false);
 				this.SendSyncSessions();
-			}
 
 			else if (message.Type.IsEquals("Session#Dump"))
-				await this.Sessions.Select(kvp => kvp.Value)
+				await this.Sessions.Get()
 					.OrderByDescending(sessionInfo => sessionInfo.LastAccess)
 					.Select(sessionInfo => sessionInfo.ToJson())
 					.ToJArray()
 					.SaveAsTextAsync(Path.Combine(UtilityService.GetAppSetting("Path:Status", "status"), "sessions.json"), cancellationToken).ConfigureAwait(false);
+
+			else if (message.Type.IsEquals("Statistics#Track"))
+				this.Statistics.Update();
 
 			else if (message.Type.IsEquals("Statistics#Sync"))
 			{
@@ -3255,91 +3226,7 @@ namespace net.vieapps.Services.Users
 
 			// unknown
 			else if (this.IsDebugResultsEnabled)
-				await this.WriteLogsAsync(correlationID, $"Got an inter-communicate message => {message.ToJson().ToString(this.JsonFormat)})", null, this.ServiceName, "Communicates", LogLevel.Warning).ConfigureAwait(false);
-		}
-
-		void SendSyncSession(SessionInfo sessionInfo)
-			=> new CommunicateMessage(this.ServiceName)
-			{
-				Type = "Session#Sync",
-				ExcludedNodeID = this.NodeID,
-				Data = new JObject
-				{
-					["ID"] = sessionInfo.Session?.ID,
-					["Session"] = sessionInfo.Session?.ToJson(),
-					["User"] = sessionInfo.User?.ToJson(),
-					["Service"] = sessionInfo.Service?.ToJson(),
-					["LastAccess"] = sessionInfo.LastAccess
-				}
-			}.Send(Router.GotBackupRouter());
-
-		void SendSyncSessions(DateTime? checkpoint = null, Func<Task> onNextAsync = null)
-		{
-			checkpoint ??= DateTime.Now.AddMinutes(-15);
-			this.Sessions.Select(kvp => kvp.Value).Where(sessionInfo => sessionInfo.LastAccess > checkpoint.Value).ToList().ForEach(this.SendSyncSession);
-			if (onNextAsync != null)
-				onNextAsync().Execute();
-		}
-
-		async Task SendSyncSessionsRequestAsync(string excludedNodeID = null)
-		{
-			await Task.Delay(UtilityService.GetRandomNumber(1234, 5678), this.CancellationToken).ConfigureAwait(false);
-			new CommunicateMessage(this.ServiceName)
-			{
-				Type = "Session#SyncRequest",
-				ExcludedNodeID = excludedNodeID ?? this.NodeID
-			}.Send(Router.GotBackupRouter());
-		}
-
-		void SendSyncSessionsRequest(string excludedNodeID = null)
-			=> this.SendSyncSessionsRequestAsync(excludedNodeID).Execute();
-
-		void SendSyncStatistics(int counters, string minuteID, string hourID, string dayID = null, string monthID = null, string yearID = null)
-			=> new CommunicateMessage(this.ServiceName)
-			{
-				Type = "Statistics#Update",
-				ExcludedNodeID = this.NodeID,
-				Data = new JObject
-				{
-					["Year"] = yearID,
-					["Month"] = monthID,
-					["Day"] = dayID,
-					["Hour"] = hourID,
-					["Minute"] = minuteID,
-					["Counters"] = counters
-				}
-			}.Send(Router.GotBackupRouter());
-
-		void SendSyncAllStatistics()
-			=> this.Statistics.SendStatistics(this.SendSyncStatistics);
-
-		async Task SendSyncStatisticsRequestAsync(bool all = false)
-		{
-			await Task.Delay(UtilityService.GetRandomNumber(1234, 2345), this.CancellationToken).ConfigureAwait(false);
-			new CommunicateMessage(this.ServiceName)
-			{
-				Type = $"Statistics#Sync{(all ? "All" : "")}"
-			}.Send(Router.GotBackupRouter());
-
-			if (!all)
-				await this.SaveStatisticsAsync(this.CancellationToken, UtilityService.GetRandomNumber(1234, 2345)).ConfigureAwait(false);
-
-			else if (this.IsUpdater)
-			{
-				await Task.Delay(UtilityService.GetRandomNumber(1234, 2345), this.CancellationToken).ConfigureAwait(false);
-				await this.LoadAllStatisticsAsync().ConfigureAwait(false);
-				this.SendStatistics();
-			}
-		}
-
-		void SendSyncStatisticsRequest(bool all = false)
-			=> this.SendSyncStatisticsRequestAsync(all).Execute();
-
-		async Task SaveStatisticsAsync(CancellationToken cancellationToken, int waitingTimes = 0)
-		{
-			if (waitingTimes > 0)
-				await Task.Delay(waitingTimes, cancellationToken).ConfigureAwait(false);
-			await this.Statistics.SaveAsync(this.StatisticsFilePath, cancellationToken).ConfigureAwait(false);
+				await this.WriteLogsAsync(data.Get<string>("CorrelationID") ?? data.Get<string>("X-Correlation-ID"), $"Got an inter-communicate message => {message.ToJson().ToString(this.JsonFormat)})", null, this.ServiceName, "Communicates", LogLevel.Warning).ConfigureAwait(false);
 		}
 		#endregion
 
@@ -3386,36 +3273,16 @@ namespace net.vieapps.Services.Users
 			// refresh sessions & statistics (10 minutes)
 			this.StartTimer(async () =>
 			{
-				var userTimepoint = DateTime.Now.AddMinutes(-15);
-				var visitorTimepoint = DateTime.Now.AddMinutes(-10);
-				await this.Sessions.Select(kvp => (SessionID: kvp.Key, kvp.Value.LastAccess, kvp.Value.Session.UserID, IsAnonymous: string.IsNullOrWhiteSpace(kvp.Value.Session.UserID))).ToList().ForEachAsync(async info =>
+				await this.Sessions.CleanupAsync(TimeSpan.FromMinutes(15), TimeSpan.FromMinutes(10), this.IsUpdater ? sessions => sessions.ForEachAsync(async sessionInfo =>
 				{
-					if (info.LastAccess < (info.IsAnonymous ? visitorTimepoint : userTimepoint))
+					if (string.IsNullOrWhiteSpace(sessionInfo.Session.UserID))
 					{
-						var messsage = new CommunicateMessage(this.ServiceName)
-						{
-							ExcludedNodeID = this.NodeID,
-							Type = "Session#State",
-							Data = new JObject
-							{
-								["SessionID"] = info.SessionID,
-								["UserID"] = info.UserID,
-								["Online"] = false
-							}
-						};
-						messsage.Send(Router.GotBackupRouter());
-						await this.ProcessInterCommunicateMessageAsync(messsage, this.CancellationToken).ConfigureAwait(false);
-					}
-					else if (info.IsAnonymous)
-					{
-						var cacheKey = info.SessionID.GetCacheKey<Session>();
+						var cacheKey = sessionInfo.Session.ID.GetCacheKey<Session>();
 						var session = await Utility.Cache.GetAsync<Session>(cacheKey, this.CancellationToken).ConfigureAwait(false);
-						if (session == null)
-							this.Sessions.Remove(info.SessionID);
-						else if (this.IsUpdater)
+						if (session != null)
 							await Utility.Cache.SetAsync(cacheKey, session, 15, this.CancellationToken).ConfigureAwait(false);
 					}
-				}, true, false).ConfigureAwait(false);
+				}, true, false) : null).ConfigureAwait(false);
 				await this.SaveStatisticsAsync(this.CancellationToken).ConfigureAwait(false);
 				if (this.IsUpdater)
 					await this.Statistics.SaveAsync(this.CancellationToken).ConfigureAwait(false);
@@ -3529,4 +3396,5 @@ namespace net.vieapps.Services.Users
 		#endregion
 
 	}
+
 }
