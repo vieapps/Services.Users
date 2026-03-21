@@ -177,7 +177,7 @@ namespace net.vieapps.Services.Users
 		public DateTime LastAccess { get; set; } = DateTime.Now;
 	}
 
-	public sealed class TrackingInfo
+	public class TrackingInfo
 	{
 		public string SessionID { get; init; }
 		public string DeviceID { get; init; }
@@ -220,13 +220,13 @@ namespace net.vieapps.Services.Users
 		}
 	}
 
-	public sealed class LocationInfo
+	public class LocationInfo
 	{
 		public Services.Session Session { get; init; }
 		public string CorrelationID { get; init; }
 	}
 
-	public sealed class Sessions : IDisposable
+	public class Sessions : IDisposable
 	{
 		readonly ConcurrentDictionary<string, SessionInfo> _sessions;
 		readonly bool _trackAuthenticatedOnly = "true".IsEquals(UtilityService.GetAppSetting("Sessions:Track:AuthenticatedOnly", "false"));
@@ -436,15 +436,15 @@ namespace net.vieapps.Services.Users
 			try
 			{
 				while (await this._locationQueue.Reader.WaitToReadAsync(this._cts.Token).ConfigureAwait(false))
-					while (this._locationQueue.Reader.TryRead(out var job))
+					while (this._locationQueue.Reader.TryRead(out var info))
 					{
 						try
 						{
-							await this.ProcessLocationAsync(job).ConfigureAwait(false);
+							await this.ProcessLocationAsync(info).ConfigureAwait(false);
 						}
 						catch (Exception ex)
 						{
-							await this._onErrorAsync(job?.CorrelationID, ex).ConfigureAwait(false);
+							await this._onErrorAsync(info?.CorrelationID, ex).ConfigureAwait(false);
 						}
 					}
 			}
@@ -470,6 +470,7 @@ namespace net.vieapps.Services.Users
 
 				using var cts = CancellationTokenSource.CreateLinkedTokenSource(this._cts.Token);
 				cts.CancelAfter(TimeSpan.FromSeconds(this._backgroundTimeout));
+
 				location = await info.Session.GetLocationAsync(info.CorrelationID, cts.Token).ConfigureAwait(false);
 				if (!string.IsNullOrWhiteSpace(location))
 				{
@@ -682,7 +683,7 @@ namespace net.vieapps.Services.Users
 		public Task ClearAsync(Func<IEnumerable<string>, Task> onCompletedAsync = null)
 		{
 			var ids = this._sessions.Where(kvp => string.IsNullOrWhiteSpace(kvp.Value.Session.UserID)).Select(kvp => kvp.Key).ToList();
-			ids.ForEach(id => this._sessions.TryRemove(id, out var _));
+			ids.ForEach(id => this.Remove(id));
 			return onCompletedAsync != null ? onCompletedAsync(ids) : Task.CompletedTask;
 		}
 
