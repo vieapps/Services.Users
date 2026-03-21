@@ -379,7 +379,6 @@ namespace net.vieapps.Services.Users
 
 				sessionInfo.LastAccess = now;
 				sessionInfo.Session.Online = info.Online;
-				sessionInfo.User.LastAccess = now;
 
 				if (!string.IsNullOrWhiteSpace(info.DeviceID))
 					sessionInfo.Session.DeviceID = info.DeviceID;
@@ -683,7 +682,7 @@ namespace net.vieapps.Services.Users
 		public Task ClearAsync(Func<IEnumerable<string>, Task> onCompletedAsync = null)
 		{
 			var ids = this._sessions.Where(kvp => string.IsNullOrWhiteSpace(kvp.Value.Session.UserID)).Select(kvp => kvp.Key).ToList();
-			ids.ForEach(id => this._sessions.Remove(id));
+			ids.ForEach(id => this._sessions.TryRemove(id, out var _));
 			return onCompletedAsync != null ? onCompletedAsync(ids) : Task.CompletedTask;
 		}
 
