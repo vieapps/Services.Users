@@ -228,12 +228,12 @@ namespace net.vieapps.Services.Users
 
 	public class Sessions : IDisposable
 	{
-		readonly ConcurrentDictionary<string, SessionInfo> _sessions;
+		readonly ConcurrentDictionary<string, SessionInfo> _sessions = [];
 		readonly bool _trackAuthenticatedOnly = "true".IsEquals(UtilityService.GetAppSetting("Sessions:Track:AuthenticatedOnly", "false"));
 
 		readonly System.Action _trackStatistics;
 		readonly System.Action _sendStatistics;
-		readonly Func<string, Exception, Task> _onErrorAsync;
+		readonly Func<Exception, string, Task> _onErrorAsync;
 
 		readonly Channel<TrackingInfo> _trackingQueue;
 		readonly Channel<LocationInfo> _locationQueue;
@@ -250,10 +250,8 @@ namespace net.vieapps.Services.Users
 		readonly CancellationTokenSource _cts = new();
 		readonly List<Task> _workers = [];
 
-		public Sessions(System.Action trackStatistics, System.Action sendStatistics, Func<string, Exception, Task> onErrorAsync, int sessionCapacity = 10240, int sessionWorkers = 1, int backgroundCapacity = 1024, int backgroundWorkers = 4, int backgroundTimeout = 30)
+		public Sessions(System.Action trackStatistics, System.Action sendStatistics, Func<Exception, string, Task> onErrorAsync, int sessionCapacity = 10240, int sessionWorkers = 1, int backgroundCapacity = 1024, int backgroundWorkers = 4, int backgroundTimeout = 30)
 		{
-			this._sessions = [];
-
 			this._trackStatistics = trackStatistics ?? (() => { });
 			this._sendStatistics = sendStatistics ?? (() => { });
 			this._onErrorAsync = onErrorAsync ?? ((_, _) => Task.CompletedTask);
@@ -319,23 +317,21 @@ namespace net.vieapps.Services.Users
 		{
 			try
 			{
-				while (await this._trackingQueue.Reader.WaitToReadAsync(_cts.Token).ConfigureAwait(false))
-					while (this._trackingQueue.Reader.TryRead(out var evt))
-					{
+				while (await this._trackingQueue.Reader.WaitToReadAsync(this._cts.Token).ConfigureAwait(false))
+					while (this._trackingQueue.Reader.TryRead(out var info))
 						try
 						{
-							this.ProcessTracking(evt);
+							this.ProcessTracking(info);
 						}
 						catch (Exception ex)
 						{
-							await this._onErrorAsync(evt?.CorrelationID, ex).ConfigureAwait(false);
+							await this._onErrorAsync(ex, info?.CorrelationID).ConfigureAwait(false);
 						}
-					}
 			}
 			catch (OperationCanceledException) { }
 			catch (Exception ex)
 			{
-				await this._onErrorAsync(null, ex).ConfigureAwait(false);
+				await this._onErrorAsync(ex, null).ConfigureAwait(false);
 			}
 		}
 
@@ -437,21 +433,19 @@ namespace net.vieapps.Services.Users
 			{
 				while (await this._locationQueue.Reader.WaitToReadAsync(this._cts.Token).ConfigureAwait(false))
 					while (this._locationQueue.Reader.TryRead(out var info))
-					{
 						try
 						{
 							await this.ProcessLocationAsync(info).ConfigureAwait(false);
 						}
 						catch (Exception ex)
 						{
-							await this._onErrorAsync(info?.CorrelationID, ex).ConfigureAwait(false);
+							await this._onErrorAsync(ex, info?.CorrelationID).ConfigureAwait(false);
 						}
-					}
 			}
 			catch (OperationCanceledException) { }
 			catch (Exception ex)
 			{
-				await this._onErrorAsync(null, ex).ConfigureAwait(false);
+				await this._onErrorAsync(ex, null).ConfigureAwait(false);
 			}
 		}
 
@@ -538,21 +532,19 @@ namespace net.vieapps.Services.Users
 			{
 				while (await this._normalizationQueue.Reader.WaitToReadAsync(this._cts.Token).ConfigureAwait(false))
 					while (this._normalizationQueue.Reader.TryRead(out var sessionID))
-					{
 						try
 						{
 							await this.ProcessNormalizationAsync(sessionID).ConfigureAwait(false);
 						}
 						catch (Exception ex)
 						{
-							await this._onErrorAsync(null, ex).ConfigureAwait(false);
+							await this._onErrorAsync(ex, null).ConfigureAwait(false);
 						}
-					}
 			}
 			catch (OperationCanceledException) { }
 			catch (Exception ex)
 			{
-				await this._onErrorAsync(null, ex).ConfigureAwait(false);
+				await this._onErrorAsync(ex, null).ConfigureAwait(false);
 			}
 		}
 
@@ -614,21 +606,19 @@ namespace net.vieapps.Services.Users
 			{
 				while (await this._lastAccessQueue.Reader.WaitToReadAsync(this._cts.Token).ConfigureAwait(false))
 					while (this._lastAccessQueue.Reader.TryRead(out var userID))
-					{
 						try
 						{
 							await this.UpdateLastAccessAsync(userID).ConfigureAwait(false);
 						}
 						catch (Exception ex)
 						{
-							await this._onErrorAsync(null, ex).ConfigureAwait(false);
+							await this._onErrorAsync(ex, null).ConfigureAwait(false);
 						}
-					}
 			}
 			catch (OperationCanceledException) { }
 			catch (Exception ex)
 			{
-				await this._onErrorAsync(null, ex).ConfigureAwait(false);
+				await this._onErrorAsync(ex, null).ConfigureAwait(false);
 			}
 		}
 

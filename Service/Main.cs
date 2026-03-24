@@ -28,10 +28,10 @@ namespace net.vieapps.Services.Users
 			=> this.Sessions = new(
 				() => this.Statistics.Update(),
 				this.IsUpdater ? () => {
-					if (!this.Statistics.Years.IsEmpty)
+					if (!this.Statistics.Years.IsEmpty && this.Statistics.TotalOfCurrentMonth > 0)
 						this.SendStatistics();
 				} : null,
-				(correlationID, ex) => this.WriteLogsAsync(correlationID, $"Error occured while tracking sessions => {ex.Message}", ex)
+				(ex, correlationID) => this.WriteLogsAsync(correlationID, $"Error occured while tracking sessions => {ex.Message}", ex)
 			);
 
 		public override void Dispose()
