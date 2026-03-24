@@ -27,11 +27,14 @@ namespace net.vieapps.Services.Users
 		public ServiceComponent() : base()
 			=> this.Sessions = new(
 				() => this.Statistics.Update(),
-				this.IsUpdater ? () => {
-					if (!this.Statistics.Years.IsEmpty && this.Statistics.TotalOfCurrentMonth > 0)
-						this.SendStatistics();
-				} : null,
-				(ex, correlationID) => this.WriteLogsAsync(correlationID, $"Error occured while tracking sessions => {ex.Message}", ex)
+				this.IsUpdater
+					? () =>
+					{
+						if (!this.Statistics.Years.IsEmpty && this.Statistics.TotalOfCurrentMonth > 0)
+							this.SendStatistics();
+					}
+					: null,
+				(ex, correlationID) => this.WriteLogsAsync(correlationID, $"Error occured while tracking sessions => {ex.Message}", ex, "Sessions")
 			);
 
 		public override void Dispose()
@@ -3259,7 +3262,11 @@ namespace net.vieapps.Services.Users
 
 				// send statistics (frequency)
 				if (this.UpdaterFrequency > 0)
-					this.StartTimer(() => this.SendStatistics(), this.UpdaterFrequency);
+					this.StartTimer(() =>
+					{
+						if (!this.Statistics.Years.IsEmpty && this.Statistics.TotalOfCurrentMonth > 0)
+							this.SendStatistics();
+					}, this.UpdaterFrequency);
 			}
 
 			// sync all sessions/statistics (6 hours)
@@ -3294,7 +3301,7 @@ namespace net.vieapps.Services.Users
 			this.StartTimer(() =>
 			{
 				this.SendSyncSessions(DateTime.Now.AddMinutes(-5), () => this.SendSyncStatisticsRequestAsync());
-				if (this.IsUpdater && this.UpdaterFrequency < 1)
+				if (this.IsUpdater && this.UpdaterFrequency < 1 && !this.Statistics.Years.IsEmpty && this.Statistics.TotalOfCurrentMonth > 0)
 					this.SendStatistics();
 			}, 5 * 60);
 		}
