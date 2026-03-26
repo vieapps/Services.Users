@@ -39,7 +39,7 @@ namespace net.vieapps.Services.Users
 				{
 					if (addRelated)
 					{
-						var account = Account.Get<Account>(profile?.ID);
+						var account = Account.Get(profile?.ID);
 						obj["LastAccess"] = account?.LastAccess;
 						obj["Joined"] = account?.Joined;
 

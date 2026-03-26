@@ -639,10 +639,10 @@ namespace net.vieapps.Services.Users
 				if (requestInfo.ContainsKey("x-latest") && isSystemAdministrator && !onlyStatistics)
 				{
 					var latest = new List<JObject>();
-					var latestSessions = await Session.FindAsync<Session>(null, Sorts<Session>.Descending("RenewedAt"), requestInfo.TryGetParameter("x-latest", out var xlatest) && Int32.TryParse(xlatest, out var pageSize) && pageSize > 0 ? pageSize : 100, 1, null, false, null, 0, cancellationToken).ConfigureAwait(false);
+					var latestSessions = await Session.FindAsync(null, Sorts<Session>.Descending("RenewedAt"), requestInfo.TryGetParameter("x-latest", out var xlatest) && Int32.TryParse(xlatest, out var pageSize) && pageSize > 0 ? pageSize : 100, 1, null, false, null, 0, cancellationToken).ConfigureAwait(false);
 					await latestSessions.ForEachAsync(async session =>
 					{
-						var profile = await Profile.GetAsync<Profile>(session.UserID, cancellationToken).ConfigureAwait(false);
+						var profile = await Profile.GetAsync(session.UserID, cancellationToken).ConfigureAwait(false);
 						latest.Add(new JObject
 						{
 							["ID"] = session.ID,
@@ -840,7 +840,7 @@ namespace net.vieapps.Services.Users
 
 			var session = await Utility.Cache.GetAsync<Session>(requestInfo.Session.SessionID.GetCacheKey<Session>(), cancellationToken).ConfigureAwait(false);
 			if (session == null && !requestInfo.Session.User.ID.Equals("") && !requestInfo.Session.User.IsSystemAccount)
-				session = await Session.GetAsync<Session>(requestInfo.Session.SessionID, cancellationToken).ConfigureAwait(false);
+				session = await Session.GetAsync(requestInfo.Session.SessionID, cancellationToken).ConfigureAwait(false);
 
 			return new JObject
 			{
@@ -857,7 +857,7 @@ namespace net.vieapps.Services.Users
 				throw new InformationInvalidException("The signature is not found or invalid");
 			var session = requestInfo.Session.User.ID.Equals("") || requestInfo.Session.User.IsSystemAccount
 				? await Utility.Cache.FetchAsync<Session>(requestInfo.Session.SessionID, cancellationToken).ConfigureAwait(false)
-				: await Session.GetAsync<Session>(requestInfo.Session.SessionID, cancellationToken).ConfigureAwait(false);
+				: await Session.GetAsync(requestInfo.Session.SessionID, cancellationToken).ConfigureAwait(false);
 			return session?.ToJson();
 		}
 		#endregion
@@ -889,7 +889,7 @@ namespace net.vieapps.Services.Users
 			// register a session of authenticated account
 			else
 			{
-				var session = await Session.GetAsync<Session>(requestInfo.Session.SessionID, cancellationToken, false).ConfigureAwait(false);
+				var session = await Session.GetAsync(requestInfo.Session.SessionID, cancellationToken, false).ConfigureAwait(false);
 				if (session == null)
 				{
 					session = Session.CreateInstance(requestBody);
@@ -995,7 +995,7 @@ namespace net.vieapps.Services.Users
 					}
 					else if (!email.IsEquals(identity))
 					{
-						var profile = await Profile.GetAsync<Profile>(account.ID, cancellationToken).ConfigureAwait(false);
+						var profile = await Profile.GetAsync(account.ID, cancellationToken).ConfigureAwait(false);
 						if (profile != null && !email.IsEquals(profile.Email))
 						{
 							profile.Email = email;
@@ -1049,7 +1049,7 @@ namespace net.vieapps.Services.Users
 				throw new InformationInvalidException("The signature is not found or invalid");
 
 			// remove session
-			await Session.DeleteAsync<Session>(requestInfo.Session.SessionID, requestInfo.Session.User.ID, cancellationToken).ConfigureAwait(false);
+			await Session.DeleteAsync(requestInfo.Session.SessionID, requestInfo.Session.User.ID, cancellationToken).ConfigureAwait(false);
 
 			// update account
 			var account = await Account.GetByIDAsync(requestInfo.Session.User.ID, cancellationToken).ConfigureAwait(false);
@@ -1453,7 +1453,7 @@ namespace net.vieapps.Services.Users
 				var phone = stamp.Decrypt(this.AuthenticationKey, true);
 				var mappingAccount = await Account.GetByAccessIdentityAsync(phone, AccountType.BuiltIn, cancellationToken, false).ConfigureAwait(false);
 				if (mappingAccount != null && account.ID.IsEquals(mappingAccount.AccessMapIdentity))
-					await Account.DeleteAsync<Account>(mappingAccount.ID, account.ID, cancellationToken).ConfigureAwait(false);
+					await Account.DeleteAsync(mappingAccount.ID, account.ID, cancellationToken).ConfigureAwait(false);
 			}
 
 			// update settings
@@ -1705,7 +1705,7 @@ namespace net.vieapps.Services.Users
 			var smtpServerUsername = instructions.Item3.Item4;
 			var smtpServerPassword = instructions.Item3.Item5;
 
-			var inviter = mode.Equals("invite") ? await Profile.GetAsync<Profile>(requestInfo.Session.User.ID, cancellationToken).ConfigureAwait(false) : null;
+			var inviter = mode.Equals("invite") ? await Profile.GetAsync(requestInfo.Session.User.ID, cancellationToken).ConfigureAwait(false) : null;
 			var @params = new JObject
 			{
 				{ "Account", identity },
@@ -2528,7 +2528,7 @@ namespace net.vieapps.Services.Users
 		{
 			// get information
 			var id = requestInfo.GetObjectIdentity() ?? requestInfo.Session.User.ID;
-			var profile = await Profile.GetAsync<Profile>(id, cancellationToken).ConfigureAwait(false) ?? throw new InformationNotFoundException();
+			var profile = await Profile.GetAsync(id, cancellationToken).ConfigureAwait(false) ?? throw new InformationNotFoundException();
 
 			// prepare
 			var objectName = requestInfo.GetQueryParameter("related-object");
@@ -2572,7 +2572,7 @@ namespace net.vieapps.Services.Users
 
 			// get information
 			var account = await Account.GetByIDAsync(id, cancellationToken).ConfigureAwait(false);
-			var profile = await Profile.GetAsync<Profile>(account?.ID, cancellationToken).ConfigureAwait(false);
+			var profile = await Profile.GetAsync(account?.ID, cancellationToken).ConfigureAwait(false);
 			if (profile == null || account == null)
 				throw new InformationNotFoundException();
 
@@ -2859,12 +2859,12 @@ namespace net.vieapps.Services.Users
 			Account account = null;
 			User user = null;
 
-			var session = await Session.GetAsync<Session>(token.SessionID, cancellationToken).ConfigureAwait(false);
+			var session = await Session.GetAsync(token.SessionID, cancellationToken).ConfigureAwait(false);
 			if (session == null)
 			{
 				account = string.IsNullOrWhiteSpace(token.UserID)
 					? null
-					: await Account.GetAsync<Account>(token.UserID, cancellationToken).ConfigureAwait(false) ?? throw new InformationNotFoundException("User is not found");
+					: await Account.GetAsync(token.UserID, cancellationToken).ConfigureAwait(false) ?? throw new InformationNotFoundException("User is not found");
 				user = new User(account?.ID ?? "", token.SessionID, account?.Roles ?? [$"{SystemRole.All}"], account?.AccessPrivileges ?? [], "APIs");
 
 				session = new Session(requestInfo.Session)
@@ -2893,7 +2893,7 @@ namespace net.vieapps.Services.Users
 				await Token.UpdateAsync(token, false, cancellationToken).ConfigureAwait(false);
 			}
 
-			account ??= await Account.GetAsync<Account>(token.UserID, cancellationToken).ConfigureAwait(false);
+			account ??= await Account.GetAsync(token.UserID, cancellationToken).ConfigureAwait(false);
 			user ??= new User(account?.ID ?? "", token.SessionID, account?.Roles ?? [$"{SystemRole.All}"], account?.AccessPrivileges ?? [], "APIs");
 
 			var authenticateToken = user.GetAuthenticateToken(this.EncryptionKey, this.JWTKey, payload =>
@@ -3013,7 +3013,7 @@ namespace net.vieapps.Services.Users
 					throw new InvalidTokenException("Token is invalid", ex);
 				}
 
-			var token = await Token.GetAsync<Token>(identity, cancellationToken).ConfigureAwait(false) ?? throw new TokenNotFoundException("Token is not found");
+			var token = await Token.GetAsync(identity, cancellationToken).ConfigureAwait(false) ?? throw new TokenNotFoundException("Token is not found");
 
 			if (!asJSON && (!token.UserID.IsEquals(userID) || !token.SessionID.IsEquals(sessionID)))
 				throw new InvalidTokenException("Token is invalid");
@@ -3036,7 +3036,7 @@ namespace net.vieapps.Services.Users
 				CreatedID = requestInfo.Session.User.ID
 			};
 
-			if (!string.IsNullOrWhiteSpace(token.UserID) && await Account.GetAsync<Account>(token.UserID, cancellationToken).ConfigureAwait(false) == null)
+			if (!string.IsNullOrWhiteSpace(token.UserID) && await Account.GetAsync(token.UserID, cancellationToken).ConfigureAwait(false) == null)
 				throw new InformationNotFoundException("User is not found");
 
 			await Token.CreateAsync(token, cancellationToken).ConfigureAwait(false);
@@ -3052,11 +3052,11 @@ namespace net.vieapps.Services.Users
 
 		async Task<JToken> DeleteTokenAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
-			var token = await Token.GetAsync<Token>(requestInfo.GetObjectIdentity(), cancellationToken).ConfigureAwait(false) ?? throw new TokenNotFoundException("Token is not found");
+			var token = await Token.GetAsync(requestInfo.GetObjectIdentity(), cancellationToken).ConfigureAwait(false) ?? throw new TokenNotFoundException("Token is not found");
 			await Task.WhenAll
 			(
-				Token.DeleteAsync<Token>(token.ID, requestInfo.Session.User.ID, cancellationToken),
-				Session.DeleteAsync<Session>(token.SessionID, requestInfo.Session.User.ID, cancellationToken)
+				Token.DeleteAsync(token.ID, requestInfo.Session.User.ID, cancellationToken),
+				Session.DeleteAsync(token.SessionID, requestInfo.Session.User.ID, cancellationToken)
 			).ConfigureAwait(false);
 
 			var response = token.ToJson();
@@ -3133,7 +3133,7 @@ namespace net.vieapps.Services.Users
 		async Task<JToken> SyncProfileAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			var requestBody = requestInfo.GetBodyExpando();
-			var profile = await Profile.GetAsync<Profile>(requestBody.Get<string>("ID"), cancellationToken).ConfigureAwait(false);
+			var profile = await Profile.GetAsync(requestBody.Get<string>("ID"), cancellationToken).ConfigureAwait(false);
 			if (profile == null)
 			{
 				profile = Profile.CreateInstance(requestBody);
@@ -3245,7 +3245,7 @@ namespace net.vieapps.Services.Users
 					var sessions = await Session.FindAsync(Filters<Session>.LessThan("ExpiredAt", DateTime.Now), null, 0, 1, null, this.CancellationToken).ConfigureAwait(false) ?? [];
 					await sessions.ForEachAsync(async session =>
 					{
-						await Session.DeleteAsync<Session>(session.ID, userID, this.CancellationToken).ConfigureAwait(false);
+						await Session.DeleteAsync(session.ID, userID, this.CancellationToken).ConfigureAwait(false);
 						this.Sessions.Remove(session.ID);
 						new CommunicateMessage(this.ServiceName)
 						{

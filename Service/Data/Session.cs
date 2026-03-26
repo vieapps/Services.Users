@@ -562,14 +562,14 @@ namespace net.vieapps.Services.Users
 				{
 					var session = string.IsNullOrWhiteSpace(sessionInfo.Session.UserID)
 						? await Utility.Cache.GetAsync<Session>(sessionID.GetCacheKey<Session>(), cts.Token).ConfigureAwait(false)
-						: await Session.GetAsync<Session>(sessionID, cts.Token).ConfigureAwait(false);
+						: await Session.GetAsync(sessionID, cts.Token).ConfigureAwait(false);
 					lock (sessionInfo.Locker)
 						sessionInfo.Session.DeviceID = session?.DeviceID;
 				}
 
 				if (string.IsNullOrWhiteSpace(sessionInfo.User.Name) || string.IsNullOrWhiteSpace(sessionInfo.User.Email))
 				{
-					var profile = await Profile.GetAsync<Profile>(sessionInfo.Session.UserID, cts.Token).ConfigureAwait(false);
+					var profile = await Profile.GetAsync(sessionInfo.Session.UserID, cts.Token).ConfigureAwait(false);
 					if (profile != null)
 						lock (sessionInfo.Locker)
 						{
@@ -629,7 +629,7 @@ namespace net.vieapps.Services.Users
 				using var cts = CancellationTokenSource.CreateLinkedTokenSource(this._cts.Token);
 				cts.CancelAfter(TimeSpan.FromSeconds(this._backgroundTimeout));
 
-				var account = await Profile.GetAsync<Account>(userID, cts.Token).ConfigureAwait(false);
+				var account = await Account.GetAsync(userID, cts.Token).ConfigureAwait(false);
 				if (account != null)
 				{
 					account.LastAccess = DateTime.UtcNow;
@@ -680,10 +680,10 @@ namespace net.vieapps.Services.Users
 		public async Task ReloadAsync(string correlationID, CancellationToken cancellationToken, Func<IEnumerable<SessionInfo>, Task> onCompletedAsync = null)
 		{
 			var sessions = new List<SessionInfo>();
-			var reloadeds = await Session.FindAsync<Session>(Filters<Session>.Equals("Online", true), Sorts<Session>.Descending("RenewedAt"), 0, 1, null, false, null, 0, cancellationToken).ConfigureAwait(false);
+			var reloadeds = await Session.FindAsync(Filters<Session>.Equals("Online", true), Sorts<Session>.Descending("RenewedAt"), 0, 1, null, false, null, 0, cancellationToken).ConfigureAwait(false);
 			await reloadeds.ForEachAsync(async session =>
 			{
-				var profile = await Profile.GetAsync<Profile>(session.UserID, cancellationToken).ConfigureAwait(false);
+				var profile = await Profile.GetAsync(session.UserID, cancellationToken).ConfigureAwait(false);
 				var sessionInfo = new SessionInfo
 				{
 					Session = session,

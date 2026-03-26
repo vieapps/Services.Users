@@ -389,7 +389,7 @@ namespace net.vieapps.Services.Users
 			await data.ForEachAsync(async info =>
 			{
 				var id = $"{info.Year:0000}{info.Month}{info.Day.Name}{UtilityService.BlankUUID}".Left(32);
-				var instance = await Info.GetAsync<Info>(id, cancellationToken).ConfigureAwait(false);
+				var instance = await Info.GetAsync(id, cancellationToken).ConfigureAwait(false);
 				var update = instance != null;
 				instance ??= new()
 				{

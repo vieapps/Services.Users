@@ -112,7 +112,7 @@ namespace net.vieapps.Services.Users
 		/// </summary>
 		[MessagePackIgnore]
 		[Ignore, JsonIgnore, BsonIgnore, XmlIgnore]
-		public Profile Profile => this._profile ?? (this._profile = Profile.Get<Profile>(this.ID));
+		public Profile Profile => this._profile ?? (this._profile = Profile.Get(this.ID));
 
 		[MessagePackIgnore]
 		[Ignore, JsonIgnore, BsonIgnore, XmlIgnore]
@@ -162,7 +162,7 @@ namespace net.vieapps.Services.Users
 		public Account GetOriginal()
 			=> string.IsNullOrWhiteSpace(this.AccessMapIdentity) || !this.AccessMapIdentity.IsValidUUID() 
 				? null
-				: Account.Get<Account>(this.AccessMapIdentity);
+				: Account.Get(this.AccessMapIdentity);
 
 		/// <summary>
 		/// Gets the orginal account that this account was mapped to
@@ -172,7 +172,7 @@ namespace net.vieapps.Services.Users
 		public Task<Account> GetOriginalAsync(CancellationToken cancellationToken = default)
 			 => string.IsNullOrWhiteSpace(this.AccessMapIdentity) || !this.AccessMapIdentity.IsValidUUID()
 				? Task.FromResult<Account>(null)
-				: Account.GetAsync<Account>(this.AccessMapIdentity, cancellationToken);
+				: Account.GetAsync(this.AccessMapIdentity, cancellationToken);
 
 		public JObject GetAccountJson(bool addStatus = false, string authenticationKey = null, Action<JObject> onCompleted = null)
 		{
@@ -229,7 +229,7 @@ namespace net.vieapps.Services.Users
 		{
 			if (string.IsNullOrWhiteSpace(id) || !id.IsValidUUID())
 				return null;
-			var account = await Account.GetAsync<Account>(id, cancellationToken).ConfigureAwait(false);
+			var account = await Account.GetAsync(id, cancellationToken).ConfigureAwait(false);
 			return account != null
 				? (getOriginal ? await account.GetOriginalAsync(cancellationToken).ConfigureAwait(false) : null) ?? account
 				: null;
