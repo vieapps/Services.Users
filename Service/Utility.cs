@@ -25,6 +25,8 @@ namespace net.vieapps.Services.Users
 
 		public static string ActivateHttpURI { get; internal set; }
 
+		internal static string PepperHash { get; set; }
+
 		internal static JObject GetProfileJson(this Profile profile, JObject relatedData = null, bool addRelated = true, bool useBriefInfo = false)
 		{
 			var json = useBriefInfo

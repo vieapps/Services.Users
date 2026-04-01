@@ -245,23 +245,26 @@ namespace net.vieapps.Services.Users
 		public static string GeneratePassword(string id, string password)
 			=> string.IsNullOrWhiteSpace(id) || !id.IsValidUUID() || string.IsNullOrWhiteSpace(password)
 				? throw new InformationInvalidException()
-				: password.GenerateHashPassword(id.Trim(), password.Trim()).HexToBytes().ToBase64Url();
+				: password.GenerateHashPassword(id.Trim(), password.Trim().GetHMACBLAKE384Hash(Utility.PepperHash).ToHex()).HexToBytes().ToBase64Url();
 
 		/// <summary>
 		/// Generates a random password
 		/// </summary>
 		/// <param name="account">The account (email address, phone number, user name)</param>
 		/// <returns></returns>
-		public static string GeneratePassword(string account = null)
+		public static string GeneratePassword(string account = null, bool generateStrongPassword = false)
 		{
-			var pos = (account ?? "").IndexOf('-');
+			account ??= "";
+			var pos = account.IndexOf('-');
 			if (pos < 0)
-				pos = (account ?? "").IndexOf('_');
+				pos = account.IndexOf('_');
 			if (pos < 0)
-				pos = (account ?? "").IndexOf('.');
-			return CaptchaService.GenerateRandomCode(true, true).GetCapitalizedFirstLetter()
-				+ (pos > 0 ? account.Substring(pos, 1) : "#") + OTPService.GeneratePassword((UtilityService.NewUUID + (account ?? "")).ToBytes())
-				+ CaptchaService.GenerateRandomCode().GetCapitalizedFirstLetter();
+				pos = account.IndexOf('.');
+			return (account != "" ? account[0].ToString() : "").ToUpper()
+				+ CaptchaService.GenerateRandomCode(true, true).ToLower()
+				+ (pos > 0 ? account.Substring(pos, 1) : "#")
+				+ OTPService.GeneratePassword((UtilityService.NewUUID + account).ToBytes())
+				+ CaptchaService.GenerateRandomCode().ToUpper();
 		}
 		#endregion
 

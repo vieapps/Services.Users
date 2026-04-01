@@ -132,6 +132,7 @@ namespace net.vieapps.Services.Users
 		public override async Task StartAsync(string[] args = null, bool initializeRepository = true, Action<IService> next = null)
 		{
 			// initialize static properties
+			Utility.PepperHash = this.EncryptionKey.GetHMACBLAKE128Hash(this.ValidationKey).ToHex();
 			Utility.OAuths = UtilityService.GetAppSetting("Users:OAuths", "").ToList();
 			if ("false".IsEquals(UtilityService.GetAppSetting("Users:AllowRegister", "true")))
 				Utility.AllowRegister = false;
@@ -339,7 +340,7 @@ namespace net.vieapps.Services.Users
 			);
 		}
 
-		async Task<Tuple<Tuple<string, string>, Tuple<string, string>, Tuple<string, int, bool, string, string>>> GetInstructionsAsync(RequestInfo requestInfo, string mode = "reset", CancellationToken cancellationToken = default)
+		async Task<((string Subject, string Body) Envelop, (string Email, string Signature) Sender, (string Host, int Port, bool EnableSsl, string User, string Password) Server)> GetInstructionsAsync(RequestInfo requestInfo, string mode = "reset", CancellationToken cancellationToken = default)
 		{
 			string subject = "", body = "", emailSender = "", emailSignature = "";
 			string smtpServerHost = "", smtpUser = "", smtpUserPassword = "";
@@ -377,11 +378,11 @@ namespace net.vieapps.Services.Users
 					await this.WriteLogsAsync(requestInfo, $"Error occurred while fetching instructions => {ex.Message}", ex).ConfigureAwait(false);
 				}
 
-			return new Tuple<Tuple<string, string>, Tuple<string, string>, Tuple<string, int, bool, string, string>>
+			return
 			(
-				new Tuple<string, string>(subject, body.NormalizeHTMLBreaks()),
-				new Tuple<string, string>(emailSender, emailSignature),
-				new Tuple<string, int, bool, string, string>(smtpServerHost, smtpServerPort, smtpServerEnableSsl, smtpUser, smtpUserPassword)
+				(subject, body.NormalizeHTMLBreaks()),
+				(emailSender, emailSignature),
+				(smtpServerHost, smtpServerPort, smtpServerEnableSsl, smtpUser, smtpUserPassword)
 			);
 		}
 		#endregion
@@ -1677,14 +1678,14 @@ namespace net.vieapps.Services.Users
 			// prepare activation email
 			var instructions = await this.GetInstructionsAsync(requestInfo, mode, cancellationToken).ConfigureAwait(false);
 
-			var from = instructions.Item2.Item1;
+			var from = instructions.Sender.Email;
 			var to = $"{name} <{identity}>";
 
-			var subject = instructions.Item1.Item1;
+			var subject = instructions.Envelop.Subject;
 			if (string.IsNullOrWhiteSpace(subject))
 				subject = @"[{{@request.Session(AppName)}}] Activate your account";
 
-			var body = instructions.Item1.Item2;
+			var body = instructions.Envelop.Body;
 			if (string.IsNullOrWhiteSpace(body))
 				body = @"Hi <b>{{@params(Name)}}</b>
 				<br/>
@@ -1699,11 +1700,11 @@ namespace net.vieapps.Services.Users
 					<a href='{{@params(Uri)}}' style='color:red'>Activate your account</a>
 				</span>";
 
-			var smtpServerHost = instructions.Item3.Item1;
-			var smtpServerPort = instructions.Item3.Item2;
-			var smtpServerEnableSsl = instructions.Item3.Item3;
-			var smtpServerUsername = instructions.Item3.Item4;
-			var smtpServerPassword = instructions.Item3.Item5;
+			var smtpServerHost = instructions.Server.Host;
+			var smtpServerPort = instructions.Server.Port;
+			var smtpServerEnableSsl = instructions.Server.EnableSsl;
+			var smtpServerUsername = instructions.Server.User;
+			var smtpServerPassword = instructions.Server.Password;
 
 			var inviter = mode.Equals("invite") ? await Profile.GetAsync(requestInfo.Session.User.ID, cancellationToken).ConfigureAwait(false) : null;
 			var @params = new JObject
@@ -1722,7 +1723,7 @@ namespace net.vieapps.Services.Users
 				},
 				{ "Time", DateTime.Now },
 				{ "Location", await requestInfo.GetLocationAsync(cancellationToken).ConfigureAwait(false) },
-				{ "EmailSignature", instructions.Item2.Item2 }
+				{ "EmailSignature", instructions.Sender.Signature }
 			}.ToExpandoObject();
 			var parameters = $"{subject}\r\n{body}".PrepareDoubleBracesParameters(null, requestInfo.AsExpandoObject, @params);
 
@@ -1886,9 +1887,9 @@ namespace net.vieapps.Services.Users
 		async Task<JToken> ResetPasswordAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
 			// get account
-			var identity = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Account") ? requestInfo.Extra["Account"].Decrypt(this.EncryptionKey) : null;
+			var identity = requestInfo.Extra != null && requestInfo.Extra.TryGetValue("Account", out string value) ? value.Decrypt(this.EncryptionKey) : null;
 			if (string.IsNullOrWhiteSpace(identity))
-				identity = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Email") ? requestInfo.Extra["Email"].Decrypt(this.EncryptionKey) : null;
+				identity = requestInfo.Extra != null && requestInfo.Extra.TryGetValue("Email", out value) ? value.Decrypt(this.EncryptionKey) : null;
 
 			var account = await Account.GetByAccessIdentityAsync(identity, AccountType.BuiltIn, cancellationToken).ConfigureAwait(false);
 			if (account == null)
@@ -1898,7 +1899,7 @@ namespace net.vieapps.Services.Users
 				};
 
 			// prepare
-			var password = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Password") ? requestInfo.Extra["Password"].Decrypt(this.EncryptionKey) : null;
+			var password = requestInfo.Extra != null && requestInfo.Extra.TryGetValue("Password", out value) ? value.Decrypt(this.EncryptionKey) : null;
 			if (string.IsNullOrWhiteSpace(password))
 				password = Account.GeneratePassword(identity);
 
@@ -1909,9 +1910,9 @@ namespace net.vieapps.Services.Users
 				{ "Time", DateTime.Now }
 			}.ToString(Formatting.None).Encrypt(this.ActivationKey).ToBase64Url(true);
 
-			var uri = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Uri") ? requestInfo.Extra["Uri"].Decrypt(this.EncryptionKey) : null;
+			var uri = requestInfo.Extra != null && requestInfo.Extra.TryGetValue("Uri", out value) ? value.Decrypt(this.EncryptionKey) : null;
 			if (string.IsNullOrWhiteSpace(uri))
-				uri = requestInfo.Query.ContainsKey("uri") ? requestInfo.Query["uri"].Url64Decode() : Utility.ActivateHttpURI;
+				uri = requestInfo.Query.TryGetValue("uri", out value) ? value.Url64Decode() : Utility.ActivateHttpURI;
 
 			uri = uri.Format(new Dictionary<string, object>
 			{
@@ -1922,14 +1923,14 @@ namespace net.vieapps.Services.Users
 			// prepare activation email
 			var instructions = await this.GetInstructionsAsync(requestInfo, "reset", cancellationToken).ConfigureAwait(false);
 
-			var from = instructions.Item2.Item1;
+			var from = instructions.Sender.Email;
 			var to = $"{account.Profile.Name} <{account.AccessIdentity}>";
 
-			var subject = instructions.Item1.Item1;
+			var subject = instructions.Envelop.Subject;
 			if (string.IsNullOrWhiteSpace(subject))
 				subject = @"[{{@request.Session(AppName)}}] Activate your new password";
 
-			var body = instructions.Item1.Item2;
+			var body = instructions.Envelop.Body;
 			if (string.IsNullOrWhiteSpace(body))
 				body = @"Hi <b>{{@params(Name)}}</b>
 				<br/><br/>
@@ -1945,11 +1946,11 @@ namespace net.vieapps.Services.Users
 					<a href='{{@params(Uri)}}' style='color:red'>Activate your new password</a>
 				</span>";
 
-			var smtpServerHost = instructions.Item3.Item1;
-			var smtpServerPort = instructions.Item3.Item2;
-			var smtpServerEnableSsl = instructions.Item3.Item3;
-			var smtpServerUsername = instructions.Item3.Item4;
-			var smtpServerPassword = instructions.Item3.Item5;
+			var smtpServerHost = instructions.Server.Host;
+			var smtpServerPort = instructions.Server.Port;
+			var smtpServerEnableSsl = instructions.Server.EnableSsl;
+			var smtpServerUsername = instructions.Server.User;
+			var smtpServerPassword = instructions.Server.Password;
 
 			var @params = new JObject
 			{
@@ -1961,7 +1962,7 @@ namespace net.vieapps.Services.Users
 				{ "Code", code },
 				{ "Time", DateTime.Now },
 				{ "Location", await requestInfo.GetLocationAsync(cancellationToken).ConfigureAwait(false) },
-				{ "EmailSignature", instructions.Item2.Item2 }
+				{ "EmailSignature", instructions.Sender.Signature }
 			}.ToExpandoObject();
 			var parameters = $"{subject}\r\n{body}".PrepareDoubleBracesParameters(null, requestInfo.AsExpandoObject, @params);
 
@@ -1986,7 +1987,7 @@ namespace net.vieapps.Services.Users
 				if (account == null)
 					throw new InformationNotFoundException();
 
-				var otp = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("OtpCode") ? requestInfo.Extra["OtpCode"].Decrypt(this.EncryptionKey) : null;
+				var otp = requestInfo.Extra != null && requestInfo.Extra.TryGetValue("OtpCode", out string value) ? value.Decrypt(this.EncryptionKey) : null;
 				if (string.IsNullOrWhiteSpace(otp))
 					throw new InformationInvalidException();
 
@@ -1998,7 +1999,7 @@ namespace net.vieapps.Services.Users
 				await this.CallOtpServiceAsync(requestInfo, TwoFactorsAuthenticationType.SMS, account.ID, stamp, otp, cancellationToken).ConfigureAwait(false);
 
 				// update
-				var password = requestInfo.Extra != null && requestInfo.Extra.ContainsKey("Password") ? requestInfo.Extra["Password"].Decrypt(this.EncryptionKey) : null;
+				var password = requestInfo.Extra != null && requestInfo.Extra.TryGetValue("Password", out value) ? value.Decrypt(this.EncryptionKey) : null;
 				if (string.IsNullOrWhiteSpace(password))
 					password = Account.GeneratePassword(phone);
 
@@ -2069,14 +2070,14 @@ namespace net.vieapps.Services.Users
 
 			var instructions = await this.GetInstructionsAsync(requestInfo, "password", cancellationToken).ConfigureAwait(false);
 
-			var from = instructions.Item2.Item1;
+			var from = instructions.Sender.Email;
 			var to = $"{account.Profile?.Name ?? email} <{email}>";
 
-			var subject = instructions.Item1.Item1;
+			var subject = instructions.Envelop.Subject;
 			if (string.IsNullOrWhiteSpace(subject))
 				subject = @"[{{@request.Session(AppName)}}] Your account has been updated";
 
-			var body = instructions.Item1.Item2;
+			var body = instructions.Envelop.Body;
 			if (string.IsNullOrWhiteSpace(body))
 				body = @"Hi <b>{{@params(Name)}}</b>
 				<br/>
@@ -2086,11 +2087,11 @@ namespace net.vieapps.Services.Users
 					Password (new): <b>{{@params(Password)}}</b>
 				</blockquote>";
 
-			var smtpServerHost = instructions.Item3.Item1;
-			var smtpServerPort = instructions.Item3.Item2;
-			var smtpServerEnableSsl = instructions.Item3.Item3;
-			var smtpServerUsername = instructions.Item3.Item4;
-			var smtpServerPassword = instructions.Item3.Item5;
+			var smtpServerHost = instructions.Server.Host;
+			var smtpServerPort = instructions.Server.Port;
+			var smtpServerEnableSsl = instructions.Server.EnableSsl;
+			var smtpServerUsername = instructions.Server.User;
+			var smtpServerPassword = instructions.Server.Password;
 
 			var @params = new JObject
 			{
@@ -2100,7 +2101,7 @@ namespace net.vieapps.Services.Users
 				{ "Name", account.Profile?.Name },
 				{ "Time", DateTime.Now },
 				{ "Location", await requestInfo.GetLocationAsync(cancellationToken).ConfigureAwait(false) },
-				{ "EmailSignature", instructions.Item2.Item2 }
+				{ "EmailSignature", instructions.Sender.Signature }
 			}.ToExpandoObject();
 			var parameters = $"{subject}\r\n{body}".PrepareDoubleBracesParameters(null, requestInfo.AsExpandoObject, @params);
 
@@ -2143,14 +2144,14 @@ namespace net.vieapps.Services.Users
 			// prepare activation email
 			var instructions = await this.GetInstructionsAsync(requestInfo, "email", cancellationToken).ConfigureAwait(false);
 
-			var from = instructions.Item2.Item1;
+			var from = instructions.Sender.Email;
 			var to = $"{account.Profile.Name} <{account.AccessIdentity}>";
 
-			var subject = instructions.Item1.Item1;
+			var subject = instructions.Envelop.Subject;
 			if (string.IsNullOrWhiteSpace(subject))
 				subject = @"[{{@request.Session(AppName)}}] Your account has been updated";
 
-			var body = instructions.Item1.Item2;
+			var body = instructions.Envelop.Body;
 			if (string.IsNullOrWhiteSpace(body))
 				body = @"Hi <b>{{@params(Name)}}</b>
 				<br/>
@@ -2160,11 +2161,11 @@ namespace net.vieapps.Services.Users
 					Old login email: <b>{{@params(OldEmail)}}</b>
 				</blockquote>";
 
-			var smtpServerHost = instructions.Item3.Item1;
-			var smtpServerPort = instructions.Item3.Item2;
-			var smtpServerEnableSsl = instructions.Item3.Item3;
-			var smtpServerUsername = instructions.Item3.Item4;
-			var smtpServerPassword = instructions.Item3.Item5;
+			var smtpServerHost = instructions.Server.Host;
+			var smtpServerPort = instructions.Server.Port;
+			var smtpServerEnableSsl = instructions.Server.EnableSsl;
+			var smtpServerUsername = instructions.Server.User;
+			var smtpServerPassword = instructions.Server.Password;
 
 			var @params = new JObject
 			{
@@ -2174,7 +2175,7 @@ namespace net.vieapps.Services.Users
 				{ "Name", account.Profile.Name },
 				{ "Time", DateTime.Now },
 				{ "Location", await requestInfo.GetLocationAsync(cancellationToken).ConfigureAwait(false) },
-				{ "EmailSignature", instructions.Item2.Item2 }
+				{ "EmailSignature", instructions.Sender.Signature }
 			}.ToExpandoObject();
 			var parameters = $"{subject}\r\n{body}".PrepareDoubleBracesParameters(null, requestInfo.AsExpandoObject, @params);
 
@@ -2626,11 +2627,11 @@ namespace net.vieapps.Services.Users
 				throw new MethodNotAllowedException(requestInfo.Verb);
 
 			#region prepare
-			var mode = requestInfo.Query.ContainsKey("mode") ? requestInfo.Query["mode"] : null;
+			var mode = requestInfo.Query.TryGetValue("mode", out string value) ? value : null;
 			if (string.IsNullOrWhiteSpace(mode))
 				throw new InvalidActivateInformationException();
 
-			var code = requestInfo.Query.ContainsKey("code") ? requestInfo.Query["code"] : null;
+			var code = requestInfo.Query.TryGetValue("code", out value) ? value : null;
 			if (string.IsNullOrWhiteSpace(code))
 				throw new InvalidActivateInformationException();
 
@@ -2809,9 +2810,7 @@ namespace net.vieapps.Services.Users
 			var password = info.Get<string>("Password");
 
 			// load account
-			var account = await Account.GetByIDAsync(id, cancellationToken).ConfigureAwait(false);
-			if (account == null)
-				throw new InvalidActivateInformationException();
+			var account = await Account.GetByIDAsync(id, cancellationToken).ConfigureAwait(false) ?? throw new InvalidActivateInformationException();
 
 			// update new password
 			account.AccessKey = Account.GeneratePassword(account.ID, password);
