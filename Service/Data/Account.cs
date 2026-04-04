@@ -252,7 +252,7 @@ namespace net.vieapps.Services.Users
 		/// </summary>
 		/// <param name="account">The account (email address, phone number, user name)</param>
 		/// <returns></returns>
-		public static string GeneratePassword(string account = null, bool generateStrongPassword = false)
+		public static string GeneratePassword(string account = null)
 		{
 			account ??= "";
 			var pos = account.IndexOf('-');
