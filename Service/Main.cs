@@ -150,7 +150,7 @@ namespace net.vieapps.Services.Users
 			this.RegisterTimers();
 
 			// last action
-			await this.StartAsync(args, (_, _) => this.RegisterCommunicators(), initializeRepository, next).ConfigureAwait(false);
+			await this.StartAsync(args, (_, _) => this.RegisterCommunicators(), initializeRepository, Utility.Cache, next).ConfigureAwait(false);
 		}
 		#endregion
 
