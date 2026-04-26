@@ -154,11 +154,12 @@ namespace net.vieapps.Services.Users
 	}
 
 	public class UserInfo
-	{		
+	{
 		public string Name { get; set; }
 		public string Email { get; set; }
 		public string Location { get; set; }
 		public DateTime LastAccess { get; set; } = DateTime.Now;
+		public UserInfo() { }
 	}
 
 	public class ServiceInfo
@@ -166,6 +167,7 @@ namespace net.vieapps.Services.Users
 		public string Name { get; set; }
 		public string URI { get; set; }
 		public string SystemID { get; set; }
+		public ServiceInfo() { }
 	}
 
 	public class SessionInfo
@@ -175,6 +177,8 @@ namespace net.vieapps.Services.Users
 		public UserInfo User { get; set; }
 		public ServiceInfo Service { get; set; }
 		public DateTime LastAccess { get; set; } = DateTime.Now;
+		public SessionInfo() { }
+		public SessionInfo(JObject data) => this.CopyFrom(data);
 	}
 
 	public class TrackingInfo
@@ -222,6 +226,7 @@ namespace net.vieapps.Services.Users
 
 	public class LocationInfo
 	{
+		public LocationInfo() { }
 		public Services.Session Session { get; init; }
 		public string CorrelationID { get; init; }
 	}
@@ -344,11 +349,11 @@ namespace net.vieapps.Services.Users
 				this._trackStatistics();
 
 			var now = DateTime.Now;
-			var sessionInfo = this._sessions.GetOrAdd(info.SessionID, _ => new SessionInfo());
+			var sessionInfo = this._sessions.GetOrAdd(info.SessionID, _ => new());
 
 			lock (sessionInfo.Locker)
 			{
-				sessionInfo.Session ??= new Session
+				sessionInfo.Session ??= new()
 				{
 					ID = info.SessionID,
 					UserID = info.UserID,
@@ -652,10 +657,12 @@ namespace net.vieapps.Services.Users
 			}
 		}
 
-		public IEnumerable<SessionInfo> Get()
-			=> this._sessions.Values;
+		public int Count => this._sessions.Count;
 
-		public void Sync(string sessionID, SessionInfo sessionInfo)
+		public IEnumerable<SessionInfo> Get(DateTime? checkpoint = null)
+			=> checkpoint == null ? this._sessions.Values : this._sessions.Values.Where(sessionInfo => sessionInfo.LastAccess > checkpoint.Value);
+
+		public void Update(string sessionID, SessionInfo sessionInfo)
 			=> this._sessions.GetOrAdd(sessionID, _ => sessionInfo);
 
 		public bool Track(TrackingInfo info)
@@ -705,7 +712,7 @@ namespace net.vieapps.Services.Users
 				await onCompletedAsync(sessions).ConfigureAwait(false);
 		}
 
-		public Task CleanupAsync(TimeSpan userIdle, TimeSpan visitorIdle, Func<IEnumerable<SessionInfo>, Task> onCompletedAsync = null)
+		public Task CleanupAsync(TimeSpan userIdle, TimeSpan visitorIdle, Func<IEnumerable<SessionInfo>, Task> onCompletedAsync)
 		{
 			var now = DateTime.Now;
 			var sessions = new List<SessionInfo>();
@@ -722,6 +729,31 @@ namespace net.vieapps.Services.Users
 				}
 			}
 			return onCompletedAsync != null ? onCompletedAsync(sessions) : Task.CompletedTask;
+		}
+
+		public Task CleanupAsync(Func<IEnumerable<SessionInfo>, Task> onCompletedAsync = null)
+			=> this.CleanupAsync(TimeSpan.FromMinutes(25), TimeSpan.FromMinutes(15), onCompletedAsync);
+
+		public Task DumpAsync(CancellationToken cancellationToken)
+			=> this._sessions.Values.ToJArray().SaveAsTextAsync(System.IO.Path.Combine(UtilityService.GetAppSetting("Path:Status", "status"), "statistics.session.json"), cancellationToken);
+
+		public async Task LoadDumpAsync(CancellationToken cancellationToken)
+		{
+			var filePath = System.IO.Path.Combine(UtilityService.GetAppSetting("Path:Status", "status"), "statistics.session.json");
+			if (System.IO.File.Exists(filePath))
+				try
+				{
+					var json = await UtilityService.ReadAsJsonAsync(filePath, cancellationToken).ConfigureAwait(false) as JArray;
+					json.Select(sessionJson => sessionJson as JObject).ForEach(sessionJson =>
+					{
+						var sessionInfo = new SessionInfo(sessionJson);
+						this._sessions.TryAdd(sessionInfo.Session.ID, sessionInfo);
+					});
+				}
+				catch (Exception ex)
+				{
+					Utility.Logger?.LogInformation($"Load dump JSONs error => {ex.Message}", ex);
+				}
 		}
 	}
 

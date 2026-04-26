@@ -150,8 +150,8 @@ namespace net.vieapps.Services.Users
 				var roles = new[] { $"{SystemRole.All}", $"{SystemRole.Authenticated}" }.ToList();
 				if (UserIdentity.SystemAdministrators.Contains(this.ID))
 					roles.Add($"{SystemRole.SystemAdministrator}");
-				this.AccessRoles?.ForEach(accessRoles => roles = roles.Concat(accessRoles).ToList());
-				return [.. roles.Distinct(StringComparer.OrdinalIgnoreCase)];
+				roles.AddRange(this.AccessRoles?.Select(kvp => kvp.Value).SelectMany(role => role) ?? []);
+				return roles.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 			}
 		}
 

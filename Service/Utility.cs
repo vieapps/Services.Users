@@ -1,5 +1,6 @@
 ﻿#region Related components
 using System.Collections.Generic;
+using Microsoft.Extensions.Logging;
 using Newtonsoft.Json.Linq;
 using net.vieapps.Components.Utility;
 using net.vieapps.Components.Security;
@@ -11,7 +12,9 @@ namespace net.vieapps.Services.Users
 {
 	public static class Utility
 	{
-		public static Cache Cache { get; } = Cache.CreateInstance("VIEApps-Services-Users", Logger.GetLoggerFactory(), "true".IsEquals(UtilityService.GetAppSetting("Users:Cache:L1")));
+		public static Cache Cache { get; } = Cache.CreateInstance("VIEApps-Services-Users", Components.Utility.Logger.GetLoggerFactory(), "true".IsEquals(UtilityService.GetAppSetting("Users:Cache:L1")));
+
+		public static ILogger Logger { get; internal set; }
 
 		public static List<string> OAuths { get; internal set; } = [];
 
