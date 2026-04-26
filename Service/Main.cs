@@ -147,11 +147,7 @@ namespace net.vieapps.Services.Users
 		protected override async Task StopAsync(string[] args, bool available, bool disconnect, Action<IService> next = null)
 		{
 			if (this.IsUpdater)
-				await Task.WhenAll
-				(
-					this.Statistics.DumpVisitStatisticsAsync(false, this.CancellationToken),
-					this.Statistics.DumpSystemStatisticsAsync(false, this.CancellationToken)
-				).ConfigureAwait(false);
+				await this.DumpStatisticsAsync().ConfigureAwait(false);
 			await base.StopAsync(args, available, disconnect, next).ConfigureAwait(false);
 		}
 		#endregion
@@ -215,8 +211,8 @@ namespace net.vieapps.Services.Users
 						var captcha = CaptchaService.GenerateCode(requestInfo.Extra != null && requestInfo.Extra.TryGetValue("Salt", out var salt) ? salt : null, this.CaptchaKey);
 						json = new JObject
 						{
-							{ "Code", captcha },
-							{ "Uri", $"{Utility.CaptchaHttpURI}{captcha.Url64Encode()}/{$"{(requestInfo.Extra != null && requestInfo.Extra.TryGetValue("Mode", out var mode) && !string.IsNullOrWhiteSpace(mode) ? mode : "small")}-{UtilityService.NewUUID.Substring(UtilityService.GetRandomNumber(3, 23))}".Url64Encode()}/{(string.IsNullOrWhiteSpace(this.CaptchaKey) ? "" : $"{this.CaptchaKey}:{UtilityService.NewUUID}".Encrypt(this.CaptchaExtraKey).ToBase64Url(true) + "/")}{(requestInfo.GetParameter("register") ?? UtilityService.NewUUID.Encrypt(this.EncryptionKey, true)).Substring(UtilityService.GetRandomNumber(13, 43), 13).Reverse()}.webp" }
+							["Code"] = captcha,
+							["Uri"] = $"{Utility.CaptchaHttpURI}{captcha.Url64Encode()}/{$"{(requestInfo.Extra != null && requestInfo.Extra.TryGetValue("Mode", out var mode) && !string.IsNullOrWhiteSpace(mode) ? mode : "small")}-{UtilityService.NewUUID.Substring(UtilityService.GetRandomNumber(3, 23))}".Url64Encode()}/{(string.IsNullOrWhiteSpace(this.CaptchaKey) ? "" : $"{this.CaptchaKey}:{UtilityService.NewUUID}".Encrypt(this.CaptchaExtraKey).ToBase64Url(true) + "/")}{(requestInfo.GetParameter("register") ?? UtilityService.NewUUID.Encrypt(this.EncryptionKey, true)).Substring(UtilityService.GetRandomNumber(13, 43), 13).Reverse()}.webp"
 						};
 						break;
 
@@ -803,7 +799,7 @@ namespace net.vieapps.Services.Users
 						monthLogs += $"\r\n--------------------- {year.Name}-{month.Name}-{day.Name} => {day.Sum():###,###,###,###0}";
 					yearLogs += $"\r\n------------------ {year.Name}-{month.Name} - Number of days: {month.Days.Count} => {month.Sum():###,###,###,###,###,###0}" + monthLogs;
 				}
-				logs += $"------------- {year.Name} - Number of months: {year.Months.Count} => {year.Sum():###,###,###,###,###,###0}" + yearLogs + "\r\n";
+				logs += (logs != "" ? "\r\n" : "") + $"------------- {year.Name} - Number of months: {year.Months.Count} => {year.Sum():###,###,###,###,###,###0}" + yearLogs;
 			}
 			logs = $"-------------\r\n"
 				+ $"[{this.IsUpdater}] - Number of years: {this.Statistics.Years.Count:###,##0} - Number of months: {this.Statistics.Years.Values.Sum(year => year.Months.Count):###,##0} - Number of days: {this.Statistics.Years.Values.Sum(year => year.Months.Values.Sum(month => month.Days.Count)):###,##0}\r\n"
