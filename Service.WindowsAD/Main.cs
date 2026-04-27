@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.DirectoryServices.AccountManagement;
 using Newtonsoft.Json.Linq;
 using net.vieapps.Components.Utility;
+using net.vieapps.Components.Caching;
 using net.vieapps.Components.Security;
 
 namespace net.vieapps.Services.Users.WindowsAD
@@ -13,10 +14,12 @@ namespace net.vieapps.Services.Users.WindowsAD
 	{
 		public override string ServiceName => "WindowsAD";
 
-		public override void Start(string[] args = null, bool initializeRepository = true, Action<IService> next = null)
+		Cache Cache { get; } = Cache.CreateInstance("VIEApps-Services-WindowsAD", Components.Utility.Logger.GetLoggerFactory(), "true".IsEquals(UtilityService.GetAppSetting("WindowsAD:Cache:L1")));
+
+		public override Task StartAsync(string[] args = null, bool initializeRepository = true, Action<IService> next = null)
 		{
 			this.Syncable = false;
-			base.Start(args, false, next);
+			return base.StartAsync(args, false, this.Cache, next);
 		}
 
 		public override async Task<JToken> ProcessRequestAsync(RequestInfo requestInfo, CancellationToken cancellationToken = default)

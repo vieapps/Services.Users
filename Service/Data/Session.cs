@@ -1,7 +1,7 @@
 ﻿#region Related components
 using System;
+using System.IO;
 using System.Linq;
-using System.Dynamic;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Channels;
@@ -735,12 +735,12 @@ namespace net.vieapps.Services.Users
 			=> this.CleanupAsync(TimeSpan.FromMinutes(25), TimeSpan.FromMinutes(15), onCompletedAsync);
 
 		public Task DumpAsync(CancellationToken cancellationToken)
-			=> this._sessions.Values.ToJArray().SaveAsTextAsync(System.IO.Path.Combine(UtilityService.GetAppSetting("Path:Status", "status"), "statistics.session.json"), cancellationToken);
+			=> this._sessions.Values.ToJArray().SaveAsTextAsync(Path.Combine(UtilityService.GetAppSetting("Path:Status", "status"), "statistics.session.json"), cancellationToken);
 
 		public async Task LoadDumpAsync(CancellationToken cancellationToken)
 		{
-			var filePath = System.IO.Path.Combine(UtilityService.GetAppSetting("Path:Status", "status"), "statistics.session.json");
-			if (System.IO.File.Exists(filePath))
+			var filePath = Path.Combine(UtilityService.GetAppSetting("Path:Status", "status"), "statistics.session.json");
+			if (File.Exists(filePath))
 				try
 				{
 					var json = await UtilityService.ReadAsJsonAsync(filePath, cancellationToken).ConfigureAwait(false) as JArray;

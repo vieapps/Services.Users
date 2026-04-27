@@ -40,9 +40,6 @@ namespace net.vieapps.Services.Users
 
 			internal ConcurrentDictionary<string, Month> Months { get; } = [];
 
-			internal long Increase(int counter)
-				=> this.Counters += counter;
-
 			public long Sum(bool sumOnChildren = false)
 			{
 				long sum = 0;
@@ -82,9 +79,6 @@ namespace net.vieapps.Services.Users
 			}
 
 			internal ConcurrentDictionary<string, Day> Days { get; } = [];
-
-			internal long Increase(int counter)
-				=> this.Counters += counter;
 
 			public long Sum(bool sumOnChildren = false)
 			{
