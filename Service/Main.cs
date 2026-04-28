@@ -25,7 +25,7 @@ namespace net.vieapps.Services.Users
 		public override string ServiceName => "Users";
 
 		public ServiceComponent() : base()
-			=> this.Sessions = new(() => this.Statistics.Update(), this.IsUpdater ? () => this.SendStatistics() : null, (ex, correlationID) => this.WriteLogsAsync(correlationID, $"Error occured while tracking sessions => {ex.Message}", ex, "Sessions"));
+			=> this.Sessions = new(this.TrackStatistics, () => this.SendStatistics(this.IsUpdater, false), (ex, correlationID) => this.WriteLogsAsync(correlationID, $"Error occured while tracking sessions => {ex.Message}", ex, "Sessions"));
 
 		public override void Dispose()
 		{
@@ -785,6 +785,21 @@ namespace net.vieapps.Services.Users
 			}.Send();
 			return statistics;
 		}
+
+		void SendStatistics(bool isUpdater, bool sendRequestIfNot = true)
+		{
+			if (isUpdater)
+				this.SendStatistics();
+			else if (sendRequestIfNot)
+				new CommunicateMessage(this.ServiceName)
+				{
+					Type = "VisitStatistics#Send",
+					ExcludedNodeID = this.NodeID
+				}.Send(Router.GotBackupRouter());
+		}
+
+		void TrackStatistics()
+			=> this.Statistics.Update();
 
 		string GetDataLogsOfStatistics(System.Action onCompleted = null)
 		{
@@ -1703,15 +1718,7 @@ namespace net.vieapps.Services.Users
 			// response
 			if (requestInfo.ContainsKey("x-status") || account.TwoFactorsAuthentication.Required)
 			{
-				if (this.IsUpdater)
-					this.SendStatistics();
-				else
-					new CommunicateMessage(this.ServiceName)
-					{
-						Type = "VisitStatistics#Send",
-						ExcludedNodeID = this.NodeID
-					}.Send(Router.GotBackupRouter());
-
+				this.SendStatistics(this.IsUpdater);
 				var location = await requestInfo.GetLocationAsync(cancellationToken).ConfigureAwait(false);
 				return account.GetAccountJson(true, this.AuthenticationKey, json =>
 				{
@@ -3415,7 +3422,7 @@ namespace net.vieapps.Services.Users
 				this.Sessions.Track(data);
 
 			else if (message.Type.IsEquals("Statistics#Track") || message.Type.IsEquals("VisitStatistics#Track"))
-				this.Statistics.Update();
+				this.TrackStatistics();
 
 			else if (message.Type.IsEquals("VisitStatistics#Send") && this.IsUpdater)
 				this.SendStatistics();
@@ -3643,6 +3650,36 @@ namespace net.vieapps.Services.Users
 		}
 		#endregion
 
-	}
+		public override void DoWork(string[] args = null)
+		{
+			var writeDebugLogs = args?.FirstOrDefault(arg => arg.IsStartsWith("/logs")) != null;
 
+			if (args?.FirstOrDefault(arg => arg.IsStartsWith("/reset-statistics")) != null)
+				this.SendInterCommunicateMessage(new CommunicateMessage("APIGateway")
+				{
+					Type = "Statistics#Reset"
+				}, false, writeDebugLogs);
+
+			if (args?.FirstOrDefault(arg => arg.IsStartsWith("/change-rpc-gate")) != null)
+			{
+				var serviceName = args?.FirstOrDefault(arg => arg.IsStartsWith("/service:"))?.Replace("/service:", "", StringComparison.OrdinalIgnoreCase);
+				var nodeID = args?.FirstOrDefault(arg => arg.IsStartsWith("/node:"))?.Replace("/node:", "", StringComparison.OrdinalIgnoreCase);
+				var max = args?.FirstOrDefault(arg => arg.IsStartsWith("/max:"))?.Replace("/max:", "", StringComparison.OrdinalIgnoreCase);
+				this.SendInterCommunicateMessage(new CommunicateMessage("APIGateway")
+				{
+					Type = "RpcGate#Max",
+					Data = new JObject
+					{
+						["Service"] = serviceName,
+						["NodeID"] = nodeID,
+						["MaxCapacity"] = Int32.TryParse(max, out var maxCapacity) && maxCapacity > -1 && maxCapacity <= 20000 ? maxCapacity : 0
+					}
+				}, false, writeDebugLogs);
+			}
+
+			this.Logger?.LogWarning("Press ENTER to terminate...");
+			Console.ReadLine();
+		}
+
+	}
 }
