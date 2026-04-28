@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using System.Xml.Serialization;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using Microsoft.Extensions.Logging;
 using MongoDB.Bson.Serialization.Attributes;
 using MsgPack.Serialization;
 using Newtonsoft.Json;
@@ -669,8 +670,14 @@ namespace net.vieapps.Services.Users
 				return instance;
 			}
 
-			internal static async Task<Info> SaveAsync(Info instance, (int Year, string Month, Day Day) info, byte[][] systemStatistics, CancellationToken cancellationToken)
-				=> await Info.SaveAsync(instance, info, Info.GetSystemStatistics(systemStatistics), cancellationToken).ConfigureAwait(false);
+			internal static Task<Info> SaveAsync(Info instance, (int Year, string Month, Day Day) info, byte[][] systemStatistics, CancellationToken cancellationToken)
+			{
+				var statistics = instance?.SystemStatistics;
+				if (statistics != null)
+					for (var index = 0; index < 1440; index++)
+						systemStatistics[index] = systemStatistics[index] ?? statistics[index];
+				return Info.SaveAsync(instance, info, Info.GetSystemStatistics(systemStatistics), cancellationToken);
+			}
 
 			internal static byte[][] GetSystemStatistics(string statistics)
 			{

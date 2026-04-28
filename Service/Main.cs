@@ -403,9 +403,6 @@ namespace net.vieapps.Services.Users
 
 				if (isSystemAdministrator)
 				{
-					if (requestInfo.ContainsKey("x-dump"))
-						await this.DumpStatisticsAsync(requestInfo.GetParameter("x-suffix"), Router.GotBackupRouter()).ConfigureAwait(false);
-
 					if (requestInfo.ContainsKey("x-normalize"))
 					{
 						if (this.IsUpdater)
@@ -427,6 +424,17 @@ namespace net.vieapps.Services.Users
 							}.Send(Router.GotBackupRouter());
 					}
 
+					if (requestInfo.ContainsKey("x-save"))
+					{
+						if (this.IsUpdater)
+							this.Statistics.SaveAsync(this.CancellationToken).Execute(ex => this.Logger.LogInformation($"Error occurred while saving => {ex.Message}", ex));
+						else
+							new CommunicateMessage(this.ServiceName)
+							{
+								Type = "Statistics#Save"
+							}.Send(Router.GotBackupRouter());
+					}
+
 					if (requestInfo.ContainsKey("x-reload"))
 					{
 						new CommunicateMessage(this.ServiceName)
@@ -441,6 +449,9 @@ namespace net.vieapps.Services.Users
 						if (Router.GotBackupRouter())
 							this.ReloadStatisticsAsync(requestInfo.CorrelationID, !requestInfo.ContainsKey("x-dont-reload-sessions")).Execute(ex => this.Logger.LogInformation($"Error occurred while reloading => {ex.Message}", ex));
 					}
+
+					if (requestInfo.ContainsKey("x-dump"))
+						await this.DumpStatisticsAsync(requestInfo.GetParameter("x-suffix"), Router.GotBackupRouter()).ConfigureAwait(false);
 
 					if ((requestInfo.ContainsKey("x-blackip") || requestInfo.ContainsKey("x-blackips")) && !string.IsNullOrWhiteSpace(this.BlackIPsServiceName))
 						new CommunicateMessage(this.BlackIPsServiceName)
@@ -3445,14 +3456,17 @@ namespace net.vieapps.Services.Users
 			else if (message.Type.IsEquals("SessionStatistics#Sync"))
 				this.SendSessionStatistics();
 
-			else if (message.Type.IsEquals("Statistics#Dump"))
-				this.DumpStatisticsAsync(true, data.Get<string>("X-Suffix")).Execute(ex => this.Logger.LogInformation($"Error occurred while dumping JSONs => {ex.Message}", ex));
-
 			else if (message.Type.IsEquals("Statistics#Normalize") && this.IsUpdater)
 				this.NormalizeStatisticsAsync(data.Get<string>("X-Clone-Date"), data.Get<string>("X-Clone-Date-By"), data.Get<string>("X-Clone-Min"), data.Get<string>("X-Clone-Max"), data.Get("X-Clone-As-Set", false), data.Get<string>("X-Suffix")).Execute(ex => this.Logger.LogInformation($"Error occurred while normalizing => {ex.Message}", ex));
 
+			else if (message.Type.IsEquals("Statistics#Save") && this.IsUpdater)
+				this.Statistics.SaveAsync(this.CancellationToken).Execute(ex => this.Logger.LogInformation($"Error occurred while saving => {ex.Message}", ex));
+
 			else if (message.Type.IsEquals("Statistics#Reload"))
 				this.ReloadStatisticsAsync(data.Get<string>("X-Correlation-ID"), !data.Get("X-Dont-Reload-Sessions", false)).Execute(ex => this.Logger.LogInformation($"Error occurred while reloading => {ex.Message}", ex));
+
+			else if (message.Type.IsEquals("Statistics#Dump"))
+				this.DumpStatisticsAsync(true, data.Get<string>("X-Suffix")).Execute(ex => this.Logger.LogInformation($"Error occurred while dumping JSONs => {ex.Message}", ex));
 
 			// unknown
 			else if (this.IsDebugResultsEnabled)
