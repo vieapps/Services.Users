@@ -120,8 +120,6 @@ namespace net.vieapps.Services.Users
 			{
 				this.Name = dayID ?? DateTime.Now.Day.ToString("00");
 				this.Counters = counters;
-				for (var index = 0; index < 1440; index++)
-					this.Minutes[index] = 0;
 			}
 
 			internal Day Load(JObject hoursJson, bool useMerge, Action<Day> onCompleted = null)
@@ -270,11 +268,17 @@ namespace net.vieapps.Services.Users
 		public int Get(string minuteID = null, string hourID = null, string dayID = null, string monthID = null, string yearID = null)
 		{
 			var now = DateTime.Now;
-			var currentFirst = now.ToString("yyyyMMdd").Equals($"{yearID}{monthID}{dayID}");
-			var hour = (hourID ?? now.Hour.ToString("00")).As<int>();
-			var minute = (minuteID ?? now.Minute.ToString("00")).As<int>();
+			yearID ??= now.Year.ToString("0000");
+			monthID ??= now.Month.ToString("00");
+			dayID ??= now.Day.ToString("00");
+			hourID ??= now.Hour.ToString("00");
+			minuteID ??= now.Minute.ToString("00");
+
+			var hour = hourID.As<int>();
+			var minute = minuteID.As<int>();
+			var day = this.GetDay(dayID, monthID, yearID, now.ToString("yyyyMMdd").Equals($"{yearID}{monthID}{dayID}"));
 			var index = hour * 60 + minute;
-			return index < 0 || index >= 1440 ? 0 : this.GetDay(dayID, monthID, yearID, currentFirst).Minutes[index];
+			return index < 0 || index >= 1440 ? 0 : day.Minutes[index];
 		}
 
 		public int Update(int counters = 0, string minuteID = null, string hourID = null, string dayID = null, string monthID = null, string yearID = null)
@@ -682,9 +686,6 @@ namespace net.vieapps.Services.Users
 			internal static byte[][] GetSystemStatistics(string statistics)
 			{
 				var systemStatistics = new byte[1440][];
-				for (var index = 0; index < 1440; index++)
-					systemStatistics[index] = null;
-
 				if (!string.IsNullOrWhiteSpace(statistics))
 					try
 					{
@@ -696,7 +697,6 @@ namespace net.vieapps.Services.Users
 					{
 						Utility.Logger?.LogInformation($"Deserialize error => {ex.Message}", ex);
 					}
-
 				return systemStatistics;
 			}
 
@@ -706,9 +706,6 @@ namespace net.vieapps.Services.Users
 			internal static byte[][] GetSystemStatistics(JObject systemStatisticsJson = null)
 			{
 				var systemStatistics = new byte[1440][];
-				for (var index = 0; index < 1440; index++)
-					systemStatistics[index] = null;
-
 				if (systemStatisticsJson != null)
 					for (var hour = 0; hour < 24; hour++)
 					{
@@ -720,7 +717,6 @@ namespace net.vieapps.Services.Users
 								systemStatistics[start + minute] = hourJson.Get<JObject>(minute.ToString("00"))?.ToBytes("Statistics", TextFileReader.BufferSize);
 						}
 					}
-
 				return systemStatistics;
 			}
 
