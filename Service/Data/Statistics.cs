@@ -327,9 +327,8 @@ namespace net.vieapps.Services.Users
 				monthIDs.ForEach(monthID => this.Current.Months.Remove(monthID));
 			}
 
-			var currentMonth = this.GetMonth(currentMonthID, currentYearID, true);
 			var currentDay = this.GetDay(currentDayID, currentMonthID, currentYearID, true);
-			this.GetMonth(currentMonth.Name, this.Current.Name, false).Days[currentDay.Name] = currentDay;
+			this.GetMonth(currentMonthID, currentYearID, false).Days[currentDay.Name] = currentDay;
 
 			var date = now.ToString("yyyyMMdd");
 			this.SystemStatistics.Where(kvp => kvp.Key != date).Select(kvp => kvp.Key).ToList().ForEach(key =>
@@ -420,9 +419,8 @@ namespace net.vieapps.Services.Users
 			if (doNormalize)
 				return this.Normalize();
 
-			var currentMonth = this.GetMonth(currentMonthID, currentYearID, true);
 			var currentDay = this.GetDay(currentDayID, currentMonthID, currentYearID, true);
-			this.GetMonth(currentMonth.Name, this.Current.Name, false).Days[currentDay.Name] = currentDay;
+			this.GetMonth(currentMonthID, currentYearID, false).Days[currentDay.Name] = currentDay;
 			return this;
 		}
 
