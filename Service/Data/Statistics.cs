@@ -553,12 +553,7 @@ namespace net.vieapps.Services.Users
 			public Info() : base() { }
 
 			public Info((int Year, string Month, Day Day) info) : base()
-			{
-				this.ID = $"{info.Year:0000}{info.Month}{info.Day.Name}{UtilityService.BlankUUID}".Left(32);
-				this.Year = info.Year;
-				this.Month = info.Month.As<int>();
-				this.Day = info.Day.Name.As<int>();
-			}
+				=> this.ID = $"{info.Year:0000}{info.Month}{info.Day.Name}{UtilityService.BlankUUID}".Left(32);
 
 			[Sortable(IndexName = "Times")]
 			public int Year { get; set; }
