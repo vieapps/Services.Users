@@ -464,9 +464,10 @@ namespace net.vieapps.Services.Users
 				if (dayJson != null)
 					for (var hour = 0; hour < 24; hour++)
 					{
-						var hourJson = dayJson.Get<JObject>(hour.ToString("00"));
+						var hourID = hour.ToString("00");
+						var hourJson = dayJson.Get<JObject>(hourID);
 						if (hourJson != null)
-							await hourJson.SaveAsTextAsync(this.GetFilePath($"statistics.system{suffix}.{date}-{hour:00}.json"), cancellationToken).ConfigureAwait(false);
+							await hourJson.SaveAsTextAsync(this.GetFilePath($"statistics.system{suffix}.{date}-{hourID}.json"), cancellationToken).ConfigureAwait(false);
 					}
 			}
 
@@ -724,16 +725,17 @@ namespace net.vieapps.Services.Users
 					{
 						var minuteJson = systemStatistics[start + minute]?.GetString();
 						if (minuteJson != null)
-							minutes[$"{minute:00}"] = minuteJson.ToJson();
+							minutes[minute.ToString("00")] = minuteJson.ToJson();
 					}
 					if (minutes.Count > 0)
-						json[$"{hour:00}"] = minutes;
+						json[hour.ToString("00")] = minutes;
 				}
 				for (var hour = 0; hour < 24; hour++)
 				{
-					var hourJson = json.Get<JObject>(hour.ToString("00"));
+					var hourID = hour.ToString("00");
+					var hourJson = json.Get<JObject>(hourID);
 					if (hourJson == null || hourJson.Count < 1)
-						json.Remove(hour.ToString("00"));
+						json.Remove(hourID);
 				}
 				return json;
 			}
