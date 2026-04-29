@@ -594,7 +594,7 @@ namespace net.vieapps.Services.Users
 						time = DateTime.Now.AddMinutes(-1);
 
 					var systemStatistics = await this.Statistics.GetSystemStatisticsAsync(time, this.CancellationToken).ConfigureAwait(false);
-					return systemStatistics[time.Hour * 60 + time.Minute]?.GetString().ToJson() ?? new JObject();
+					return systemStatistics[time.Hour * 60 + time.Minute]?.GetString().ToJson(json => json["Time"] = time.ToIsoString()) ?? new JObject();
 				}
 
 				var ipAddressses = string.IsNullOrWhiteSpace(this.BlackIPsServiceName) || string.IsNullOrWhiteSpace(this.BlackIPsObjectName) || string.IsNullOrWhiteSpace(this.BlackIPsVerb)
