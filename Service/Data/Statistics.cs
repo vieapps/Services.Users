@@ -28,8 +28,6 @@ namespace net.vieapps.Services.Users
 
 		internal ConcurrentDictionary<string, Year> Years { get; } = [];
 
-		internal readonly object Locker = new();
-
 		#region Year
 		public class Year : StatisticInfo
 		{
@@ -95,7 +93,11 @@ namespace net.vieapps.Services.Users
 				this.Days.Values.OrderByDescending(day => day.Name).ForEach(day => days[day.Name] = day.ToJson(asSummary, addHourDetails));
 
 				if (!asSummary)
+				{
+					if (!addDayDetails)
+						days["Counters"] = this.Sum();
 					return days;
+				}
 
 				var json = new JObject
 				{
@@ -122,9 +124,10 @@ namespace net.vieapps.Services.Users
 				this.Counters = counters;
 			}
 
-			internal Day Load(JObject hoursJson, bool useMerge, Action<Day> onCompleted = null)
+			internal Day Load(JObject hoursJson, bool asUpdate, Action<Day> onCompleted = null)
 			{
 				if (hoursJson != null)
+				{
 					foreach (var kvpHour in hoursJson)
 					{
 						var hour = kvpHour.Key.As<int>();
@@ -133,13 +136,14 @@ namespace net.vieapps.Services.Users
 							{
 								var minute = kvpMinute.Key.As<int>();
 								var counters = (kvpMinute.Value as JValue ?? new JValue(0)).Value.As<int>();
-								if (useMerge)
-									this.Merge(hour, minute, counters);
+								if (asUpdate)
+									this.Update(hour, minute, counters);
 								else
 									this.Set(hour, minute, counters);
 							}
 					}
-				this.Sum();
+					this.Sum();
+				}
 				onCompleted?.Invoke(this);
 				return this;
 			}
@@ -152,12 +156,28 @@ namespace net.vieapps.Services.Users
 				return this.Counters = sum;
 			}
 
-			internal int Increase(int hour, int minute)
+			internal int Update(int hour, int minute, int counter)
 			{
+				var delta = 1;
 				var index = hour * 60 + minute;
-				var counter = Interlocked.Increment(ref this.Minutes[index]);
-				this.Counters += counter;
-				return counter;
+
+				if (counter < 1)
+					Interlocked.Increment(ref this.Minutes[index]);
+
+				else
+				{
+					int current;
+					do
+					{
+						current = this.Minutes[index];
+						if (current >= counter)
+							return 0;
+					} while (Interlocked.CompareExchange(ref this.Minutes[index], counter, current) != current);
+					delta = counter - current;
+				}
+
+				this.Counters += delta;
+				return delta;
 			}
 
 			internal int Set(int hour, int minute, int counter)
@@ -165,23 +185,8 @@ namespace net.vieapps.Services.Users
 				var index = hour * 60 + minute;
 				var current = this.Minutes[index];
 				this.Minutes[index] = counter;
-				this.Counters += counter - current;
+				this.Counters += Math.Max(0, counter - current);
 				return counter;
-			}
-
-			internal int Merge(int hour, int minute, int counter)
-			{
-				var index = hour * 60 + minute;
-				int current;
-				do
-				{
-					current = this.Minutes[index];
-					if (current >= counter)
-						return 0;
-				} while (Interlocked.CompareExchange(ref this.Minutes[index], counter, current) != current);
-				var delta = counter - current;
-				this.Counters += delta;
-				return delta;
 			}
 
 			internal JObject ToJson(bool asSummary, bool addHourDetails = true)
@@ -190,15 +195,15 @@ namespace net.vieapps.Services.Users
 
 				for (var hour = 23; hour >= 0; hour--)
 				{
-					var start = hour * 60;
-					var hourSum = 0;
 					var minutes = new JObject();
+					var hourSum = 0;
+					var start = hour * 60;
 					for (var minute = 59; minute >= 0; minute--)
 					{
-						var value = this.Minutes[start + minute];
-						hourSum += value;
-						if (value > 0)
-							minutes[$"{minute:00}"] = value;
+						var counter = this.Minutes[start + minute];
+						hourSum += counter;
+						if (counter > 0)
+							minutes[$"{minute:00}"] = counter;
 					}
 
 					if (minutes.Count > 0)
@@ -207,31 +212,28 @@ namespace net.vieapps.Services.Users
 							: new JObject
 								{
 									["Counters"] = hourSum,
-									["AverageOfOneMinute"] = hourSum / 60
+									["AverageOfOneMinute"] = hourSum / this.Minutes.Skip(start).Take(60).Count(counter => counter > 0)
 								};
 				}
 
-				if (asSummary && json.Count > 0)
-					json = new JObject
-					{
-						["Counters"] = this.Sum(),
-						["AverageOfOneHour"] = this.Counters / 24,
-						["Hours"] = json
-					};
+				if (!asSummary && !addHourDetails)
+					json["Counters"] = this.Sum();
 
-				return json;
+				return asSummary
+					? json.Count > 0
+						? new JObject
+							{
+								["Counters"] = this.Sum(),
+								["AverageOfOneHour"] = this.Counters / 24,
+								["Hours"] = json
+							}
+						: new JObject
+							{
+								["Counters"] = 0
+							}
+					: json;
 			}
 		}
-		#endregion
-
-		#region Total
-		public long Total => this.Years.Values.Sum(year => year.Sum(true));
-
-		public long TotalOfCurrentYear => this.GetYear(null, false).Sum(true);
-
-		public long TotalOfCurrentMonth => this.GetMonth(null, null, false).Sum(true);
-
-		public long TotalOfCurrentDay => this.GetDay().Sum();
 		#endregion
 
 		#region Get Year/Month/Day
@@ -265,6 +267,14 @@ namespace net.vieapps.Services.Users
 		}
 		#endregion
 
+		public long Total => this.Years.Values.Sum(year => year.Sum());
+
+		public long TotalOfCurrentYear => this.GetYear(null, false).Sum();
+
+		public long TotalOfCurrentMonth => this.GetMonth(null, null, false).Sum();
+
+		public long TotalOfCurrentDay => this.GetDay().Counters;
+
 		public int Get(string minuteID = null, string hourID = null, string dayID = null, string monthID = null, string yearID = null)
 		{
 			var now = DateTime.Now;
@@ -281,7 +291,7 @@ namespace net.vieapps.Services.Users
 			return index < 0 || index >= 1440 ? 0 : day.Minutes[index];
 		}
 
-		public int Update(int counters = 0, string minuteID = null, string hourID = null, string dayID = null, string monthID = null, string yearID = null)
+		public int Update(int counter = 0, string minuteID = null, string hourID = null, string dayID = null, string monthID = null, string yearID = null)
 		{
 			var now = DateTime.Now;
 			yearID ??= now.Year.ToString("0000");
@@ -293,8 +303,18 @@ namespace net.vieapps.Services.Users
 			var hour = hourID.As<int>();
 			var minute = minuteID.As<int>();
 			var day = this.GetDay(dayID, monthID, yearID, now.ToString("yyyyMMdd").Equals($"{yearID}{monthID}{dayID}"));
-			lock (this.Locker)
-				return counters > 0 ? day.Merge(hour, minute, counters) : day.Increase(hour, minute);
+			return day.Update(hour, minute, counter);
+		}
+
+		public int Update(JObject data)
+		{
+			var counter = data.Get("Counters", 0);
+			var minuteID = data.Get<string>("Minute");
+			var hourID = data.Get<string>("Hour");
+			var dayID = data.Get<string>("Day");
+			var monthID = data.Get<string>("Month");
+			var yearID = data.Get<string>("Year");
+			return this.Update(counter, minuteID, hourID, dayID, monthID, yearID);
 		}
 
 		public JObject ToJson(bool asSummary = false, bool addDayDetails = true, bool addHourDetails = true, Func<IEnumerable<Year>, JObject, JObject> transformer = null)
@@ -315,17 +335,15 @@ namespace net.vieapps.Services.Users
 			this.Current.Months.Values.ForEach(month =>
 			{
 				if (month.Days.Count > 1)
-				{
-					var dayIDs = month.Days.Where(kvp => kvp.Key != currentDayID).Select(kvp => kvp.Key).ToList();
-					dayIDs.ForEach(dayID => month.Days.Remove(dayID));					
-				}
+					month.Days.Where(kvp => kvp.Key != currentDayID).Select(kvp => kvp.Key).ToList().ForEach(dayID =>
+					{
+						if (month.Days.TryRemove(dayID, out var day))
+							day.Sum();
+					});
 			});
 
 			if (this.Current.Months.Count > 1)
-			{
-				var monthIDs = this.Current.Months.Where(kvp => kvp.Key != currentMonthID).Select(kvp => kvp.Key).ToList();
-				monthIDs.ForEach(monthID => this.Current.Months.Remove(monthID));
-			}
+				this.Current.Months.Where(kvp => kvp.Key != currentMonthID).Select(kvp => kvp.Key).ToList().ForEach(monthID => this.Current.Months.Remove(monthID));
 
 			var currentDay = this.GetDay(currentDayID, currentMonthID, currentYearID, true);
 			this.GetMonth(currentMonthID, currentYearID, false).Days[currentDay.Name] = currentDay;
@@ -485,7 +503,7 @@ namespace net.vieapps.Services.Users
 				}
 				catch (Exception ex)
 				{
-					Utility.Logger?.LogInformation($"Load dump JSONs error => {ex.Message}", ex);
+					Utility.Logger?.LogInformation($"Load dump visit JSONs error => {ex.Message}", ex);
 				}
 
 			filePath = this.GetFilePath($"statistics.system{suffix}.json");
@@ -498,7 +516,7 @@ namespace net.vieapps.Services.Users
 				}
 				catch (Exception ex)
 				{
-					Utility.Logger?.LogInformation($"Load dump JSONs error => {ex.Message}", ex);
+					Utility.Logger?.LogInformation($"Load dump system JSONs error => {ex.Message}", ex);
 				}
 
 			return this;

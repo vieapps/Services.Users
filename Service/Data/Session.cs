@@ -43,7 +43,7 @@ namespace net.vieapps.Services.Users
 			var session = new Services.Session
 			{
 				SessionID = this.ID,
-				User = account != null ? new User(account.ID, this.ID, account.Roles, account.AccessPrivileges ?? [], "APIs") : User.GetDefault(this.ID),
+				User = account != null ? new User(account.ID, this.ID, this.DeviceID, account.Roles, account.AccessPrivileges ?? [], "APIs") : User.GetDefault(this.ID),
 				Verified = this.Verified,
 				DeviceID = this.DeviceID,
 				IP = this.IP,
@@ -752,7 +752,7 @@ namespace net.vieapps.Services.Users
 				}
 				catch (Exception ex)
 				{
-					Utility.Logger?.LogInformation($"Load dump JSONs error => {ex.Message}", ex);
+					Utility.Logger?.LogInformation($"Load dump session JSONs error => {ex.Message}", ex);
 				}
 		}
 	}

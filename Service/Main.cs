@@ -25,7 +25,7 @@ namespace net.vieapps.Services.Users
 		public override string ServiceName => "Users";
 
 		public ServiceComponent() : base()
-			=> this.Sessions = new(this.TrackStatistics, () => this.SendStatistics(this.IsUpdater, false), (ex, correlationID) => this.WriteLogsAsync(correlationID, $"Error occured while tracking sessions => {ex.Message}", ex, "Sessions"));
+			=> this.Sessions = new(() => this.TrackStatistics(), () => this.SendStatistics(this.IsUpdater, false), (ex, correlationID) => this.WriteLogsAsync(correlationID, $"Error occured while tracking sessions => {ex.Message}", ex, "Sessions"));
 
 		public override void Dispose()
 		{
@@ -137,7 +137,6 @@ namespace net.vieapps.Services.Users
 
 			return this.StartAsync(args, (_, _) => this.RegisterCommunicators(), initializeRepository, Utility.Cache, _ =>
 			{
-				this.Logger?.LogInformation($"Load statistics when registered... [{this.IsUpdater}]");
 				this.LoadStatisticsAsync(this.IsUpdater).Execute(ex => this.Logger?.LogInformation($"Error occurred while loading statistics => {ex.Message}", ex));
 				this.RegisterTimers();
 				next?.Invoke(this);
@@ -387,592 +386,6 @@ namespace net.vieapps.Services.Users
 				(emailSender, emailSignature),
 				(smtpServerHost, smtpServerPort, smtpServerEnableSsl, smtpUser, smtpUserPassword)
 			);
-		}
-		#endregion
-
-		#region Statistics
-		async Task<JToken> ProcessStatisticsAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
-		{
-			if (requestInfo.Verb.IsEquals("GET"))
-			{
-				if (requestInfo.ObjectName.IsEquals("Statistics") && "fetch".IsEquals(requestInfo.GetObjectIdentity()))
-					return this.SendStatistics();
-
-				var isDebugLogEnabled = this.IsDebugLogEnabled || requestInfo.ContainsKey("x-logs");
-				var isSystemAdministrator = await this.IsSystemAdministratorAsync(requestInfo, cancellationToken).ConfigureAwait(false);
-
-				if (isSystemAdministrator)
-				{
-					if (requestInfo.ContainsKey("x-normalize"))
-					{
-						if (this.IsUpdater)
-							this.NormalizeStatisticsAsync(requestInfo.GetParameter("x-clone-date"), requestInfo.GetParameter("x-clone-date-by"), requestInfo.GetParameter("x-clone-min"), requestInfo.GetParameter("x-clone-max"), requestInfo.ContainsKey("x-clone-as-set"), requestInfo.GetParameter("x-suffix")).Execute(ex => this.Logger.LogInformation($"Error occurred while normalizing => {ex.Message}", ex));
-						else
-							new CommunicateMessage(this.ServiceName)
-							{
-								Type = "Statistics#Normalize",
-								Data = new JObject
-								{
-									["X-Correlation-ID"] = requestInfo.CorrelationID,
-									["X-Clone-Date"] = requestInfo.GetParameter("x-clone-date"),
-									["X-Clone-Date-By"] = requestInfo.GetParameter("x-clone-date-by"),
-									["X-Clone-Min"] = requestInfo.GetParameter("x-clone-min"),
-									["X-Clone-Max"] = requestInfo.GetParameter("x-clone-max"),
-									["X-Clone-As-Set"] = requestInfo.ContainsKey("x-clone-as-set"),
-									["X-Suffix"] = requestInfo.GetParameter("x-suffix")
-								}
-							}.Send(Router.GotBackupRouter());
-					}
-
-					if (requestInfo.ContainsKey("x-save"))
-					{
-						if (this.IsUpdater)
-							this.Statistics.SaveAsync(this.CancellationToken).Execute(ex => this.Logger.LogInformation($"Error occurred while saving => {ex.Message}", ex));
-						else
-							new CommunicateMessage(this.ServiceName)
-							{
-								Type = "Statistics#Save"
-							}.Send(Router.GotBackupRouter());
-					}
-
-					if (requestInfo.ContainsKey("x-reload"))
-					{
-						new CommunicateMessage(this.ServiceName)
-						{
-							Type = "Statistics#Reload",
-							Data = new JObject
-							{
-								["X-Correlation-ID"] = requestInfo.CorrelationID,
-								["X-Dont-Reload-Sessions"] = requestInfo.ContainsKey("x-dont-reload-sessions")
-							}
-						}.Send(Router.GotBackupRouter());
-						if (Router.GotBackupRouter())
-							this.ReloadStatisticsAsync(requestInfo.CorrelationID, !requestInfo.ContainsKey("x-dont-reload-sessions")).Execute(ex => this.Logger.LogInformation($"Error occurred while reloading => {ex.Message}", ex));
-					}
-
-					if (requestInfo.ContainsKey("x-dump"))
-						await this.DumpStatisticsAsync(requestInfo.GetParameter("x-suffix"), Router.GotBackupRouter()).ConfigureAwait(false);
-
-					if ((requestInfo.ContainsKey("x-blackip") || requestInfo.ContainsKey("x-blackips")) && !string.IsNullOrWhiteSpace(this.BlackIPsServiceName))
-						new CommunicateMessage(this.BlackIPsServiceName)
-						{
-							Type = $"BlackIPs#{(requestInfo.ContainsKey("x-clear") || requestInfo.ContainsKey("x-reset") ? "Reset" : requestInfo.ContainsKey("x-remove") ? "Remove" : "Update")}",
-							Data = requestInfo.ContainsKey("x-clear") || requestInfo.ContainsKey("x-reset") ? [] : (requestInfo.GetParameter("ips") ?? requestInfo.GetParameter("ip") ?? "").ToList().ToJArray()
-						}.Send();
-
-					else if ((requestInfo.ContainsKey("x-harmfulip") || requestInfo.ContainsKey("x-harmfulips")) && !string.IsNullOrWhiteSpace(this.BlackIPsServiceName))
-						new CommunicateMessage(this.BlackIPsServiceName)
-						{
-							Type = $"HarmfulIPs#{(requestInfo.ContainsKey("x-pause") ? "Pause" : requestInfo.ContainsKey("x-resume") ? "Resume" : "Sync")}"
-						}.Send();
-
-					else if (requestInfo.ContainsKey("x-clear"))
-					{
-						new CommunicateMessage(this.ServiceName)
-						{
-							Type = "Session#Clear",
-							ExcludedNodeID = this.NodeID
-						}.Send(Router.GotBackupRouter());
-						await this.Sessions.ClearAsync(this.IsUpdater ? ids => Utility.Cache.RemoveAsync(ids.Select(id => id.GetCacheKey<Session>()), cancellationToken) : null).ConfigureAwait(false);
-					}
-
-					if (requestInfo.ContainsKey("x-pause-harmful-request") && !string.IsNullOrWhiteSpace(this.BlackIPsServiceName))
-						new CommunicateMessage(this.BlackIPsServiceName)
-						{
-							Type = "HarmfulIPs#Pause"
-						}.Send();
-
-					if (requestInfo.ContainsKey("x-resume-harmful-request") && !string.IsNullOrWhiteSpace(this.BlackIPsServiceName))
-						new CommunicateMessage(this.BlackIPsServiceName)
-						{
-							Type = "HarmfulIPs#Resume"
-						}.Send();
-
-					if (requestInfo.ContainsKey("x-reset-blackips") && !string.IsNullOrWhiteSpace(this.BlackIPsServiceName))
-						new CommunicateMessage(this.BlackIPsServiceName)
-						{
-							Type = "BlackIPs#Reset"
-						}.Send();
-
-					if (requestInfo.ContainsKey("x-enable-track"))
-					{
-						new CommunicateMessage("Portals") { Type = "Sessions#Track#Enable" }.Send();
-						new CommunicateMessage("Files") { Type = "Sessions#Track#Enable" }.Send();
-					}
-
-					if (requestInfo.ContainsKey("x-disable-track"))
-					{
-						new CommunicateMessage("Portals") { Type = "Sessions#Track#Disable" }.Send();
-						new CommunicateMessage("Files") { Type = "Sessions#Track#Disable" }.Send();
-					}
-				}
-
-				if (requestInfo.ObjectName.IsEquals("Visit.Statistics"))
-				{
-					var now = DateTime.Now;
-					await this.LoadStatisticsAsync().ConfigureAwait(false);
-					var response = this.Statistics.ToJson(requestInfo.ContainsKey("x-summary") || requestInfo.ContainsKey("x-sum"), !requestInfo.ContainsKey("x-no-day-details") || requestInfo.ContainsKey("x-month"), !requestInfo.ContainsKey("x-no-hour-details") || requestInfo.ContainsKey("x-date"));
-
-					if (DateTime.TryParse($"{requestInfo.GetParameter("x-date")}T00:00:00".Left(20), out var specifiedDate) || DateTime.TryParse($"{requestInfo.GetParameter("x-month")}T00:00:00".Left(20), out var specifiedMonth))
-					{
-						var bySpecifiedMonth = DateTime.TryParse($"{requestInfo.GetParameter("x-month")}T00:00:00".Left(20), out specifiedMonth);
-						if (bySpecifiedMonth)
-							specifiedDate = specifiedMonth;
-
-						var yearID = specifiedDate.Year.ToString("0000");
-						var monthID = specifiedDate.Month.ToString("00");
-						var dayID = specifiedDate.Day.ToString("00");
-						var hourID = specifiedDate.Hour.ToString("00");
-
-						this.Statistics.Years.Select(kvp => kvp.Key).ToList().ForEach(name =>
-						{
-							if (name != yearID)
-								response.Remove(name);
-						});
-
-						var monthsJson = response.Get<JObject>(yearID)?.Get<JObject>("Months");
-						if (monthsJson != null)
-							for (var index = 1; index <= 12; index++)
-							{
-								if (index != specifiedDate.Month)
-									monthsJson.Remove(index.ToString("00"));
-							}
-
-						var daysJson = bySpecifiedMonth ? null : monthsJson?.Get<JObject>(monthID)?.Get<JObject>("Days");
-						if (daysJson != null)
-							for (var index = 1; index <= 31; index++)
-							{
-								if (index != specifiedDate.Day)
-									daysJson.Remove(index.ToString("00"));
-							}
-
-						if (specifiedDate.Day == now.Day && specifiedDate.Month == now.Month && specifiedDate.Year == now.Year)
-						{
-							var hoursJson = daysJson?.Get<JObject>("Hours");
-							if (hoursJson != null)
-							{
-								if (now.Hour < 23)
-									for (var index = 23; index > now.Hour; index--)
-										hoursJson.Remove(index.ToString("00"));
-
-								var hourJson = specifiedDate.Hour == now.Hour && now.Minute < 59 ? hoursJson.Get<JObject>(hourID) : null;
-								if (hourJson != null)
-									for (var index = 59; index > now.Minute; index--)
-										hourJson.Remove(index.ToString("00"));
-							}
-						}
-					}
-
-					else
-					{
-						var yearID = now.Year.ToString("0000");
-						var monthID = now.Month.ToString("00");
-						var dayID = now.Day.ToString("00");
-						var hourID = now.Hour.ToString("00");
-
-						var daysJson = response.Get<JObject>(yearID)?.Get<JObject>("Months").Get<JObject>(monthID)?.Get<JObject>("Days")?.Get<JObject>(dayID);
-						var hoursJson = daysJson?.Get<JObject>("Hours");
-						if (hoursJson != null)
-						{
-							if (now.Hour <= 23)
-								for (var index = 23; index > now.Hour; index--)
-									hoursJson.Remove(index.ToString("00"));
-
-							var hourJson = hoursJson.Get<JObject>(hourID);
-							if (hourJson != null)
-								for (var index = 59; index > now.Minute; index--)
-									hourJson.Remove(index.ToString("00"));
-						}
-					}
-
-					return response;
-				}
-
-				if (requestInfo.ObjectName.IsEquals("System.Statistics"))
-				{
-					if (!DateTime.TryParse(requestInfo.GetParameter("x-time"), out var time))
-						time = DateTime.Now.AddMinutes(-1);
-
-					var systemStatistics = await this.Statistics.GetSystemStatisticsAsync(time, this.CancellationToken).ConfigureAwait(false);
-					return systemStatistics[time.Hour * 60 + time.Minute]?.GetString().ToJson(json => json["Time"] = time.ToIsoString()) ?? new JObject();
-				}
-
-				var ipAddressses = string.IsNullOrWhiteSpace(this.BlackIPsServiceName) || string.IsNullOrWhiteSpace(this.BlackIPsObjectName) || string.IsNullOrWhiteSpace(this.BlackIPsVerb)
-					? new JObject
-						{
-							["BlackIPs"] = new JArray(),
-							["HarmfulIPs"] = new JArray()
-						}
-					: await this.CallServiceAsync(new RequestInfo(requestInfo)
-						{
-							ServiceName = this.BlackIPsServiceName,
-							ObjectName = this.BlackIPsObjectName,
-							Verb = this.BlackIPsVerb
-						}, cancellationToken).ConfigureAwait(false) as JObject;
-
-				var sessions = this.Sessions.Get();
-
-				if (requestInfo.TryGetParameter("x-user-id", out var userID))
-					sessions = sessions.Where(info => userID.IsEquals(info.Session.UserID));
-				else if (requestInfo.ContainsKey("x-user") || requestInfo.ContainsKey("x-authenticated"))
-					sessions = sessions.Where(info => !string.IsNullOrWhiteSpace(info.Session.UserID));
-				else if (requestInfo.ContainsKey("x-visitor") || requestInfo.ContainsKey("x-anonymous"))
-					sessions = requestInfo.ContainsKey("x-crawler")
-						? sessions.Where(info => string.IsNullOrWhiteSpace(info.Session.UserID))
-						: sessions.Where(info => string.IsNullOrWhiteSpace(info.Session.UserID) && string.IsNullOrWhiteSpace(info.User.Name));
-				else if (requestInfo.ContainsKey("x-crawler"))
-					sessions = sessions.Where(info => string.IsNullOrWhiteSpace(info.Session.UserID) && "Crawler".IsEquals(info.User.Name));
-
-				if (requestInfo.TryGetParameter("x-ip", out var ip))
-					sessions = sessions.Where(info => info.Session.IP.IsStartsWith(ip));
-
-				if (requestInfo.TryGetParameter("x-country", out var country))
-					sessions = requestInfo.TryGetParameter("x-region", out var region)
-						? sessions.Where(info => info.User.Location.IsEndsWith($"{region}, {country}"))
-						: sessions.Where(info => info.User.Location.IsEndsWith(country));
-
-				if (requestInfo.TryGetParameter("x-service", out var service))
-				{
-					sessions = sessions.Where(info => service.IsEquals(info.Service.Name));
-					if (requestInfo.TryGetParameter("x-system-id", out var systemID))
-						sessions = sessions.Where(info => systemID.IsEquals(info.Service.SystemID));
-				}
-
-				if (requestInfo.TryGetParameter("x-os", out var os))
-					sessions = sessions.Where(info => info.Session.OSInfo.IsStartsWith(os));
-
-				sessions = requestInfo.TryGetParameter("x-order-by", out var orderBy) && (orderBy.IsStartsWith("asc") || orderBy.IsStartsWith("old"))
-					? sessions.OrderBy(info => info.LastAccess)
-					: sessions.OrderByDescending(info => info.LastAccess);
-
-				if (requestInfo.TryGetParameter("x-skip", out var skip) && Int32.TryParse(skip, out var skipRecords) && skipRecords > 0)
-					sessions = sessions.Skip(skipRecords);
-
-				if (requestInfo.TryGetParameter("x-max", out var max) && Int32.TryParse(max, out var maxRecords) && maxRecords > 0)
-					sessions = sessions.Take(maxRecords);
-
-				await this.LoadStatisticsAsync().ConfigureAwait(false);
-				var onlyStatistics = requestInfo.ContainsKey("x-statistics") || !isSystemAdministrator;
-				var statistics = this.GetStatistics(onlyStatistics ? sessions : null, (_, statisticsJson) =>
-				{
-					var sessionsJson = statisticsJson;
-					if (!onlyStatistics)
-						sessionsJson["Sessions"] = sessions.Count();
-					return new JObject
-					{
-						["Sessions"] = sessionsJson,
-						["Visits"] = new JObject
-						{
-							["Total"] = this.LastStatistics.Total,
-							["Year"] = this.LastStatistics.TotalOfCurrentYear,
-							["Month"] = this.LastStatistics.TotalOfCurrentMonth,
-							["Day"] = this.LastStatistics.TotalOfCurrentDay
-						},
-						["BlackIPs"] = ipAddressses.Get<JArray>("BlackIPs"),
-						["HarmfulIPs"] = ipAddressses.Get<JArray>("HarmfulIPs")
-					};
-				});
-
-				statistics = onlyStatistics
-					? statistics
-					: new JObject
-					{
-						["Statistics"] = statistics,
-						["Sessions"] = sessions.ToList().Select(info => new JObject
-						{
-							["ID"] = info.Session.ID,
-							["Time"] = info.LastAccess.ToIsoString(),
-							["IP"] = info.Session.IP,
-							["Location"] = info.User.Location,
-							["User"] = string.IsNullOrWhiteSpace(info.Session.UserID) ? new JValue(info.User.Name ?? "Visitor") : info.User.ToJson(json =>
-							{
-								json["ID"] = info.Session.UserID;
-								(json as JObject).Remove("Location");
-								(json as JObject).Remove("LastAccess");
-							}),
-							["App"] = new JObject
-							{
-								["DeviceID"] = info.Session.DeviceID,
-								["AppInfo"] = info.Session.AppInfo,
-								["OSInfo"] = info.Session.OSInfo
-							},
-							["Service"] = info.Service.ToJson(json =>
-							{
-								if (string.IsNullOrWhiteSpace(info.Service.SystemID))
-									(json as JObject).Remove("SystemID");
-							})
-						}).ToJArray()
-					};
-
-				if (requestInfo.ContainsKey("x-latest") && isSystemAdministrator && !onlyStatistics)
-				{
-					var latest = new List<JObject>();
-					var latestSessions = await Session.FindAsync(null, Sorts<Session>.Descending("RenewedAt"), requestInfo.TryGetParameter("x-latest", out var xlatest) && Int32.TryParse(xlatest, out var pageSize) && pageSize > 0 ? pageSize : 100, 1, null, false, null, 0, cancellationToken).ConfigureAwait(false);
-					await latestSessions.ForEachAsync(async session =>
-					{
-						var profile = await Profile.GetAsync(session.UserID, cancellationToken).ConfigureAwait(false);
-						latest.Add(new JObject
-						{
-							["ID"] = session.ID,
-							["IP"] = session.IP,
-							["User"] = $"{profile?.Name} - {profile?.Email}",
-							["App"] = $"{session.AppInfo} - {session.OSInfo}",
-							["Time"] = session.RenewedAt.ToIsoString(),
-							["Elapsed"] = session.RenewedAt.GetElapsedTimes()
-						});
-					}, true, false).ConfigureAwait(false);
-					statistics["Latest"] = latest.ToJArray();
-				}
-
-				return statistics;
-			}
-			throw new MethodNotAllowedException(requestInfo.Verb);
-		}
-
-		JObject GetStatistics(IEnumerable<SessionInfo> sessions, Func<IEnumerable<SessionInfo>, JObject, JObject> transformer = null)
-		{
-			sessions ??= this.Sessions.Get();
-			var total = 0;
-			var user = 0;
-			var crawler = 0;
-			foreach (var sessionInfo in sessions)
-			{
-				total++;
-				if (!string.IsNullOrWhiteSpace(sessionInfo.Session?.UserID))
-					user++;
-				else if ("Crawler".IsEquals(sessionInfo.User?.Name))
-					crawler++;
-			}
-			var statistics = new JObject
-			{
-				["Total"] = total,
-				["User"] = user,
-				["Visitor"] = total - user - crawler,
-				["Crawler"] = crawler
-			};
-			return transformer != null ? transformer(sessions, statistics) : statistics;
-		}
-
-		JObject SendStatistics()
-		{
-			var totalOfCurrentDay = this.Statistics.TotalOfCurrentDay;
-			var totalOfCurrentMonth = this.Statistics.TotalOfCurrentMonth;
-			var totalOfCurrentYear = this.Statistics.TotalOfCurrentYear;
-			var total = this.Statistics.Total;
-
-			if (this.Statistics.Years.IsEmpty || totalOfCurrentDay < 1)
-				return new();
-
-			if (this.LastStatistics.Total > total || this.LastStatistics.TotalOfCurrentYear > totalOfCurrentYear || this.LastStatistics.TotalOfCurrentMonth > totalOfCurrentMonth || this.LastStatistics.TotalOfCurrentDay > totalOfCurrentDay)
-			{
-				this.Logger.LogInformation($"------------------ [{DateTime.Now.ToIsoString()}]: Total hits is NOT MATCHED => {this.LastStatistics.Total:###,###,###,###,##0} vs {total:###,###,###,###,##0} | {this.LastStatistics.TotalOfCurrentYear:###,###,###,###,##0} vs {totalOfCurrentYear:###,###,###,###,##0} | {this.LastStatistics.TotalOfCurrentMonth:###,###,###,###,##0} vs {totalOfCurrentMonth:###,###,###,###,##0} | {this.LastStatistics.TotalOfCurrentDay:###,###,###,###,##0} vs {totalOfCurrentDay:###,###,###,###,##0}");
-				lock (this.Statistics.Locker)
-				{
-					totalOfCurrentDay = this.Statistics.TotalOfCurrentDay;
-					totalOfCurrentMonth = this.Statistics.TotalOfCurrentMonth;
-					totalOfCurrentYear = this.Statistics.TotalOfCurrentYear;
-					total = this.Statistics.Total;
-				}
-			}
-
-			this.LastStatistics = (total, totalOfCurrentYear, totalOfCurrentMonth, totalOfCurrentDay);
-			var statistics = this.GetStatistics(null, (_, sessions) => new JObject
-			{
-				["Sessions"] = sessions,
-				["Visits"] = new JObject
-				{
-					["Total"] = this.LastStatistics.Total,
-					["Year"] = this.LastStatistics.TotalOfCurrentYear,
-					["Month"] = this.LastStatistics.TotalOfCurrentMonth,
-					["Day"] = this.LastStatistics.TotalOfCurrentDay
-				}
-			});
-
-			new UpdateMessage
-			{
-				Type = "Users#Session#Statistics",
-				DeviceID = "*",
-				Data = statistics
-			}.Send();
-			return statistics;
-		}
-
-		void SendStatistics(bool isUpdater, bool sendRequestIfNot = true)
-		{
-			if (isUpdater)
-				this.SendStatistics();
-			else if (sendRequestIfNot)
-				new CommunicateMessage(this.ServiceName)
-				{
-					Type = "VisitStatistics#Send",
-					ExcludedNodeID = this.NodeID
-				}.Send(Router.GotBackupRouter());
-		}
-
-		void TrackStatistics()
-			=> this.Statistics.Update();
-
-		string GetDataLogsOfStatistics(System.Action onCompleted = null)
-		{
-			var logs = "";
-			foreach (var year in this.Statistics.Years.Values.OrderByDescending(@object => @object.Name))
-			{
-				var yearLogs = "";
-				foreach (var month in year.Months.Values.OrderByDescending(@object => @object.Name))
-				{
-					var monthLogs = "";
-					foreach (var day in month.Days.Values.OrderByDescending(@object => @object.Name))
-						monthLogs += $"\r\n--------------------- {year.Name}-{month.Name}-{day.Name} => {day.Sum():###,###,###,###0}";
-					yearLogs += $"\r\n------------------ {year.Name}-{month.Name} - Number of days: {month.Days.Count} => {month.Sum():###,###,###,###,###,###0}" + monthLogs;
-				}
-				logs += (logs != "" ? "\r\n" : "") + $"------------- {year.Name} - Number of months: {year.Months.Count} => {year.Sum():###,###,###,###,###,###0}" + yearLogs;
-			}
-			logs = $"-------------\r\n"
-				+ $"[{this.IsUpdater}] - Number of years: {this.Statistics.Years.Count:###,##0} - Number of months: {this.Statistics.Years.Values.Sum(year => year.Months.Count):###,##0} - Number of days: {this.Statistics.Years.Values.Sum(year => year.Months.Values.Sum(month => month.Days.Count)):###,##0}\r\n"
-				+ $"------------- Counters - Total: {this.Statistics.Total:###,###,###,###,###,###,###,###0} | Year: {this.Statistics.TotalOfCurrentMonth:###,###,###,###,###,###,###,###0} | Month: {this.Statistics.TotalOfCurrentMonth:###,###,###,###,###,###,###,###0}\r\n{logs}";
-			onCompleted?.Invoke();
-			return logs;
-		}
-
-		Task LoadStatisticsAsync()
-			=> this.Statistics.Years.IsEmpty ? this.Statistics.LoadAsync(false, this.CancellationToken) : Task.CompletedTask;
-
-		async Task LoadStatisticsAsync(bool isUpdater)
-		{
-			await Task.WhenAll
-			(
-				this.Statistics.LoadDumpStatisticsAsync(this.CancellationToken),
-				this.Sessions.LoadDumpAsync(this.CancellationToken)
-			).ConfigureAwait(false);
-			this.SendSessionStatisticsSyncRequest();
-
-			if (isUpdater)
-			{
-				await this.Statistics.LoadAsync(true, this.CancellationToken).ConfigureAwait(false);
-				this.SendVisitStatistics();
-			}
-			this.SendVisitStatisticsSyncRequest();
-
-			await Task.Delay(UtilityService.GetRandomNumber(2345, 3456), this.CancellationToken).ConfigureAwait(false);
-			await this.Statistics.LoadAsync(false, this.CancellationToken).ConfigureAwait(false);
-			this.Logger?.LogInformation($"Statistics had been loaded {(this.IsUpdater ? this.GetDataLogsOfStatistics(() => this.SendStatistics()) : "")}");
-		}
-
-		Task DumpStatisticsAsync(bool all = false, string suffix = null)
-			=> Task.WhenAll
-			(
-				this.Statistics.DumpVisitStatisticsAsync(all, this.CancellationToken, suffix),
-				this.Statistics.DumpSystemStatisticsAsync(all, this.CancellationToken, suffix),
-				this.Sessions.DumpAsync(this.CancellationToken)
-			);
-
-		Task DumpStatisticsAsync(string suffix, bool gotBackupRouter)
-		{
-			new CommunicateMessage(this.ServiceName)
-			{
-				Type = "Statistics#Dump",
-				ExcludedNodeID = this.NodeID,
-				Data = new JObject
-				{
-					["X-Suffix"] = suffix
-				}
-			}.Send(gotBackupRouter);
-			return this.DumpStatisticsAsync(true, suffix);
-		}
-
-		async Task NormalizeStatisticsAsync(string cloneDate, string cloneDateBy, string cloneMin, string cloneMax, bool cloneAsSet, string suffix)
-		{
-			if (DateTime.TryParse($"{cloneDate}T00:00:00".Left(20), out var dateBeCloned) && DateTime.TryParse($"{cloneDateBy}T00:00:00".Left(20), out var dateCloneOf))
-			{
-				if (!Int32.TryParse(cloneMin, out var minCounters) || minCounters < 1)
-					minCounters = 13;
-
-				if (!Int32.TryParse(cloneMax, out var maxCounters) || maxCounters < 1)
-					maxCounters = 99;
-
-				var min = Math.Min(minCounters, maxCounters);
-				var max = Math.Max(minCounters, maxCounters);
-
-				var cloneOf = this.Statistics.GetDay(dateCloneOf.Day.ToString("00"), dateCloneOf.Month.ToString("00"), dateCloneOf.Year.ToString("0000"), false);
-				var beCloned = this.Statistics.GetDay(dateBeCloned.Day.ToString("00"), dateBeCloned.Month.ToString("00"), dateBeCloned.Year.ToString("0000"), false);
-
-				for (var hour = 0; hour < 24; hour++)
-					for (var minute = 0; minute < 60; minute++)
-					{
-						var counters = cloneOf.Minutes[hour * 60 + minute] + UtilityService.GetRandomNumber(min, max);
-						if (cloneAsSet)
-							beCloned.Set(hour, minute, counters);
-						else
-							beCloned.Merge(hour, minute, counters);
-					}
-
-				var info = (dateBeCloned.Year, dateBeCloned.Month.ToString("00"), beCloned);
-				var systemStatistics = await this.Statistics.GetSystemStatisticsAsync(dateBeCloned, this.CancellationToken).ConfigureAwait(false);
-				var instance = await Statistics.Info.LoadAsync(dateBeCloned, this.CancellationToken).ConfigureAwait(false);
-				await Statistics.Info.SaveAsync(instance, info, systemStatistics, this.CancellationToken).ConfigureAwait(false);
-
-				this.Logger?.LogInformation($"------------- Statistics were cloned [{dateCloneOf:yyyy-MM-dd} => {dateBeCloned:yyyy-MM-dd}] - Counters: {cloneOf.Sum():###,###,###,##0} => {beCloned.Sum():###,###,###,##0} {this.GetDataLogsOfStatistics()}");
-				new CommunicateMessage(this.ServiceName)
-				{
-					Type = "Statistics#Reload",
-					ExcludedNodeID = this.NodeID,
-					Data = new JObject
-					{
-						["X-Dont-Reload-Sessions"] = true
-					}
-				}.Send(Router.GotBackupRouter());
-				this.SendStatistics();
-			}
-
-			else
-			{
-				this.Logger?.LogInformation("------------- Normalizing....");
-				var counter = 0;
-				var total = this.Statistics.Years.Values.Sum(year => year.Months.Values.Sum(month => month.Days.Count));
-				foreach (var year in this.Statistics.Years.Values)
-					foreach (var month in year.Months.Values)
-						foreach (var day in month.Days.Values)
-						{
-							var info = (month.Year, Month: month.Name, Day: day);
-							counter++;
-							try
-							{
-								var instance = await Statistics.Info.LoadAsync(info, this.CancellationToken).ConfigureAwait(false);
-								instance = instance != null
-									? await Statistics.Info.SaveAsync(instance, info, instance._systemStatistics, this.CancellationToken).ConfigureAwait(false)
-									: await Statistics.Info.SaveAsync(instance, info, this.Statistics.GetSystemStatistics(info), this.CancellationToken).ConfigureAwait(false);
-								this.Logger?.LogInformation($"------ Normalized {counter:###,##0}/{total:###,##0} [#{instance.ID}] => {info.Day.Sum():###,###,##0} @ {info.Year:0000}-{info.Month}-{info.Day.Name}");
-							}
-							catch (Exception ex)
-							{
-								this.Logger?.LogInformation($"Error occurred while normalizing => {ex.Message}", ex);
-							}
-						}
-				this.Logger?.LogInformation($"------------- Statistics had been normalized ({total:###,##0} records) {this.GetDataLogsOfStatistics()}");
-				this.SendStatistics();
-				new CommunicateMessage(this.ServiceName)
-				{
-					Type = "Statistics#Reload",
-					ExcludedNodeID = this.NodeID,
-					Data = new JObject
-					{
-						["X-Dont-Reload-Sessions"] = true
-					}
-				}.Send(Router.GotBackupRouter());
-			}
-
-			await this.DumpStatisticsAsync(suffix, Router.GotBackupRouter()).ConfigureAwait(false);
-		}
-
-		async Task ReloadStatisticsAsync(string correlationID, bool reloadSessions)
-		{
-			await this.Statistics.LoadAsync(false, this.CancellationToken, true, false).ConfigureAwait(false);
-			if (reloadSessions)
-			{
-				await this.Sessions.ReloadAsync(correlationID, this.CancellationToken).ConfigureAwait(false);
-				await this.Sessions.CleanupAsync().ConfigureAwait(false);
-			}
-			this.Logger?.LogInformation($"Statistics had been re-loaded {(this.IsUpdater ? this.GetDataLogsOfStatistics(() => this.SendStatistics()) : "")}");
 		}
 		#endregion
 
@@ -3043,16 +2456,17 @@ namespace net.vieapps.Services.Users
 			var session = await Session.GetAsync(token.SessionID, cancellationToken).ConfigureAwait(false);
 			if (session == null)
 			{
+				var deviceID = string.IsNullOrWhiteSpace(requestInfo.Session.DeviceID) ? $"{UtilityService.NewUUID}@vieapps-ngx-apis" : requestInfo.Session.DeviceID;
 				account = string.IsNullOrWhiteSpace(token.UserID)
 					? null
 					: await Account.GetAsync(token.UserID, cancellationToken).ConfigureAwait(false) ?? throw new InformationNotFoundException("User is not found");
-				user = new User(account?.ID ?? "", token.SessionID, account?.Roles ?? [$"{SystemRole.All}"], account?.AccessPrivileges ?? [], "APIs");
+				user = new User(account?.ID ?? "", token.SessionID, deviceID, account?.Roles ?? [$"{SystemRole.All}"], account?.AccessPrivileges ?? [], "APIs");
 
 				session = new Session(requestInfo.Session)
 				{
 					ID = token.SessionID,
 					UserID = token.UserID,
-					DeviceID = $"{UtilityService.NewUUID}@vieapps-ngx-apis",
+					DeviceID = deviceID,
 					ExpiredAt = token.Expires,
 					AccessToken = user.GetAccessToken(this.ECCKey, payload => payload["exp"] = token.Expires.ToUnixTimestamp()),
 					Verified = true
@@ -3075,7 +2489,7 @@ namespace net.vieapps.Services.Users
 			}
 
 			account ??= await Account.GetAsync(token.UserID, cancellationToken).ConfigureAwait(false);
-			user ??= new User(account?.ID ?? "", token.SessionID, account?.Roles ?? [$"{SystemRole.All}"], account?.AccessPrivileges ?? [], "APIs");
+			user ??= new User(account?.ID ?? "", token.SessionID, session.DeviceID, account?.Roles ?? [$"{SystemRole.All}"], account?.AccessPrivileges ?? [], "APIs");
 
 			var authenticateToken = user.GetAuthenticateToken(this.EncryptionKey, this.JWTKey, payload =>
 			{
@@ -3083,7 +2497,6 @@ namespace net.vieapps.Services.Users
 				payload["2fa"] = $"{session.Verified}|{UtilityService.NewUUID}".Encrypt(this.EncryptionKey, true);
 				payload["dev"] = (session.DeveloperID ?? "").Encrypt(this.EncryptionKey, true);
 				payload["app"] = (session.AppID ?? "").Encrypt(this.EncryptionKey, true);
-				payload["did"] = session.DeviceID;
 				payload["tid"] = token.ID;
 			});
 
@@ -3337,7 +2750,593 @@ namespace net.vieapps.Services.Users
 			=> base.SendSyncRequestAsync(requestInfo, cancellationToken);
 		#endregion
 
-		#region Process communicate messages
+		#region Statistics
+		async Task<JToken> ProcessStatisticsAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		{
+			if (requestInfo.Verb.IsEquals("GET"))
+			{
+				if (requestInfo.ObjectName.IsEquals("Statistics") && "fetch".IsEquals(requestInfo.GetObjectIdentity()))
+					return this.SendStatistics();
+
+				var isSystemAdministrator = await this.IsSystemAdministratorAsync(requestInfo, cancellationToken).ConfigureAwait(false);
+				if (isSystemAdministrator)
+				{
+					if (requestInfo.ContainsKey("x-normalize"))
+					{
+						if (this.IsUpdater)
+							this.NormalizeStatisticsAsync(requestInfo.GetParameter("x-clone-date"), requestInfo.GetParameter("x-clone-date-by"), requestInfo.GetParameter("x-clone-min"), requestInfo.GetParameter("x-clone-max"), requestInfo.ContainsKey("x-clone-as-set"), requestInfo.GetParameter("x-suffix")).Execute(ex => this.Logger.LogInformation($"Error occurred while normalizing => {ex.Message}", ex));
+						else
+							new CommunicateMessage(this.ServiceName)
+							{
+								Type = "Statistics#Normalize",
+								Data = new JObject
+								{
+									["X-Correlation-ID"] = requestInfo.CorrelationID,
+									["X-Clone-Date"] = requestInfo.GetParameter("x-clone-date"),
+									["X-Clone-Date-By"] = requestInfo.GetParameter("x-clone-date-by"),
+									["X-Clone-Min"] = requestInfo.GetParameter("x-clone-min"),
+									["X-Clone-Max"] = requestInfo.GetParameter("x-clone-max"),
+									["X-Clone-As-Set"] = requestInfo.ContainsKey("x-clone-as-set"),
+									["X-Suffix"] = requestInfo.GetParameter("x-suffix")
+								}
+							}.Send(Router.GotBackupRouter());
+					}
+
+					if (requestInfo.ContainsKey("x-save"))
+					{
+						if (this.IsUpdater)
+							this.Statistics.SaveAsync(this.CancellationToken).Execute(ex => this.Logger.LogInformation($"Error occurred while saving => {ex.Message}", ex));
+						else
+							new CommunicateMessage(this.ServiceName)
+							{
+								Type = "Statistics#Save"
+							}.Send(Router.GotBackupRouter());
+					}
+
+					if (requestInfo.ContainsKey("x-reload"))
+					{
+						new CommunicateMessage(this.ServiceName)
+						{
+							Type = "Statistics#Reload",
+							Data = new JObject
+							{
+								["X-Correlation-ID"] = requestInfo.CorrelationID,
+								["X-Dont-Reload-Sessions"] = requestInfo.ContainsKey("x-dont-reload-sessions")
+							}
+						}.Send(Router.GotBackupRouter());
+						if (Router.GotBackupRouter())
+							this.ReloadStatisticsAsync(requestInfo.CorrelationID, !requestInfo.ContainsKey("x-dont-reload-sessions")).Execute(ex => this.Logger.LogInformation($"Error occurred while reloading => {ex.Message}", ex));
+					}
+
+					if (requestInfo.ContainsKey("x-dump"))
+						await this.DumpStatisticsAsync(requestInfo.GetParameter("x-suffix"), Router.GotBackupRouter()).ConfigureAwait(false);
+
+					if ((requestInfo.ContainsKey("x-blackip") || requestInfo.ContainsKey("x-blackips")) && !string.IsNullOrWhiteSpace(this.BlackIPsServiceName))
+						new CommunicateMessage(this.BlackIPsServiceName)
+						{
+							Type = $"BlackIPs#{(requestInfo.ContainsKey("x-clear") || requestInfo.ContainsKey("x-reset") ? "Reset" : requestInfo.ContainsKey("x-remove") ? "Remove" : "Update")}",
+							Data = requestInfo.ContainsKey("x-clear") || requestInfo.ContainsKey("x-reset") ? [] : (requestInfo.GetParameter("ips") ?? requestInfo.GetParameter("ip") ?? "").ToList().ToJArray()
+						}.Send();
+
+					else if ((requestInfo.ContainsKey("x-harmfulip") || requestInfo.ContainsKey("x-harmfulips")) && !string.IsNullOrWhiteSpace(this.BlackIPsServiceName))
+						new CommunicateMessage(this.BlackIPsServiceName)
+						{
+							Type = $"HarmfulIPs#{(requestInfo.ContainsKey("x-pause") ? "Pause" : requestInfo.ContainsKey("x-resume") ? "Resume" : "Sync")}"
+						}.Send();
+
+					else if (requestInfo.ContainsKey("x-clear"))
+					{
+						new CommunicateMessage(this.ServiceName)
+						{
+							Type = "Session#Clear",
+							ExcludedNodeID = this.NodeID
+						}.Send(Router.GotBackupRouter());
+						await this.Sessions.ClearAsync(this.IsUpdater ? ids => Utility.Cache.RemoveAsync(ids.Select(id => id.GetCacheKey<Session>()), cancellationToken) : null).ConfigureAwait(false);
+					}
+
+					if (requestInfo.ContainsKey("x-pause-harmful-request") && !string.IsNullOrWhiteSpace(this.BlackIPsServiceName))
+						new CommunicateMessage(this.BlackIPsServiceName)
+						{
+							Type = "HarmfulIPs#Pause"
+						}.Send();
+
+					if (requestInfo.ContainsKey("x-resume-harmful-request") && !string.IsNullOrWhiteSpace(this.BlackIPsServiceName))
+						new CommunicateMessage(this.BlackIPsServiceName)
+						{
+							Type = "HarmfulIPs#Resume"
+						}.Send();
+
+					if (requestInfo.ContainsKey("x-reset-blackips") && !string.IsNullOrWhiteSpace(this.BlackIPsServiceName))
+						new CommunicateMessage(this.BlackIPsServiceName)
+						{
+							Type = "BlackIPs#Reset"
+						}.Send();
+
+					if (requestInfo.ContainsKey("x-enable-track"))
+					{
+						new CommunicateMessage("Portals") { Type = "Sessions#Track#Enable" }.Send();
+						new CommunicateMessage("Files") { Type = "Sessions#Track#Enable" }.Send();
+					}
+
+					if (requestInfo.ContainsKey("x-disable-track"))
+					{
+						new CommunicateMessage("Portals") { Type = "Sessions#Track#Disable" }.Send();
+						new CommunicateMessage("Files") { Type = "Sessions#Track#Disable" }.Send();
+					}
+				}
+
+				return requestInfo.ObjectName.IsEquals("Visit.Statistics")
+					? await this.ProcessVisitStatisticsAsync(requestInfo, cancellationToken).ConfigureAwait(false)
+					: requestInfo.ObjectName.IsEquals("System.Statistics")
+						? await this.ProcessSystemStatisticsAsync(requestInfo, cancellationToken).ConfigureAwait(false)
+						: await this.ProcessSessionStatisticsAsync(requestInfo, isSystemAdministrator, cancellationToken).ConfigureAwait(false);
+			}
+
+			throw new MethodNotAllowedException(requestInfo.Verb);
+		}
+
+		async Task<JToken> ProcessVisitStatisticsAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		{
+			if (this.Statistics.Years.IsEmpty)
+				await this.Statistics.LoadAsync(false, cancellationToken).ConfigureAwait(false);
+
+			var asSummary = requestInfo.ContainsKey("x-sum") || requestInfo.ContainsKey("x-summary");
+			var addDayDetails = !requestInfo.ContainsKey("x-no-day-details");
+			var addHourDetails = addDayDetails && !requestInfo.ContainsKey("x-no-hour-details");
+			
+			var statistics = this.Statistics.ToJson(asSummary, addDayDetails, addHourDetails);
+			var now = DateTime.Now;
+
+			if (DateTime.TryParse($"{requestInfo.GetParameter("x-day")}T00:00:00".Left(19), out var specifiedDay) || DateTime.TryParse($"{requestInfo.GetParameter("x-month")}T00:00:00".Left(19), out var specifiedMonth))
+			{
+				var bySpecifiedMonth = DateTime.TryParse($"{requestInfo.GetParameter("x-month")}T00:00:00".Left(19), out specifiedMonth);
+				if (bySpecifiedMonth)
+					specifiedDay = specifiedMonth;
+
+				var yearID = specifiedDay.Year.ToString("0000");
+				this.Statistics.Years.Select(kvp => kvp.Key).ForEach(year =>
+				{
+					if (year != yearID)
+						statistics.Remove(year);
+				});
+
+				var yearJson = statistics.Get<JObject>(yearID);
+				var monthsJson = yearJson?.Get<JObject>("Months");
+				for (var index = 1; index <= 12; index++)
+				{
+					if (index != specifiedDay.Month)
+						(monthsJson ?? yearJson)?.Remove(index.ToString("00"));
+				}
+
+				var monthID = specifiedDay.Month.ToString("00");
+				var monthJson = monthsJson?.Get<JObject>(monthID) ?? yearJson.Get<JObject>(monthID);
+				var daysJson = monthsJson?.Get<JObject>(monthID)?.Get<JObject>("Days");
+				if (!bySpecifiedMonth)
+					for (var index = 1; index <= 31; index++)
+					{
+						if (index != specifiedDay.Day)
+							(daysJson ?? monthJson)?.Remove(index.ToString("00"));
+					}
+
+				if (specifiedDay.Day == now.Day && specifiedDay.Month == now.Month && specifiedDay.Year == now.Year)
+				{
+					var hoursJson = daysJson?.Get<JObject>("Hours");
+					if (hoursJson != null)
+					{
+						if (now.Hour < 23)
+							for (var index = 23; index > now.Hour; index--)
+								hoursJson.Remove(index.ToString("00"));
+
+						var hourJson = specifiedDay.Hour == now.Hour && now.Minute < 59 ? hoursJson.Get<JObject>(now.Hour.ToString("00")) : null;
+						if (hourJson != null)
+							for (var index = 59; index > now.Minute; index--)
+								hourJson.Remove(index.ToString("00"));
+					}
+				}
+			}
+
+			else
+			{
+				var yearID = now.Year.ToString("0000");
+				var monthID = now.Month.ToString("00");
+				var dayID = now.Day.ToString("00");
+				var hourID = now.Hour.ToString("00");
+
+				var daysJson = statistics.Get<JObject>(yearID)?.Get<JObject>("Months").Get<JObject>(monthID)?.Get<JObject>("Days")?.Get<JObject>(dayID);
+				var hoursJson = daysJson?.Get<JObject>("Hours");
+				if (hoursJson != null)
+				{
+					if (now.Hour <= 23)
+						for (var index = 23; index > now.Hour; index--)
+							hoursJson.Remove(index.ToString("00"));
+
+					var hourJson = hoursJson.Get<JObject>(hourID);
+					if (hourJson != null)
+						for (var index = 59; index > now.Minute; index--)
+							hourJson.Remove(index.ToString("00"));
+				}
+			}
+
+			return statistics;
+		}
+
+		async Task<JToken> ProcessSystemStatisticsAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		{
+			if (!DateTime.TryParse(requestInfo.GetParameter("x-time"), out var time))
+				time = DateTime.Now.AddMinutes(-1);
+
+			var systemStatistics = await this.Statistics.GetSystemStatisticsAsync(time, cancellationToken).ConfigureAwait(false);
+			return systemStatistics[time.Hour * 60 + time.Minute]?.GetString().ToJson(json => json["Time"] = time.ToIsoString()) ?? new JObject();
+		}
+
+		async Task<JToken> ProcessSessionStatisticsAsync(RequestInfo requestInfo, bool isSystemAdministrator, CancellationToken cancellationToken)
+		{
+			var ipAddressses = string.IsNullOrWhiteSpace(this.BlackIPsServiceName) || string.IsNullOrWhiteSpace(this.BlackIPsObjectName) || string.IsNullOrWhiteSpace(this.BlackIPsVerb)
+				? new JObject
+				{
+					["BlackIPs"] = new JArray(),
+					["HarmfulIPs"] = new JArray()
+				}
+				: await this.CallServiceAsync(new RequestInfo(requestInfo)
+				{
+					ServiceName = this.BlackIPsServiceName,
+					ObjectName = this.BlackIPsObjectName,
+					Verb = this.BlackIPsVerb
+				}, cancellationToken).ConfigureAwait(false) as JObject;
+
+			var sessions = this.Sessions.Get();
+
+			if (requestInfo.TryGetParameter("x-user-id", out var userID))
+				sessions = sessions.Where(info => userID.IsEquals(info.Session.UserID));
+			else if (requestInfo.ContainsKey("x-user") || requestInfo.ContainsKey("x-authenticated"))
+				sessions = sessions.Where(info => !string.IsNullOrWhiteSpace(info.Session.UserID));
+			else if (requestInfo.ContainsKey("x-visitor") || requestInfo.ContainsKey("x-anonymous"))
+				sessions = requestInfo.ContainsKey("x-crawler")
+					? sessions.Where(info => string.IsNullOrWhiteSpace(info.Session.UserID))
+					: sessions.Where(info => string.IsNullOrWhiteSpace(info.Session.UserID) && string.IsNullOrWhiteSpace(info.User.Name));
+			else if (requestInfo.ContainsKey("x-crawler"))
+				sessions = sessions.Where(info => string.IsNullOrWhiteSpace(info.Session.UserID) && "Crawler".IsEquals(info.User.Name));
+
+			if (requestInfo.TryGetParameter("x-ip", out var ip))
+				sessions = sessions.Where(info => info.Session.IP.IsStartsWith(ip));
+
+			if (requestInfo.TryGetParameter("x-country", out var country))
+				sessions = requestInfo.TryGetParameter("x-region", out var region)
+					? sessions.Where(info => info.User.Location.IsEndsWith($"{region}, {country}"))
+					: sessions.Where(info => info.User.Location.IsEndsWith(country));
+
+			if (requestInfo.TryGetParameter("x-service", out var service))
+			{
+				sessions = sessions.Where(info => service.IsEquals(info.Service.Name));
+				if (requestInfo.TryGetParameter("x-system-id", out var systemID))
+					sessions = sessions.Where(info => systemID.IsEquals(info.Service.SystemID));
+			}
+
+			if (requestInfo.TryGetParameter("x-os", out var os))
+				sessions = sessions.Where(info => info.Session.OSInfo.IsStartsWith(os));
+
+			sessions = requestInfo.TryGetParameter("x-order-by", out var orderBy) && (orderBy.IsStartsWith("asc") || orderBy.IsStartsWith("old"))
+				? sessions.OrderBy(info => info.LastAccess)
+				: sessions.OrderByDescending(info => info.LastAccess);
+
+			if (requestInfo.TryGetParameter("x-skip", out var skip) && Int32.TryParse(skip, out var skipRecords) && skipRecords > 0)
+				sessions = sessions.Skip(skipRecords);
+
+			if (requestInfo.TryGetParameter("x-max", out var max) && Int32.TryParse(max, out var maxRecords) && maxRecords > 0)
+				sessions = sessions.Take(maxRecords);
+
+			if (this.Statistics.Years.IsEmpty)
+				await this.Statistics.LoadAsync(false, cancellationToken).ConfigureAwait(false);
+
+			this.PrepareStatistics();
+			var onlyStatistics = requestInfo.ContainsKey("x-statistics") || !isSystemAdministrator;
+			var statistics = this.GetStatistics(onlyStatistics ? sessions : null, (_, statisticsJson) =>
+			{
+				var sessionsJson = statisticsJson;
+				if (!onlyStatistics)
+					sessionsJson["Sessions"] = sessions.Count();
+
+				return new JObject
+				{
+					["Sessions"] = sessionsJson,
+					["Visits"] = new JObject
+					{
+						["Total"] = this.LastStatistics.Total,
+						["Year"] = this.LastStatistics.TotalOfCurrentYear,
+						["Month"] = this.LastStatistics.TotalOfCurrentMonth,
+						["Day"] = this.LastStatistics.TotalOfCurrentDay
+					},
+					["BlackIPs"] = ipAddressses.Get<JArray>("BlackIPs"),
+					["HarmfulIPs"] = ipAddressses.Get<JArray>("HarmfulIPs")
+				};
+			});
+
+			statistics = onlyStatistics
+				? statistics
+				: new JObject
+				{
+					["Statistics"] = statistics,
+					["Sessions"] = sessions.ToList().Select(info => new JObject
+					{
+						["ID"] = info.Session.ID,
+						["Time"] = info.LastAccess.ToIsoString(),
+						["IP"] = info.Session.IP,
+						["Location"] = info.User.Location,
+						["User"] = string.IsNullOrWhiteSpace(info.Session.UserID) ? new JValue(info.User.Name ?? "Visitor") : info.User.ToJson(json =>
+						{
+							json["ID"] = info.Session.UserID;
+							json.Remove("Location");
+							json.Remove("LastAccess");
+						}),
+						["App"] = new JObject
+						{
+							["DeviceID"] = info.Session.DeviceID,
+							["AppInfo"] = info.Session.AppInfo,
+							["OSInfo"] = info.Session.OSInfo
+						},
+						["Service"] = info.Service.ToJson(json =>
+						{
+							if (string.IsNullOrWhiteSpace(info.Service.SystemID))
+								json.Remove("SystemID");
+						})
+					}).ToJArray()
+				};
+
+			if (requestInfo.ContainsKey("x-latest") && isSystemAdministrator && !onlyStatistics)
+			{
+				var latest = new List<JObject>();
+				var latestSessions = await Session.FindAsync(null, Sorts<Session>.Descending("RenewedAt"), requestInfo.TryGetParameter("x-latest", out var xlatest) && Int32.TryParse(xlatest, out var pageSize) && pageSize > 0 ? pageSize : 100, 1, null, false, null, 0, cancellationToken).ConfigureAwait(false);
+				await latestSessions.ForEachAsync(async session =>
+				{
+					var profile = await Profile.GetAsync(session.UserID, cancellationToken).ConfigureAwait(false);
+					latest.Add(new JObject
+					{
+						["ID"] = session.ID,
+						["IP"] = session.IP,
+						["User"] = $"{profile?.Name} - {profile?.Email}",
+						["App"] = $"{session.AppInfo} - {session.OSInfo}",
+						["Time"] = session.RenewedAt.ToIsoString(),
+						["Elapsed"] = session.RenewedAt.GetElapsedTimes()
+					});
+				}, true, false).ConfigureAwait(false);
+				statistics["Latest"] = latest.ToJArray();
+			}
+
+			return statistics;
+		}
+
+		JObject GetStatistics(IEnumerable<SessionInfo> sessions, Func<IEnumerable<SessionInfo>, JObject, JObject> transformer = null)
+		{
+			sessions ??= this.Sessions.Get();
+			var total = 0;
+			var user = 0;
+			var crawler = 0;
+			foreach (var sessionInfo in sessions)
+			{
+				total++;
+				if (!string.IsNullOrWhiteSpace(sessionInfo.Session?.UserID))
+					user++;
+				else if ("Crawler".IsEquals(sessionInfo.User?.Name))
+					crawler++;
+			}
+			var statistics = new JObject
+			{
+				["Total"] = total,
+				["User"] = user,
+				["Visitor"] = total - user - crawler,
+				["Crawler"] = crawler
+			};
+			return transformer != null ? transformer(sessions, statistics) : statistics;
+		}
+
+		JObject SendStatistics()
+		{
+			if (this.Statistics.Years.IsEmpty)
+				return new();
+
+			var statistics = this.GetStatistics(null, (_, sessions) => new JObject
+			{
+				["Sessions"] = sessions,
+				["Visits"] = new JObject
+				{
+					["Total"] = this.LastStatistics.Total,
+					["Year"] = this.LastStatistics.TotalOfCurrentYear,
+					["Month"] = this.LastStatistics.TotalOfCurrentMonth,
+					["Day"] = this.LastStatistics.TotalOfCurrentDay
+				}
+			});
+
+			new UpdateMessage
+			{
+				Type = "Users#Session#Statistics",
+				DeviceID = "*",
+				Data = statistics
+			}.Send();
+			return statistics;
+		}
+
+		void SendStatistics(bool isUpdater, bool sendRequestIfNot = true)
+		{
+			if (isUpdater)
+				this.SendStatistics();
+
+			else if (sendRequestIfNot)
+				new CommunicateMessage(this.ServiceName)
+				{
+					Type = "VisitStatistics#Send",
+					ExcludedNodeID = this.NodeID
+				}.Send(Router.GotBackupRouter());
+		}
+
+		void PrepareStatistics()
+			=> this.LastStatistics = (this.Statistics.Years.Values.Sum(year => year.Sum(true)), this.Statistics.TotalOfCurrentYear, this.Statistics.TotalOfCurrentMonth, this.Statistics.TotalOfCurrentDay);
+
+		int TrackStatistics(JObject data = null)
+			=> data != null ? this.Statistics.Update(data) : this.Statistics.Update();
+
+		async Task LoadStatisticsAsync(bool isUpdater)
+		{
+			await Task.WhenAll
+			(
+				this.Statistics.LoadDumpStatisticsAsync(this.CancellationToken),
+				this.Sessions.LoadDumpAsync(this.CancellationToken)
+			).ConfigureAwait(false);
+			this.SendSessionStatisticsSyncRequest();
+
+			if (isUpdater)
+			{
+				await this.Statistics.LoadAsync(true, this.CancellationToken).ConfigureAwait(false);
+				this.SendVisitStatistics();
+			}
+			this.SendVisitStatisticsSyncRequest();
+
+			await Task.Delay(UtilityService.GetRandomNumber(2345, 3456), this.CancellationToken).ConfigureAwait(false);
+			await this.Statistics.LoadAsync(false, this.CancellationToken).ConfigureAwait(false);
+			this.PrepareStatistics();
+			this.Logger?.LogInformation($"Statistics had been loaded {(this.IsUpdater ? this.GetDataLogsOfStatistics(() => this.SendStatistics()) : "")}");
+		}
+
+		Task DumpStatisticsAsync(bool all = false, string suffix = null)
+			=> Task.WhenAll
+			(
+				this.Statistics.DumpVisitStatisticsAsync(all, this.CancellationToken, suffix),
+				this.Statistics.DumpSystemStatisticsAsync(all, this.CancellationToken, suffix),
+				this.Sessions.DumpAsync(this.CancellationToken)
+			);
+
+		Task DumpStatisticsAsync(string suffix, bool gotBackupRouter)
+		{
+			new CommunicateMessage(this.ServiceName)
+			{
+				Type = "Statistics#Dump",
+				ExcludedNodeID = this.NodeID,
+				Data = new JObject
+				{
+					["X-Suffix"] = suffix
+				}
+			}.Send(gotBackupRouter);
+			return this.DumpStatisticsAsync(true, suffix);
+		}
+
+		async Task NormalizeStatisticsAsync(string cloneDate, string cloneDateBy, string cloneMin, string cloneMax, bool cloneAsSet, string suffix)
+		{
+			if (DateTime.TryParse($"{cloneDate}T00:00:00".Left(20), out var dateBeCloned) && DateTime.TryParse($"{cloneDateBy}T00:00:00".Left(20), out var dateCloneOf))
+			{
+				if (!Int32.TryParse(cloneMin, out var minCounters) || minCounters < 1)
+					minCounters = 13;
+
+				if (!Int32.TryParse(cloneMax, out var maxCounters) || maxCounters < 1)
+					maxCounters = 99;
+
+				var min = Math.Min(minCounters, maxCounters);
+				var max = Math.Max(minCounters, maxCounters);
+
+				var cloneOf = this.Statistics.GetDay(dateCloneOf.Day.ToString("00"), dateCloneOf.Month.ToString("00"), dateCloneOf.Year.ToString("0000"), false);
+				var beCloned = this.Statistics.GetDay(dateBeCloned.Day.ToString("00"), dateBeCloned.Month.ToString("00"), dateBeCloned.Year.ToString("0000"), false);
+
+				for (var hour = 0; hour < 24; hour++)
+					for (var minute = 0; minute < 60; minute++)
+					{
+						var counter = cloneOf.Minutes[hour * 60 + minute] + UtilityService.GetRandomNumber(min, max);
+						if (cloneAsSet)
+							beCloned.Set(hour, minute, counter);
+						else
+							beCloned.Update(hour, minute, counter);
+					}
+
+				var info = (dateBeCloned.Year, dateBeCloned.Month.ToString("00"), beCloned);
+				var systemStatistics = await this.Statistics.GetSystemStatisticsAsync(dateBeCloned, this.CancellationToken).ConfigureAwait(false);
+				var instance = await Statistics.Info.LoadAsync(dateBeCloned, this.CancellationToken).ConfigureAwait(false);
+				await Statistics.Info.SaveAsync(instance, info, systemStatistics, this.CancellationToken).ConfigureAwait(false);
+
+				this.Logger?.LogInformation($"------------- Statistics were cloned [{dateCloneOf:yyyy-MM-dd} => {dateBeCloned:yyyy-MM-dd}] - Counters: {cloneOf.Sum():###,###,###,##0} => {beCloned.Sum():###,###,###,##0} {this.GetDataLogsOfStatistics()}");
+				new CommunicateMessage(this.ServiceName)
+				{
+					Type = "Statistics#Reload",
+					ExcludedNodeID = this.NodeID,
+					Data = new JObject
+					{
+						["X-Dont-Reload-Sessions"] = true
+					}
+				}.Send(Router.GotBackupRouter());
+				this.PrepareStatistics();
+				this.SendStatistics();
+			}
+
+			else
+			{
+				this.Logger?.LogInformation("------------- Normalizing....");
+				var counter = 0;
+				var total = this.Statistics.Years.Values.Sum(year => year.Months.Values.Sum(month => month.Days.Count));
+				foreach (var year in this.Statistics.Years.Values)
+					foreach (var month in year.Months.Values)
+						foreach (var day in month.Days.Values)
+						{
+							var info = (month.Year, Month: month.Name, Day: day);
+							counter++;
+							try
+							{
+								var instance = await Statistics.Info.LoadAsync(info, this.CancellationToken).ConfigureAwait(false);
+								instance = instance != null
+									? await Statistics.Info.SaveAsync(instance, info, instance._systemStatistics, this.CancellationToken).ConfigureAwait(false)
+									: await Statistics.Info.SaveAsync(instance, info, this.Statistics.GetSystemStatistics(info), this.CancellationToken).ConfigureAwait(false);
+								this.Logger?.LogInformation($"------ Normalized {counter:###,##0}/{total:###,##0} [#{instance.ID}] => {info.Day.Sum():###,###,##0} @ {info.Year:0000}-{info.Month}-{info.Day.Name}");
+							}
+							catch (Exception ex)
+							{
+								this.Logger?.LogInformation($"Error occurred while normalizing => {ex.Message}", ex);
+							}
+						}
+				this.Logger?.LogInformation($"------------- Statistics had been normalized ({total:###,##0} records) {this.GetDataLogsOfStatistics()}");
+				this.SendStatistics();
+				new CommunicateMessage(this.ServiceName)
+				{
+					Type = "Statistics#Reload",
+					ExcludedNodeID = this.NodeID,
+					Data = new JObject
+					{
+						["X-Dont-Reload-Sessions"] = true
+					}
+				}.Send(Router.GotBackupRouter());
+			}
+
+			await this.DumpStatisticsAsync(suffix, Router.GotBackupRouter()).ConfigureAwait(false);
+		}
+
+		async Task ReloadStatisticsAsync(string correlationID, bool reloadSessions)
+		{
+			await this.Statistics.LoadAsync(false, this.CancellationToken, true, false).ConfigureAwait(false);
+			this.PrepareStatistics();
+			if (reloadSessions)
+			{
+				await this.Sessions.ReloadAsync(correlationID, this.CancellationToken).ConfigureAwait(false);
+				await this.Sessions.CleanupAsync().ConfigureAwait(false);
+			}
+			this.Logger?.LogInformation($"Statistics had been re-loaded {(this.IsUpdater ? this.GetDataLogsOfStatistics(() => this.SendStatistics()) : "")}");
+		}
+
+		string GetDataLogsOfStatistics(System.Action onCompleted = null)
+		{
+			var logs = "";
+			foreach (var year in this.Statistics.Years.Values.OrderByDescending(@object => @object.Name))
+			{
+				var yearLogs = "";
+				foreach (var month in year.Months.Values.OrderByDescending(@object => @object.Name))
+				{
+					var monthLogs = "";
+					foreach (var day in month.Days.Values.OrderByDescending(@object => @object.Name))
+						monthLogs += $"\r\n--------------------- {year.Name}-{month.Name}-{day.Name} => {day.Sum():###,###,###,###0}";
+					yearLogs += $"\r\n------------------ {year.Name}-{month.Name} - Number of days: {month.Days.Count} => {month.Sum():###,###,###,###,###,###0}" + monthLogs;
+				}
+				logs += (logs != "" ? "\r\n" : "") + $"------------- {year.Name} - Number of months: {year.Months.Count} => {year.Sum():###,###,###,###,###,###0}" + yearLogs;
+			}
+			logs = $"-------------\r\n"
+				+ $"[{this.IsUpdater}] - Number of years: {this.Statistics.Years.Count:###,##0} - Number of months: {this.Statistics.Years.Values.Sum(year => year.Months.Count):###,##0} - Number of days: {this.Statistics.Years.Values.Sum(year => year.Months.Values.Sum(month => month.Days.Count)):###,##0}\r\n"
+				+ $"------------- Counters - Total: {this.Statistics.Total:###,###,###,###,###,###,###,###0} | Year: {this.Statistics.TotalOfCurrentMonth:###,###,###,###,###,###,###,###0} | Month: {this.Statistics.TotalOfCurrentMonth:###,###,###,###,###,###,###,###0}\r\n{logs}";
+			onCompleted?.Invoke();
+			return logs;
+		}
+
 		void SendVisitStatistic(int counters, string minuteID, string hourID, string dayID = null, string monthID = null, string yearID = null)
 			=> new CommunicateMessage(this.ServiceName)
 			{
@@ -3364,16 +3363,17 @@ namespace net.vieapps.Services.Users
 						{
 							var minuteID = minute.ToString("00");
 							var hourID = hour.ToString("00");
-							this.SendVisitStatistic(this.Statistics.Get(minuteID, hourID, day.Name, month.Name, year.Name), minuteID, hourID, day.Name, month.Name, year.Name);
+							var counters = this.Statistics.Get(minuteID, hourID, day.Name, month.Name, year.Name);
+							this.SendVisitStatistic(counters, minuteID, hourID, day.Name, month.Name, year.Name);
 						}
 				})));
 			else
 			{
 				var now = DateTime.Now;
-				var yearID = $"{now:yyyy}";
-				var monthID = $"{now:MM}";
-				var dayID = $"{now:dd}";
-				var hourID = $"{now:HH}";
+				var yearID = now.Year.ToString("0000");
+				var monthID = now.Month.ToString("00");
+				var dayID = now.Day.ToString("00");
+				var hourID = now.Hour.ToString("00");
 				new[] {
 					now.Minute < 5 ? null : $"{now.AddMinutes(-4):mm}",
 					now.Minute < 4 ? null : $"{now.AddMinutes(-3):mm}",
@@ -3423,7 +3423,9 @@ namespace net.vieapps.Services.Users
 				Type = "SessionStatistics#Sync",
 				ExcludedNodeID = this.NodeID
 			}.Send(Router.GotBackupRouter());
+		#endregion
 
+		#region Process communicate messages
 		protected override async Task ProcessInterCommunicateMessageAsync(CommunicateMessage message, CancellationToken cancellationToken = default)
 		{
 			if (message.Data is not JObject data)
@@ -3435,11 +3437,11 @@ namespace net.vieapps.Services.Users
 			else if (message.Type.IsEquals("Statistics#Track") || message.Type.IsEquals("VisitStatistics#Track"))
 				this.TrackStatistics();
 
+			else if (message.Type.IsEquals("VisitStatistics#Update"))
+				this.TrackStatistics(data);
+
 			else if (message.Type.IsEquals("VisitStatistics#Send") && this.IsUpdater)
 				this.SendStatistics();
-
-			else if (message.Type.IsEquals("VisitStatistics#Update"))
-				this.Statistics.Update(data.Get("Counters", 0), data.Get<string>("Minute"), data.Get<string>("Hour"), data.Get<string>("Day"), data.Get<string>("Month"), data.Get<string>("Year"));
 
 			else if (message.Type.IsEquals("VisitStatistics#Sync"))
 				this.SendVisitStatistics(data.Get("All", false));
@@ -3468,8 +3470,7 @@ namespace net.vieapps.Services.Users
 			else if (message.Type.IsEquals("Statistics#Dump"))
 				this.DumpStatisticsAsync(true, data.Get<string>("X-Suffix")).Execute(ex => this.Logger.LogInformation($"Error occurred while dumping JSONs => {ex.Message}", ex));
 
-			// unknown
-			else if (this.IsDebugResultsEnabled)
+			if (this.IsDebugResultsEnabled)
 				await this.WriteLogsAsync(data.Get<string>("CorrelationID") ?? data.Get<string>("X-Correlation-ID"), $"Got an inter-communicate message => {message.ToJson().AsString(this.JsonFormat)})", null, this.ServiceName, "Communicates", LogLevel.Warning).ConfigureAwait(false);
 		}
 
@@ -3487,8 +3488,9 @@ namespace net.vieapps.Services.Users
 			if (this.IsUpdater)
 			{
 				// send session statistics to controller
-				var time = DateTime.Now.AddMinutes(1);
-				var delayMilliseconds = (int)(new DateTime(time.Year, time.Month, time.Day, time.Hour, time.Minute, 55) - DateTime.Now).TotalMilliseconds;
+				var now = DateTime.Now;
+				var time = now.AddMinutes(1);
+				var delayMilliseconds = (int)(new DateTime(time.Year, time.Month, time.Day, time.Hour, time.Minute, 55) - now).TotalMilliseconds;
 				this.StartTimer(() =>
 				{
 					new CommunicateMessage("APIGateway")
@@ -3498,18 +3500,25 @@ namespace net.vieapps.Services.Users
 					}.Send();
 				}, 60, delayMilliseconds);
 
-				// send visit statistics to clients (2 minutes)
-				this.StartTimer(() => this.SendStatistics(), this.UpdaterFrequency > 0 ? this.UpdaterFrequency : 2 * 60);
+				// send visit statistics to clients
+				delayMilliseconds = (int)(new DateTime(time.Year, time.Month, time.Day, time.Hour, time.Minute, 1) - now).TotalMilliseconds;
+				this.StartTimer(() =>
+				{
+					this.PrepareStatistics();
+					this.SendStatistics();
+				}, this.UpdaterFrequency > 0 ? this.UpdaterFrequency : 60, delayMilliseconds);
 
-				// persist & sync statistics (10 minutes)
+				// sync statistics across nodes
 				this.StartTimer(() =>
 				{
 					this.SendVisitStatistics();
 					this.SendVisitStatisticsSyncRequest();
 					this.SendSessionStatistics();
 					this.SendSessionStatisticsSyncRequest();
-					return this.Statistics.SaveAsync(this.CancellationToken);
-				}, 10 * 60);
+				}, 5 * 60, delayMilliseconds);
+
+				// persist statistics
+				this.StartTimer(() => this.Statistics.SaveAsync(this.CancellationToken), 10 * 60);
 
 				// clean expired sessions (12 hours)
 				this.StartTimer(async () =>
@@ -3534,18 +3543,14 @@ namespace net.vieapps.Services.Users
 			}
 			else
 			{
-				this.StartTimer(() =>
-				{
-					lock (this.Statistics.Locker)
-						this.LastStatistics = (this.Statistics.Total, this.Statistics.TotalOfCurrentYear, this.Statistics.TotalOfCurrentMonth, this.Statistics.TotalOfCurrentDay);
-				}, 2 * 60);
+				this.StartTimer(this.PrepareStatistics, 60);
 				this.StartTimer(() => this.Statistics.Normalize(), 10 * 60);
 			}
 
-			// dump JSONs (5 minutes)
+			// dump JSONs
 			this.StartTimer(() => this.DumpStatisticsAsync().Execute(ex => this.Logger?.LogInformation($"Error occurred while dumping JSONs => {ex.Message}", ex)), 5 * 60);
 
-			// clean-up (15 minutes)
+			// clean-up
 			this.StartTimer(() => this.Sessions.CleanupAsync(this.IsUpdater ? sessions => sessions.ForEachAsync(async sessionInfo =>
 			{
 				if (string.IsNullOrWhiteSpace(sessionInfo.Session.UserID))
@@ -3674,7 +3679,7 @@ namespace net.vieapps.Services.Users
 					Type = "Statistics#Reset"
 				}, false, writeDebugLogs);
 
-			if (args?.FirstOrDefault(arg => arg.IsStartsWith("/change-rpc-gate")) != null)
+			if (args?.FirstOrDefault(arg => arg.IsStartsWith("/rpc-gate-max")) != null || args?.FirstOrDefault(arg => arg.IsStartsWith("/change-rpc-gate")) != null)
 			{
 				var serviceName = args?.FirstOrDefault(arg => arg.IsStartsWith("/service:"))?.Replace("/service:", "", StringComparison.OrdinalIgnoreCase);
 				var nodeID = args?.FirstOrDefault(arg => arg.IsStartsWith("/node:"))?.Replace("/node:", "", StringComparison.OrdinalIgnoreCase);
