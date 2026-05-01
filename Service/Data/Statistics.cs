@@ -338,7 +338,10 @@ namespace net.vieapps.Services.Users
 					month.Days.Where(kvp => kvp.Key != currentDayID).Select(kvp => kvp.Key).ToList().ForEach(dayID =>
 					{
 						if (month.Days.TryRemove(dayID, out var day))
+						{
 							day.Sum();
+							this.GetMonth(month.Name, this.Current.Name, false).Days[day.Name] = day;
+						}
 					});
 			});
 
@@ -368,7 +371,7 @@ namespace net.vieapps.Services.Users
 			return this;
 		}
 
-		public async Task<Statistics> LoadAsync(bool current, CancellationToken cancellationToken, bool doNormalize = true, bool processCache = true)
+		public async Task<Statistics> LoadAsync(bool current, CancellationToken cancellationToken, bool doNormalize = true, bool logOnDays = false)
 		{
 			var now = DateTime.Now;
 			var currentYearID = now.Year.ToString("0000");
@@ -385,23 +388,30 @@ namespace net.vieapps.Services.Users
 				: null;
 			var sort = Sorts<Info>.Descending("Year").ThenByDescending("Month").ThenByDescending("Day");
 
-			var objects = current ? await Info.FindAsync(filter, sort, 1, 1, processCache, null, cancellationToken).ConfigureAwait(false) ?? [] : [];
+			var objects = current ? await Info.FindAsync(filter, sort, 1, 1, null, cancellationToken).ConfigureAwait(false) ?? [] : [];
 			if (!current)
 			{
 				var pageSize = 20;
 				var pageNumber = 0;
-				var totalRecords = await Info.CountAsync(filter, processCache, null, cancellationToken).ConfigureAwait(false);
+				var totalRecords = await Info.CountAsync(filter, null, cancellationToken).ConfigureAwait(false);
 				var totalPages = (totalRecords, pageSize).GetTotalPages();
 				while (pageNumber < totalPages)
 				{
 					pageNumber++;
-					objects.AddRange(await Info.FindAsync(filter, sort, pageSize, pageNumber, processCache, null, cancellationToken).ConfigureAwait(false) ?? []);
+					objects.AddRange(await Info.FindAsync(filter, sort, pageSize, pageNumber, null, cancellationToken).ConfigureAwait(false) ?? []);
 				}
+				await Enumerable.Range(0, 31).Select(day => now.AddDays(-day)).ForEachAsync(async specifiedDay =>
+				{
+					var instanceID = $"{specifiedDay:yyyyMMdd}{UtilityService.BlankUUID}".Left(32);
+					var instance = objects.FirstOrDefault(@object => @object.ID == instanceID) ?? await Statistics.Info.LoadAsync(specifiedDay, cancellationToken).ConfigureAwait(false);
+					if (instance != null && objects.FirstOrDefault(@object => @object.ID == instance.ID) == null)
+						objects.Add(instance);
+				}, true, false).ConfigureAwait(false);
 				Utility.Logger?.LogInformation($"{objects.Count:###,###,##0} statistics were loaded from database -----------");
 			}
 
 			int counter = 0, refined = 0;
-			objects.ForEach(@object =>
+			objects.OrderByDescending(@object => @object.ID).ForEach((@object, index) =>
 			{
 				var date = @object.ID.Left(8);
 				var yearID = @object.Year > 0 ? @object.Year.ToString("0000") : date.Left(4);
@@ -415,12 +425,16 @@ namespace net.vieapps.Services.Users
 					@object.Month = monthID.As<int>();
 					@object.Year = yearID.As<int>();
 					Info.UpdateAsync(@object, true, cancellationToken).Execute(ex => Utility.Logger?.LogInformation($"Error occurred while refining an object [{@object.ID}] => {ex.Message}", ex));
+					if (logOnDays)
+						Utility.Logger?.LogInformation($"Refine data #{index} - {@object.ID} => {yearID}-{monthID}-{dayID} -----------");
 				}
 
 				if (date == "00000000")
 				{
 					refined++;
 					Info.DeleteAsync(@object.ID, null, cancellationToken).Execute(ex => Utility.Logger?.LogInformation($"Error occurred while deleting an object [{@object.ID}] => {ex.Message}", ex));
+					if (logOnDays)
+						Utility.Logger?.LogInformation($"Delete wrong date => #{index} - {@object.ID} -----------");
 				}
 
 				else
@@ -428,11 +442,13 @@ namespace net.vieapps.Services.Users
 					this.GetDay(dayID, monthID, yearID, current).Load(@object.VisitStatisticsJson, true, _ => counter++);
 					if (@object.Day == now.Day && @object.Month == now.Month && @object.Year == now.Year)
 						this.SystemStatistics[date] = @object.SystemStatistics;
+					if (logOnDays)
+						Utility.Logger?.LogInformation($"Load data from JSONs #{index} - {@object.ID} => {yearID}-{monthID}-{dayID} [{@object.VisitStatisticsJson.Count}] -----------");
 				}
 			});
 
 			if (!current)
-				Utility.Logger?.LogInformation($"{counter:###,###,##0} statistics were constructed {(refined > 0 ? $"({refined:###,###,##0} statistic(s) were refined)" : "")} [{processCache}] -----------");
+				Utility.Logger?.LogInformation($"{counter:###,###,##0} statistics were constructed {(refined > 0 ? $"({refined:###,###,##0} statistic(s) were refined)" : "")} -----------");
 
 			if (doNormalize)
 				return this.Normalize();

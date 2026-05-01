@@ -2800,12 +2800,13 @@ namespace net.vieapps.Services.Users
 							Type = "Statistics#Reload",
 							Data = new JObject
 							{
+								["X-Day"] = requestInfo.GetParameter("x-day"),
+								["X-Dont-Reload-Sessions"] = requestInfo.ContainsKey("x-dont-reload-sessions"),
 								["X-Correlation-ID"] = requestInfo.CorrelationID,
-								["X-Dont-Reload-Sessions"] = requestInfo.ContainsKey("x-dont-reload-sessions")
 							}
 						}.Send(Router.GotBackupRouter());
 						if (Router.GotBackupRouter())
-							this.ReloadStatisticsAsync(requestInfo.CorrelationID, !requestInfo.ContainsKey("x-dont-reload-sessions")).Execute(ex => this.Logger.LogInformation($"Error occurred while reloading => {ex.Message}", ex));
+							this.ReloadStatisticsAsync(requestInfo.GetParameter("x-day"), !requestInfo.ContainsKey("x-dont-reload-sessions"), requestInfo.CorrelationID).Execute(ex => this.Logger.LogInformation($"Error occurred while reloading => {ex.Message}", ex));
 					}
 
 					if (requestInfo.ContainsKey("x-dump"))
@@ -3190,8 +3191,8 @@ namespace net.vieapps.Services.Users
 			}
 			this.SendVisitStatisticsSyncRequest();
 
-			await Task.Delay(UtilityService.GetRandomNumber(2345, 3456), this.CancellationToken).ConfigureAwait(false);
-			await this.Statistics.LoadAsync(false, this.CancellationToken).ConfigureAwait(false);
+			await Task.Delay(UtilityService.GetRandomNumber(3456, 4567), this.CancellationToken).ConfigureAwait(false);
+			await this.Statistics.LoadAsync(false, this.CancellationToken, true, isUpdater).ConfigureAwait(false);
 			this.PrepareStatistics();
 			this.Logger?.LogInformation($"Statistics had been loaded {(this.IsUpdater ? this.GetDataLogsOfStatistics(() => this.SendStatistics()) : "")}");
 		}
@@ -3303,16 +3304,31 @@ namespace net.vieapps.Services.Users
 			await this.DumpStatisticsAsync(suffix, Router.GotBackupRouter()).ConfigureAwait(false);
 		}
 
-		async Task ReloadStatisticsAsync(string correlationID, bool reloadSessions)
+		async Task ReloadStatisticsAsync(string requestedDay, bool reloadSessions, string correlationID)
 		{
-			await this.Statistics.LoadAsync(false, this.CancellationToken, true, false).ConfigureAwait(false);
-			this.PrepareStatistics();
-			if (reloadSessions)
+			if (DateTime.TryParse($"{requestedDay}T00:00:00".Left(19), out var specifiedDay))
 			{
-				await this.Sessions.ReloadAsync(correlationID, this.CancellationToken).ConfigureAwait(false);
-				await this.Sessions.CleanupAsync().ConfigureAwait(false);
+				var instance = await Statistics.Info.LoadAsync(specifiedDay, this.CancellationToken).ConfigureAwait(false);
+				if (instance != null)
+				{
+					var now = DateTime.Now;
+					var day = this.Statistics.GetDay(specifiedDay.Day.ToString("00"), specifiedDay.Month.ToString("00"), specifiedDay.Year.ToString("0000"), specifiedDay.Day == now.Day && specifiedDay.Month == now.Month && specifiedDay.Year == now.Year).Load(instance.VisitStatisticsJson, true);
+					this.Logger?.LogInformation($"Statistics of a specified day [{specifiedDay:yyyy-MM-dd}] had been re-loaded => {day.Counters:###,###,##0} --------------");
+				}
+				else
+					this.Logger?.LogInformation($"Statistics of a specified day [{specifiedDay:yyyy-MM-dd}] is not found --------------");
 			}
-			this.Logger?.LogInformation($"Statistics had been re-loaded {(this.IsUpdater ? this.GetDataLogsOfStatistics(() => this.SendStatistics()) : "")}");
+			else
+			{
+				await this.Statistics.LoadAsync(false, this.CancellationToken, true, this.IsUpdater).ConfigureAwait(false);
+				this.PrepareStatistics();
+				if (reloadSessions)
+				{
+					await this.Sessions.ReloadAsync(correlationID, this.CancellationToken).ConfigureAwait(false);
+					await this.Sessions.CleanupAsync().ConfigureAwait(false);
+				}
+				this.Logger?.LogInformation($"Statistics had been re-loaded {(this.IsUpdater ? this.GetDataLogsOfStatistics(() => this.SendStatistics()) : "")}");
+			}
 		}
 
 		string GetDataLogsOfStatistics(System.Action onCompleted = null)
@@ -3465,7 +3481,7 @@ namespace net.vieapps.Services.Users
 				this.Statistics.SaveAsync(this.CancellationToken).Execute(ex => this.Logger.LogInformation($"Error occurred while saving => {ex.Message}", ex));
 
 			else if (message.Type.IsEquals("Statistics#Reload"))
-				this.ReloadStatisticsAsync(data.Get<string>("X-Correlation-ID"), !data.Get("X-Dont-Reload-Sessions", false)).Execute(ex => this.Logger.LogInformation($"Error occurred while reloading => {ex.Message}", ex));
+				this.ReloadStatisticsAsync(data.Get<string>("X-Day"), !data.Get("X-Dont-Reload-Sessions", false), data.Get<string>("X-Correlation-ID")).Execute(ex => this.Logger.LogInformation($"Error occurred while reloading => {ex.Message}", ex));
 
 			else if (message.Type.IsEquals("Statistics#Dump"))
 				this.DumpStatisticsAsync(true, data.Get<string>("X-Suffix")).Execute(ex => this.Logger.LogInformation($"Error occurred while dumping JSONs => {ex.Message}", ex));
