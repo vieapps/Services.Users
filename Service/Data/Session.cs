@@ -724,8 +724,9 @@ namespace net.vieapps.Services.Users
 					var expired = false;
 					lock (sessionInfo.Locker)
 						expired = (now - sessionInfo.LastAccess) > (string.IsNullOrWhiteSpace(sessionInfo.Session.UserID) ? visitorIdle : userIdle);
-					if (expired && this._sessions.TryRemove(kvp.Key, out _) && onCompletedAsync != null)
-						sessions.Add(sessionInfo);
+					if (expired && this._sessions.TryRemove(kvp.Key, out _))
+						if (onCompletedAsync != null)
+							sessions.Add(sessionInfo);
 				}
 			}
 			return onCompletedAsync != null ? onCompletedAsync(sessions) : Task.CompletedTask;

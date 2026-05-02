@@ -38,7 +38,7 @@ namespace net.vieapps.Services.Users
 
 		Statistics Statistics { get; } = new();
 
-		(long Total, long TotalOfCurrentYear, long TotalOfCurrentMonth, long TotalOfCurrentDay) LastStatistics { get; set; } = (0, 0, 0, 0);
+		(long Total, long TotalOfCurrentYear, long TotalOfCurrentMonth, long TotalOfCurrentDay) VisitStatistics { get; set; } = (0, 0, 0, 0);
 
 		string ActivationKey => this.GetKey("Activation", "VIEApps-56BA2999-NGX-A2E4-Services-4B54-Activation-83EB-Key-693C250DC95D");
 
@@ -2967,7 +2967,7 @@ namespace net.vieapps.Services.Users
 				time = DateTime.Now.AddMinutes(-1);
 
 			var systemStatistics = await this.Statistics.GetSystemStatisticsAsync(time, cancellationToken).ConfigureAwait(false);
-			return systemStatistics[time.Hour * 60 + time.Minute]?.GetString().ToJson(json => json["Time"] = time.ToIsoString()) ?? new JObject();
+			return systemStatistics[time.Hour * 60 + time.Minute]?.GetString().ToJson(json => json["Time"] = time.ToIsoString()) ?? new JObject { ["Time"] = time.ToIsoString() };
 		}
 
 		async Task<JToken> ProcessSessionStatisticsAsync(RequestInfo requestInfo, bool isSystemAdministrator, CancellationToken cancellationToken)
@@ -3031,25 +3031,18 @@ namespace net.vieapps.Services.Users
 
 			this.PrepareStatistics();
 			var onlyStatistics = requestInfo.ContainsKey("x-statistics") || !isSystemAdministrator;
-			var statistics = this.GetStatistics(onlyStatistics ? sessions : null, (_, statisticsJson) =>
+			var statistics = this.GetStatistics(onlyStatistics ? sessions : null, (_, sessionsJson) => new JObject
 			{
-				var sessionsJson = statisticsJson;
-				if (!onlyStatistics)
-					sessionsJson["Sessions"] = sessions.Count();
-
-				return new JObject
+				["Sessions"] = sessionsJson,
+				["Visits"] = new JObject
 				{
-					["Sessions"] = sessionsJson,
-					["Visits"] = new JObject
-					{
-						["Total"] = this.LastStatistics.Total,
-						["Year"] = this.LastStatistics.TotalOfCurrentYear,
-						["Month"] = this.LastStatistics.TotalOfCurrentMonth,
-						["Day"] = this.LastStatistics.TotalOfCurrentDay
-					},
-					["BlackIPs"] = ipAddressses.Get<JArray>("BlackIPs"),
-					["HarmfulIPs"] = ipAddressses.Get<JArray>("HarmfulIPs")
-				};
+					["Total"] = this.VisitStatistics.Total,
+					["Year"] = this.VisitStatistics.TotalOfCurrentYear,
+					["Month"] = this.VisitStatistics.TotalOfCurrentMonth,
+					["Day"] = this.VisitStatistics.TotalOfCurrentDay
+				},
+				["BlackIPs"] = ipAddressses.Get<JArray>("BlackIPs"),
+				["HarmfulIPs"] = ipAddressses.Get<JArray>("HarmfulIPs")
 			});
 
 			statistics = onlyStatistics
@@ -3112,12 +3105,12 @@ namespace net.vieapps.Services.Users
 			var total = 0;
 			var user = 0;
 			var crawler = 0;
-			foreach (var sessionInfo in sessions)
+			foreach (var session in sessions)
 			{
 				total++;
-				if (!string.IsNullOrWhiteSpace(sessionInfo.Session?.UserID))
+				if (!string.IsNullOrWhiteSpace(session.Session?.UserID))
 					user++;
-				else if ("Crawler".IsEquals(sessionInfo.User?.Name))
+				else if ("Crawler".IsEquals(session.User?.Name))
 					crawler++;
 			}
 			var statistics = new JObject
@@ -3135,15 +3128,15 @@ namespace net.vieapps.Services.Users
 			if (this.Statistics.Years.IsEmpty)
 				return new();
 
-			var statistics = this.GetStatistics(null, (_, sessions) => new JObject
+			var statistics = this.GetStatistics(null, (_, sessionsJson) => new JObject
 			{
-				["Sessions"] = sessions,
+				["Sessions"] = sessionsJson,
 				["Visits"] = new JObject
 				{
-					["Total"] = this.LastStatistics.Total,
-					["Year"] = this.LastStatistics.TotalOfCurrentYear,
-					["Month"] = this.LastStatistics.TotalOfCurrentMonth,
-					["Day"] = this.LastStatistics.TotalOfCurrentDay
+					["Total"] = this.VisitStatistics.Total,
+					["Year"] = this.VisitStatistics.TotalOfCurrentYear,
+					["Month"] = this.VisitStatistics.TotalOfCurrentMonth,
+					["Day"] = this.VisitStatistics.TotalOfCurrentDay
 				}
 			});
 
@@ -3156,12 +3149,12 @@ namespace net.vieapps.Services.Users
 			return statistics;
 		}
 
-		void SendStatistics(bool isUpdater, bool sendRequestIfNot = true)
+		void SendStatistics(bool isUpdater, bool sendRequestIfNotUpdater = true)
 		{
 			if (isUpdater)
 				this.SendStatistics();
 
-			else if (sendRequestIfNot)
+			else if (sendRequestIfNotUpdater)
 				new CommunicateMessage(this.ServiceName)
 				{
 					Type = "VisitStatistics#Send",
@@ -3170,7 +3163,7 @@ namespace net.vieapps.Services.Users
 		}
 
 		void PrepareStatistics()
-			=> this.LastStatistics = (this.Statistics.Years.Values.Sum(year => year.Sum(true)), this.Statistics.TotalOfCurrentYear, this.Statistics.TotalOfCurrentMonth, this.Statistics.TotalOfCurrentDay);
+			=> this.VisitStatistics = (this.Statistics.Years.Values.Sum(year => year.Sum(true)), this.Statistics.TotalOfCurrentYear, this.Statistics.TotalOfCurrentMonth, this.Statistics.TotalOfCurrentDay);
 
 		int TrackStatistics(JObject data = null)
 			=> data != null ? this.Statistics.Update(data) : this.Statistics.Update();
@@ -3221,7 +3214,7 @@ namespace net.vieapps.Services.Users
 
 		async Task NormalizeStatisticsAsync(string cloneDate, string cloneDateBy, string cloneMin, string cloneMax, bool cloneAsSet, string suffix)
 		{
-			if (DateTime.TryParse($"{cloneDate}T00:00:00".Left(20), out var dateBeCloned) && DateTime.TryParse($"{cloneDateBy}T00:00:00".Left(20), out var dateCloneOf))
+			if (DateTime.TryParse($"{cloneDate}T00:00:00".Left(19), out var dateBeCloned) && DateTime.TryParse($"{cloneDateBy}T00:00:00".Left(19), out var dateCloneOf))
 			{
 				if (!Int32.TryParse(cloneMin, out var minCounters) || minCounters < 1)
 					minCounters = 13;
@@ -3347,7 +3340,7 @@ namespace net.vieapps.Services.Users
 				logs += (logs != "" ? "\r\n" : "") + $"------------- {year.Name} - Number of months: {year.Months.Count} => {year.Sum():###,###,###,###,###,###0}" + yearLogs;
 			}
 			logs = $"-------------\r\n"
-				+ $"[{this.IsUpdater}] - Number of years: {this.Statistics.Years.Count:###,##0} - Number of months: {this.Statistics.Years.Values.Sum(year => year.Months.Count):###,##0} - Number of days: {this.Statistics.Years.Values.Sum(year => year.Months.Values.Sum(month => month.Days.Count)):###,##0}\r\n"
+				+ $"[{this.IsUpdater}] - Number of years: {this.Statistics.Years.Count:###,##0} - Number of months: {this.Statistics.Years.Values.Sum(year => year.Months.Count):###,##0} [{this.Statistics.Current.Months.Values.Count}] - Number of days: {this.Statistics.Years.Values.Sum(year => year.Months.Values.Sum(month => month.Days.Count)):###,##0} [{this.Statistics.Current.Months.Values.Sum(month => month.Days.Count)}]\r\n"
 				+ $"------------- Counters - Total: {this.Statistics.Total:###,###,###,###,###,###,###,###0} | Year: {this.Statistics.TotalOfCurrentMonth:###,###,###,###,###,###,###,###0} | Month: {this.Statistics.TotalOfCurrentMonth:###,###,###,###,###,###,###,###0}\r\n{logs}";
 			onCompleted?.Invoke();
 			return logs;
@@ -3507,14 +3500,11 @@ namespace net.vieapps.Services.Users
 				var now = DateTime.Now;
 				var time = now.AddMinutes(1);
 				var delayMilliseconds = (int)(new DateTime(time.Year, time.Month, time.Day, time.Hour, time.Minute, 55) - now).TotalMilliseconds;
-				this.StartTimer(() =>
+				this.StartTimer(() => this.SendInterCommunicateMessage(new CommunicateMessage("APIGateway")
 				{
-					new CommunicateMessage("APIGateway")
-					{
-						Type = "Session#Statistics",
-						Data = this.GetStatistics(null)
-					}.Send();
-				}, 60, delayMilliseconds);
+					Type = "Session#Statistics",
+					Data = this.GetStatistics(null)
+				}), 60, delayMilliseconds);
 
 				// send visit statistics to clients
 				delayMilliseconds = (int)(new DateTime(time.Year, time.Month, time.Day, time.Hour, time.Minute, 1) - now).TotalMilliseconds;
@@ -3524,7 +3514,7 @@ namespace net.vieapps.Services.Users
 					this.SendStatistics();
 				}, this.UpdaterFrequency > 0 ? this.UpdaterFrequency : 60, delayMilliseconds);
 
-				// sync statistics across nodes
+				// sync statistics to other nodes
 				this.StartTimer(() =>
 				{
 					this.SendVisitStatistics();

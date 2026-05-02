@@ -400,10 +400,10 @@ namespace net.vieapps.Services.Users
 					pageNumber++;
 					objects.AddRange(await Info.FindAsync(filter, sort, pageSize, pageNumber, null, cancellationToken).ConfigureAwait(false) ?? []);
 				}
-				await Enumerable.Range(0, 31).Select(day => now.AddDays(-day)).ForEachAsync(async specifiedDay =>
+				await Enumerable.Range(0, 31).Select(day => now.AddDays(-day)).ForEachAsync(async day =>
 				{
-					var instanceID = $"{specifiedDay:yyyyMMdd}{UtilityService.BlankUUID}".Left(32);
-					var instance = objects.FirstOrDefault(@object => @object.ID == instanceID) ?? await Statistics.Info.LoadAsync(specifiedDay, cancellationToken).ConfigureAwait(false);
+					var instanceID = $"{day:yyyyMMdd}{UtilityService.BlankUUID}".Left(32);
+					var instance = objects.FirstOrDefault(@object => @object.ID == instanceID) ?? await Statistics.Info.LoadAsync(day, cancellationToken).ConfigureAwait(false);
 					if (instance != null && objects.FirstOrDefault(@object => @object.ID == instance.ID) == null)
 						objects.Add(instance);
 				}, true, false).ConfigureAwait(false);
