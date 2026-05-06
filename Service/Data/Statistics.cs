@@ -555,14 +555,30 @@ namespace net.vieapps.Services.Users
 		internal byte[][] GetSystemStatistics((int Year, string Month, Day Day) info)
 			=> this.GetSystemStatistics($"{info.Year:0000}{info.Month}{info.Day.Name}");
 
-		internal async Task<byte[][]> GetSystemStatisticsAsync(DateTime? time = null, CancellationToken cancellationToken = default)
+		internal async Task<byte[][]> GetSystemStatisticsAsync(DateTime time, bool byMinute, Func<string, Task> writeLogsAsync, CancellationToken cancellationToken)
 		{
+			var index = time.Hour * 60 + time.Minute;
 			var systemStatistics = this.GetSystemStatistics(time, true);
-			if (systemStatistics == null)
+			if (systemStatistics == null || (byMinute && systemStatistics[index] == null))
 			{
-				var date = (time != null ? time.Value : DateTime.Now).ToString("yyyyMMdd");
-				var info = await Statistics.Info.LoadAsync(date, cancellationToken).ConfigureAwait(false);
-				this.SystemStatistics[date] = systemStatistics = info?.SystemStatistics ?? Info.GetSystemStatistics();
+				var stepwatch = Stopwatch.StartNew();
+				var info = await Statistics.Info.LoadAsync(time, cancellationToken).ConfigureAwait(false);
+				if (writeLogsAsync != null)
+					await writeLogsAsync($"Statistics were loaded from DB in {stepwatch.GetElapsedTimes()}").ConfigureAwait(false);
+
+				stepwatch.Restart();
+				if (byMinute && systemStatistics != null && systemStatistics[index] == null && info?.SystemStatistics != null)
+				{
+					systemStatistics[index] = info.SystemStatistics[index];
+					if (writeLogsAsync != null)
+						await writeLogsAsync($"Assign statistics of a minute successful => {time:yyyy-MM-dd HH:mm} - Execution time: {stepwatch.GetElapsedTimes()}").ConfigureAwait(false);
+				}
+				else
+				{
+					this.SystemStatistics[time.ToString("yyyyMMdd")] = systemStatistics = info?.SystemStatistics ?? Info.GetSystemStatistics();
+					if (writeLogsAsync != null)
+						await writeLogsAsync($"Assign statistics of a day successful => {time:yyyy-MM-dd HH:mm} - Execution time: {stepwatch.GetElapsedTimes()}").ConfigureAwait(false);
+				}
 			}
 			return systemStatistics;
 		}

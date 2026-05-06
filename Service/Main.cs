@@ -2966,7 +2966,9 @@ namespace net.vieapps.Services.Users
 			if (!DateTime.TryParse(requestInfo.GetParameter("x-time"), out var time))
 				time = DateTime.Now.AddMinutes(-1);
 
-			var systemStatistics = await this.Statistics.GetSystemStatisticsAsync(time, cancellationToken).ConfigureAwait(false);
+			await this.WriteLogsAsync(requestInfo, $"Get system statistics => {time:yyyy-MM-dd HH:mm}").ConfigureAwait(false);
+			var systemStatistics = await this.Statistics.GetSystemStatisticsAsync(time, true, requestInfo.ContainsKey("x-logs") ? log => this.WriteLogsAsync(requestInfo, log) : null, cancellationToken).ConfigureAwait(false);
+
 			return systemStatistics[time.Hour * 60 + time.Minute]?.GetString().ToJson(json => json["Time"] = time.ToIsoString()) ?? new JObject { ["Time"] = time.ToIsoString() };
 		}
 
@@ -3239,7 +3241,7 @@ namespace net.vieapps.Services.Users
 					}
 
 				var info = (dateBeCloned.Year, dateBeCloned.Month.ToString("00"), beCloned);
-				var systemStatistics = await this.Statistics.GetSystemStatisticsAsync(dateBeCloned, this.CancellationToken).ConfigureAwait(false);
+				var systemStatistics = await this.Statistics.GetSystemStatisticsAsync(dateBeCloned, false, null, this.CancellationToken).ConfigureAwait(false);
 				var instance = await Statistics.Info.LoadAsync(dateBeCloned, this.CancellationToken).ConfigureAwait(false);
 				await Statistics.Info.SaveAsync(instance, info, systemStatistics, this.CancellationToken).ConfigureAwait(false);
 
