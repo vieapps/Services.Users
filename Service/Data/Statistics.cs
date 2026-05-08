@@ -570,7 +570,7 @@ namespace net.vieapps.Services.Users
 			else
 			{
 				if (writeLogsAsync != null)
-					await writeLogsAsync($"Get statistics successful [{date:yyyy-MM-dd}] - Execution time:  {stepwatch.GetElapsedTimes()}").ConfigureAwait(false);
+					await writeLogsAsync($"Get statistics successful [{date:yyyy-MM-dd}] - Execution time: {stepwatch.GetElapsedTimes()}").ConfigureAwait(false);
 
 				var start = date.AddMinutes(-9);
 				var startIndex = start.Hour * 60 + start.Minute;
@@ -586,7 +586,7 @@ namespace net.vieapps.Services.Users
 				stepwatch.Restart();
 				var info = await Statistics.Info.LoadAsync(date, cancellationToken).ConfigureAwait(false);
 				if (writeLogsAsync != null)
-					await writeLogsAsync($"Load statistics successful [{date:yyyy-MM-dd}] - Execution time:  {stepwatch.GetElapsedTimes()}").ConfigureAwait(false);
+					await writeLogsAsync($"Load statistics successful [{date:yyyy-MM-dd}] - Execution time: {stepwatch.GetElapsedTimes()}").ConfigureAwait(false);
 
 				stepwatch.Restart();
 				var systemStats = info?.SystemStatistics;
