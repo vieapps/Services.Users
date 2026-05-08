@@ -555,31 +555,60 @@ namespace net.vieapps.Services.Users
 		internal byte[][] GetSystemStatistics((int Year, string Month, Day Day) info)
 			=> this.GetSystemStatistics($"{info.Year:0000}{info.Month}{info.Day.Name}");
 
-		internal async Task<byte[][]> GetSystemStatisticsAsync(DateTime time, bool byMinute, Func<string, Task> writeLogsAsync, CancellationToken cancellationToken)
+		internal async Task<byte[][]> GetSystemStatisticsAsync(DateTime date, Func<string, Task> writeLogsAsync, CancellationToken cancellationToken)
 		{
-			var index = time.Hour * 60 + time.Minute;
-			var systemStatistics = this.GetSystemStatistics(time, true);
-			if (systemStatistics == null || (byMinute && systemStatistics[index] == null))
+			var stepwatch = Stopwatch.StartNew();
+			var systemStatistics = this.GetSystemStatistics(date, true);
+
+			var doReload = systemStatistics == null;
+			if (doReload)
 			{
-				var stepwatch = Stopwatch.StartNew();
-				var info = await Statistics.Info.LoadAsync(time, cancellationToken).ConfigureAwait(false);
+				systemStatistics = Info.GetSystemStatistics();
 				if (writeLogsAsync != null)
-					await writeLogsAsync($"Statistics were loaded from DB in {stepwatch.GetElapsedTimes()}").ConfigureAwait(false);
+					await writeLogsAsync($"Prepare to load statistics [{date:yyyy-MM-dd}]").ConfigureAwait(false);
+			}
+			else
+			{
+				if (writeLogsAsync != null)
+					await writeLogsAsync($"Get statistics successful [{date:yyyy-MM-dd}] - Execution time:  {stepwatch.GetElapsedTimes()}").ConfigureAwait(false);
+
+				var start = date.AddMinutes(-9);
+				var startIndex = start.Hour * 60 + start.Minute;
+				var endIndex = date.Hour * 60 + date.Minute;
+				doReload = systemStatistics.Skip(startIndex).Take(endIndex - startIndex).Any(statistics => statistics == null);
+
+				if (doReload && writeLogsAsync != null)
+					await writeLogsAsync($"Prepare to re-load statistics [{date:yyyy-MM-dd}]").ConfigureAwait(false);
+			}
+
+			if (doReload)
+			{
+				stepwatch.Restart();
+				var info = await Statistics.Info.LoadAsync(date, cancellationToken).ConfigureAwait(false);
+				if (writeLogsAsync != null)
+					await writeLogsAsync($"Load statistics successful [{date:yyyy-MM-dd}] - Execution time:  {stepwatch.GetElapsedTimes()}").ConfigureAwait(false);
 
 				stepwatch.Restart();
-				if (byMinute && systemStatistics != null && systemStatistics[index] == null && info?.SystemStatistics != null)
+				var systemStats = info?.SystemStatistics;
+				if (systemStats != null)
 				{
-					systemStatistics[index] = info.SystemStatistics[index];
 					if (writeLogsAsync != null)
-						await writeLogsAsync($"Assign statistics of a minute successful => {time:yyyy-MM-dd HH:mm} - Execution time: {stepwatch.GetElapsedTimes()}").ConfigureAwait(false);
-				}
-				else
-				{
-					this.SystemStatistics[time.ToString("yyyyMMdd")] = systemStatistics = info?.SystemStatistics ?? Info.GetSystemStatistics();
+						await writeLogsAsync($"Prepare statistics successful [{date:yyyy-MM-dd}] - Execution time: {stepwatch.GetElapsedTimes()}").ConfigureAwait(false);
+
+					stepwatch.Restart();
+					for (var index = 0; index < systemStats.Length; index++)
+						systemStatistics[index] ??= systemStats[index] ?? new JObject().ToBytes();
+
 					if (writeLogsAsync != null)
-						await writeLogsAsync($"Assign statistics of a day successful => {time:yyyy-MM-dd HH:mm} - Execution time: {stepwatch.GetElapsedTimes()}").ConfigureAwait(false);
+						await writeLogsAsync($"Assign statistics successful [{date:yyyy-MM-dd}] - Execution time: {stepwatch.GetElapsedTimes()}").ConfigureAwait(false);
 				}
+
+				stepwatch.Restart();
+				this.SystemStatistics[date.ToString("yyyyMMdd")] = systemStatistics;
+				if (writeLogsAsync != null)
+					await writeLogsAsync($"Update statistics successful [{date:yyyy-MM-dd}] - Execution time: {stepwatch.GetElapsedTimes()}").ConfigureAwait(false);
 			}
+
 			return systemStatistics;
 		}
 
@@ -697,8 +726,8 @@ namespace net.vieapps.Services.Users
 			internal static Task<Info> LoadAsync(string date, CancellationToken cancellationToken)
 				=> Info.GetAsync($"{date}{UtilityService.BlankUUID}".Left(32), cancellationToken);
 
-			internal static Task<Info> LoadAsync(DateTime time, CancellationToken cancellationToken)
-				=> Info.LoadAsync(time.ToString("yyyyMMdd"), cancellationToken);
+			internal static Task<Info> LoadAsync(DateTime date, CancellationToken cancellationToken)
+				=> Info.LoadAsync(date.ToString("yyyyMMdd"), cancellationToken);
 
 			internal static Task<Info> LoadAsync((int Year, string Month, Day Day) info, CancellationToken cancellationToken)
 				=> Info.LoadAsync($"{info.Year:0000}{info.Month}{info.Day.Name}", cancellationToken);

@@ -2963,13 +2963,30 @@ namespace net.vieapps.Services.Users
 
 		async Task<JToken> ProcessSystemStatisticsAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
 		{
-			if (!DateTime.TryParse(requestInfo.GetParameter("x-time"), out var time))
-				time = DateTime.Now.AddMinutes(-1);
+			if (!DateTime.TryParse(requestInfo.GetParameter("x-end"), out var end))
+				end = DateTime.Now.AddMinutes(-1);
 
-			await this.WriteLogsAsync(requestInfo, $"Get system statistics => {time:yyyy-MM-dd HH:mm}").ConfigureAwait(false);
-			var systemStatistics = await this.Statistics.GetSystemStatisticsAsync(time, true, requestInfo.ContainsKey("x-logs") ? log => this.WriteLogsAsync(requestInfo, log) : null, cancellationToken).ConfigureAwait(false);
+			if (DateTime.TryParse(requestInfo.GetParameter("x-start"), out var start))
+			{
+				if (!DateTime.TryParse(requestInfo.GetParameter("x-end"), out var _))
+					end = start.AddMinutes(10);
+			}
+			else
+				start = DateTime.TryParse(requestInfo.GetParameter("x-end"), out var _) ? end.AddMinutes(-10) : DateTime.Now.AddMinutes(-1);
 
-			return systemStatistics[time.Hour * 60 + time.Minute]?.GetString().ToJson(json => json["Time"] = time.ToIsoString()) ?? new JObject { ["Time"] = time.ToIsoString() };
+			new CommunicateMessage(this.ServiceName)
+			{
+				Type = "Statistics#Prepare",
+				ExcludedNodeID = this.NodeID,
+				Data = new JObject
+				{
+					["X-Start"] = start.ToIsoString(),
+					["X-End"] = end.ToIsoString(),
+					["X-Logs"] = requestInfo.ContainsKey("x-logs"),
+					["X-Correlation-ID"] = requestInfo.CorrelationID
+				}
+			}.Send(Router.GotBackupRouter());
+			return await this.PrepareStatisticsAsync(start, end, requestInfo.ContainsKey("x-logs"), requestInfo.CorrelationID, cancellationToken).ConfigureAwait(false) ?? new JObject { ["Time"] = end.ToIsoString() };
 		}
 
 		async Task<JToken> ProcessSessionStatisticsAsync(RequestInfo requestInfo, bool isSystemAdministrator, CancellationToken cancellationToken)
@@ -3241,7 +3258,7 @@ namespace net.vieapps.Services.Users
 					}
 
 				var info = (dateBeCloned.Year, dateBeCloned.Month.ToString("00"), beCloned);
-				var systemStatistics = await this.Statistics.GetSystemStatisticsAsync(dateBeCloned, false, null, this.CancellationToken).ConfigureAwait(false);
+				var systemStatistics = await this.Statistics.GetSystemStatisticsAsync(dateBeCloned, null, this.CancellationToken).ConfigureAwait(false);
 				var instance = await Statistics.Info.LoadAsync(dateBeCloned, this.CancellationToken).ConfigureAwait(false);
 				await Statistics.Info.SaveAsync(instance, info, systemStatistics, this.CancellationToken).ConfigureAwait(false);
 
@@ -3324,6 +3341,31 @@ namespace net.vieapps.Services.Users
 				}
 				this.Logger?.LogInformation($"Statistics had been re-loaded {(this.IsUpdater ? this.GetDataLogsOfStatistics(() => this.SendStatistics()) : "")}");
 			}
+		}
+
+		async Task<JToken> PrepareStatisticsAsync(DateTime start, DateTime end, bool writeLogs, string correlationID, CancellationToken cancellationToken)
+		{
+			start = new DateTime(start.Year, start.Month, start.Day, start.Hour, start.Minute, 0);
+			end = new DateTime(end.Year, end.Month, end.Day, end.Hour, end.Minute, 0);
+			var isOneMinute = start.Year == end.Year && start.Month == end.Month && start.Day == end.Day && start.Hour == end.Hour && start.Minute == end.Minute;
+			if (writeLogs)
+				await this.WriteLogsAsync(correlationID, $"Prepare system statistics [{(isOneMinute ? start.ToString("yyyy-MM-dd HH:mm") : $"{start:yyyy-MM-dd HH:mm} - {end:HH:mm}")}]").ConfigureAwait(false);
+
+			var systemStatistics = await this.Statistics.GetSystemStatisticsAsync(isOneMinute ? start : end, writeLogs ? log => this.WriteLogsAsync(correlationID, log) : null, cancellationToken).ConfigureAwait(false);
+
+			var startIndex = start.Hour * 60 + start.Minute;
+			var endIndex = end.Hour * 60 + end.Minute;
+			var json = isOneMinute
+				? systemStatistics[start.Hour * 60 + start.Minute]?.GetString().ToJson(json => json["Time"] = start.ToIsoString())
+				: systemStatistics.Skip(startIndex).Take(endIndex - startIndex).Select((statistics, index) => statistics?.GetString().ToJson(json => json["Time"] = start.AddMinutes(index).ToIsoString()) ?? new JObject { ["Time"] = start.AddMinutes(index).ToIsoString() }).ToJArray();
+
+			if (!isOneMinute)
+			{
+				var filePath = Path.Combine(UtilityService.GetAppSetting("Path:Status", "status"), $"statistics.system-{start:yyyyMMdd}-{start:HH_mm}-{end:HH_mm}.json");
+				await json.SaveAsTextAsync(filePath, cancellationToken).ConfigureAwait(false);
+			}
+
+			return json;
 		}
 
 		string GetDataLogsOfStatistics(System.Action onCompleted = null)
@@ -3468,6 +3510,9 @@ namespace net.vieapps.Services.Users
 
 			else if (message.Type.IsEquals("SessionStatistics#Sync"))
 				this.SendSessionStatistics();
+
+			else if (message.Type.IsEquals("Statistics#Prepare"))
+				this.PrepareStatisticsAsync(DateTime.TryParse(data.Get<string>("X-Start"), out var start) ? start : DateTime.Now, DateTime.TryParse(data.Get<string>("X-End"), out var end) ? end : DateTime.Now, data.Get("X-Logs", false), data.Get<string>("X-Correlation-ID"), this.CancellationToken).Execute(ex => this.Logger.LogInformation($"Error occurred while preparing => {ex.Message}", ex));
 
 			else if (message.Type.IsEquals("Statistics#Normalize") && this.IsUpdater)
 				this.NormalizeStatisticsAsync(data.Get<string>("X-Clone-Date"), data.Get<string>("X-Clone-Date-By"), data.Get<string>("X-Clone-Min"), data.Get<string>("X-Clone-Max"), data.Get("X-Clone-As-Set", false), data.Get<string>("X-Suffix")).Execute(ex => this.Logger.LogInformation($"Error occurred while normalizing => {ex.Message}", ex));
