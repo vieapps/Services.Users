@@ -2869,7 +2869,7 @@ namespace net.vieapps.Services.Users
 				return requestInfo.ObjectName.IsEquals("Visit.Statistics")
 					? await this.ProcessVisitStatisticsAsync(requestInfo, cancellationToken).ConfigureAwait(false)
 					: requestInfo.ObjectName.IsEquals("System.Statistics")
-						? await this.ProcessSystemStatisticsAsync(requestInfo, cancellationToken).ConfigureAwait(false)
+						? await this.ProcessSystemStatisticsAsync(requestInfo, isSystemAdministrator, cancellationToken).ConfigureAwait(false)
 						: await this.ProcessSessionStatisticsAsync(requestInfo, isSystemAdministrator, cancellationToken).ConfigureAwait(false);
 			}
 
@@ -2961,18 +2961,25 @@ namespace net.vieapps.Services.Users
 			return statistics;
 		}
 
-		async Task<JToken> ProcessSystemStatisticsAsync(RequestInfo requestInfo, CancellationToken cancellationToken)
+		async Task<JToken> ProcessSystemStatisticsAsync(RequestInfo requestInfo, bool isSystemAdministrator, CancellationToken cancellationToken)
 		{
-			if (!DateTime.TryParse(requestInfo.GetParameter("x-end"), out var end))
-				end = DateTime.Now.AddMinutes(-1);
+			DateTime start, end;
 
-			if (DateTime.TryParse(requestInfo.GetParameter("x-start"), out var start))
+			if (isSystemAdministrator || await this.CanModerateAsync(requestInfo, "Statistics", cancellationToken).ConfigureAwait(false))
 			{
-				if (!DateTime.TryParse(requestInfo.GetParameter("x-end"), out var _))
-					end = start.AddMinutes(10);
+				if (!DateTime.TryParse(requestInfo.GetParameter("x-end"), out end))
+					end = DateTime.Now.AddMinutes(-1);
+
+				if (DateTime.TryParse(requestInfo.GetParameter("x-start"), out start))
+				{
+					if (!DateTime.TryParse(requestInfo.GetParameter("x-end"), out var _))
+						end = start.AddMinutes(10);
+				}
+				else
+					start = DateTime.TryParse(requestInfo.GetParameter("x-end"), out var _) ? end.AddMinutes(-10) : DateTime.Now.AddMinutes(-1);
 			}
 			else
-				start = DateTime.TryParse(requestInfo.GetParameter("x-end"), out var _) ? end.AddMinutes(-10) : DateTime.Now.AddMinutes(-1);
+				start = end = DateTime.Now.AddMinutes(-1);
 
 			new CommunicateMessage(this.ServiceName)
 			{
@@ -2986,6 +2993,7 @@ namespace net.vieapps.Services.Users
 					["X-Correlation-ID"] = requestInfo.CorrelationID
 				}
 			}.Send(Router.GotBackupRouter());
+
 			return await this.PrepareStatisticsAsync(start, end, requestInfo.ContainsKey("x-logs"), requestInfo.CorrelationID, cancellationToken).ConfigureAwait(false) ?? new JObject { ["Time"] = end.ToIsoString() };
 		}
 
