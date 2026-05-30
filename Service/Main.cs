@@ -2978,6 +2978,11 @@ namespace net.vieapps.Services.Users
 				else
 					start = DateTime.TryParse(requestInfo.GetParameter("x-end"), out var _) ? end.AddMinutes(-10) : DateTime.Now.AddMinutes(-1);
 			}
+			else if (requestInfo.IsAuthenticated() && requestInfo.ContainsKey("x-period"))
+			{
+				end = DateTime.Now.AddMinutes(-1);
+				start = end.AddMinutes(-9);
+			}
 			else
 				start = end = DateTime.Now.AddMinutes(-1);
 
@@ -3363,8 +3368,23 @@ namespace net.vieapps.Services.Users
 
 			var startIndex = start.Hour * 60 + start.Minute;
 			var endIndex = end.Hour * 60 + end.Minute;
+			var minuteStatistics = isOneMinute ? systemStatistics?[startIndex] : null;
+
+			if (isOneMinute && minuteStatistics == null)
+			{
+				new CommunicateMessage(this.ServiceName)
+				{
+					Type = "SystemStatistics#Sync",
+					ExcludedNodeID = this.NodeID,
+					Data = new JObject { ["Time"] = start }
+				}.Send(Router.GotBackupRouter());
+				await Task.Delay(UtilityService.GetRandomNumber(1234, 1234), cancellationToken).ConfigureAwait(false);
+				systemStatistics = this.Statistics.GetSystemStatistics(start);
+				minuteStatistics = systemStatistics?[startIndex];
+			}
+
 			var json = isOneMinute
-				? systemStatistics[start.Hour * 60 + start.Minute]?.GetString().ToJson(json => json["Time"] = start.ToIsoString())
+				? minuteStatistics?.GetString().ToJson(json => json["Time"] = start.ToIsoString())
 				: systemStatistics.Skip(startIndex).Take(endIndex - startIndex).Select((statistics, index) => statistics?.GetString().ToJson(json => json["Time"] = start.AddMinutes(index).ToIsoString()) ?? new JObject { ["Time"] = start.AddMinutes(index).ToIsoString() }).ToJArray();
 
 			if (!isOneMinute)
@@ -3484,6 +3504,25 @@ namespace net.vieapps.Services.Users
 				Type = "SessionStatistics#Sync",
 				ExcludedNodeID = this.NodeID
 			}.Send(Router.GotBackupRouter());
+
+		void SendSystemStatistic(DateTime? time = null)
+		{
+			time = time != null ? time : DateTime.Now.AddMinutes(-1);
+			time = new DateTime(time.Value.Year, time.Value.Month, time.Value.Day, time.Value.Hour, time.Value.Minute, 0);
+			var systemStatistics = this.Statistics.GetSystemStatistics(time);
+			var index = time.Value.Hour * 60 + time.Value.Minute;
+			var statistics = systemStatistics?[index]?.GetString().ToJson();
+			if (statistics != null)
+			{
+				statistics["Time"] = time.Value;
+				new CommunicateMessage(this.ServiceName)
+				{
+					Type = "SystemStatistics#Update",
+					ExcludedNodeID = this.NodeID,
+					Data = statistics
+				}.Send(Router.GotBackupRouter());
+			}
+		}
 		#endregion
 
 		#region Process communicate messages
@@ -3518,6 +3557,12 @@ namespace net.vieapps.Services.Users
 
 			else if (message.Type.IsEquals("SessionStatistics#Sync"))
 				this.SendSessionStatistics();
+
+			else if (message.Type.IsEquals("SystemStatistics#Sync"))
+				this.SendSystemStatistic(DateTime.TryParse(message.Data.Get<string>("Time"), out var time) ? time : null);
+
+			else if (message.Type.IsEquals("SystemStatistics#Update"))
+				this.Statistics.UpdateSystemStatistics(message.Data);
 
 			else if (message.Type.IsEquals("Statistics#Prepare"))
 				this.PrepareStatisticsAsync(DateTime.TryParse(data.Get<string>("X-Start"), out var start) ? start : DateTime.Now, DateTime.TryParse(data.Get<string>("X-End"), out var end) ? end : DateTime.Now, data.Get("X-Logs", false), data.Get<string>("X-Correlation-ID"), this.CancellationToken).Execute(ex => this.Logger.LogInformation($"Error occurred while preparing => {ex.Message}", ex));
