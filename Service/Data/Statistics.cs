@@ -359,7 +359,7 @@ namespace net.vieapps.Services.Users
 			});
 
 			var systemStatistics = this.GetSystemStatistics(date);
-			checkpoint ??= now.AddMinutes(-10);
+			checkpoint ??= now.AddMinutes(0 - Info.Period - 1);
 			var start = checkpoint.Value.Hour * 60 + checkpoint.Value.Minute;
 			var end = now.Hour * 60 + now.Minute;
 			var min = Math.Min(start, end);
@@ -555,58 +555,58 @@ namespace net.vieapps.Services.Users
 		internal byte[][] GetSystemStatistics((int Year, string Month, Day Day) info)
 			=> this.GetSystemStatistics($"{info.Year:0000}{info.Month}{info.Day.Name}");
 
-		internal async Task<byte[][]> GetSystemStatisticsAsync(DateTime date, Func<string, Task> writeLogsAsync, CancellationToken cancellationToken)
+		internal async Task<byte[][]> GetSystemStatisticsAsync(DateTime time, Func<string, Task> writeLogsAsync, CancellationToken cancellationToken)
 		{
 			var stepwatch = Stopwatch.StartNew();
-			var systemStatistics = this.GetSystemStatistics(date, true);
+			var systemStatistics = this.GetSystemStatistics(time, true);
 
 			var doReload = systemStatistics == null;
 			if (doReload)
 			{
 				systemStatistics = Info.GetSystemStatistics();
 				if (writeLogsAsync != null)
-					await writeLogsAsync($"Prepare to load statistics [{date:yyyy-MM-dd}]").ConfigureAwait(false);
+					await writeLogsAsync($"Prepare to load statistics [{time:yyyy-MM-dd}]").ConfigureAwait(false);
 			}
 			else
 			{
 				if (writeLogsAsync != null)
-					await writeLogsAsync($"Get statistics successful [{date:yyyy-MM-dd}] - Execution time: {stepwatch.GetElapsedTimes()}").ConfigureAwait(false);
+					await writeLogsAsync($"Get statistics successful [{time:yyyy-MM-dd}] - Execution time: {stepwatch.GetElapsedTimes()}").ConfigureAwait(false);
 
-				var start = date.AddMinutes(-9);
+				var start = time.AddMinutes(-Info.Period);
 				var startIndex = start.Hour * 60 + start.Minute;
-				var endIndex = date.Hour * 60 + date.Minute;
-				doReload = systemStatistics.Skip(startIndex).Take(endIndex - startIndex).Any(statistics => statistics == null);
+				var endIndex = time.Hour * 60 + time.Minute;
+				doReload = systemStatistics.Skip(startIndex).Take(endIndex - startIndex + 1).Any(statistics => statistics == null);
 
 				if (doReload && writeLogsAsync != null)
-					await writeLogsAsync($"Prepare to re-load statistics [{date:yyyy-MM-dd}]").ConfigureAwait(false);
+					await writeLogsAsync($"Prepare to re-load statistics [{time:yyyy-MM-dd}]").ConfigureAwait(false);
 			}
 
 			if (doReload)
 			{
 				stepwatch.Restart();
-				var info = await Statistics.Info.LoadAsync(date, cancellationToken).ConfigureAwait(false);
+				var info = await Statistics.Info.LoadAsync(time, cancellationToken).ConfigureAwait(false);
 				if (writeLogsAsync != null)
-					await writeLogsAsync($"Load statistics successful [{date:yyyy-MM-dd}] - Execution time: {stepwatch.GetElapsedTimes()}").ConfigureAwait(false);
+					await writeLogsAsync($"Load statistics successful [{time:yyyy-MM-dd}] - Execution time: {stepwatch.GetElapsedTimes()}").ConfigureAwait(false);
 
 				stepwatch.Restart();
 				var systemStats = info?.SystemStatistics;
 				if (systemStats != null)
 				{
 					if (writeLogsAsync != null)
-						await writeLogsAsync($"Prepare statistics successful [{date:yyyy-MM-dd}] - Execution time: {stepwatch.GetElapsedTimes()}").ConfigureAwait(false);
+						await writeLogsAsync($"Prepare statistics successful [{time:yyyy-MM-dd}] - Execution time: {stepwatch.GetElapsedTimes()}").ConfigureAwait(false);
 
 					stepwatch.Restart();
 					for (var index = 0; index < systemStats.Length; index++)
 						systemStatistics[index] ??= systemStats[index] ?? new JObject().ToBytes();
 
 					if (writeLogsAsync != null)
-						await writeLogsAsync($"Assign statistics successful [{date:yyyy-MM-dd}] - Execution time: {stepwatch.GetElapsedTimes()}").ConfigureAwait(false);
+						await writeLogsAsync($"Assign statistics successful [{time:yyyy-MM-dd}] - Execution time: {stepwatch.GetElapsedTimes()}").ConfigureAwait(false);
 				}
 
 				stepwatch.Restart();
-				this.SystemStatistics[date.ToString("yyyyMMdd")] = systemStatistics;
+				this.SystemStatistics[time.ToString("yyyyMMdd")] = systemStatistics;
 				if (writeLogsAsync != null)
-					await writeLogsAsync($"Update statistics successful [{date:yyyy-MM-dd}] - Execution time: {stepwatch.GetElapsedTimes()}").ConfigureAwait(false);
+					await writeLogsAsync($"Update statistics successful [{time:yyyy-MM-dd}] - Execution time: {stepwatch.GetElapsedTimes()}").ConfigureAwait(false);
 			}
 
 			return systemStatistics;
@@ -628,6 +628,8 @@ namespace net.vieapps.Services.Users
 		[Entity(CollectionName = "Statistics", TableName = "T_Users_Statistics", CacheClass = typeof(Utility), CacheName = "Cache", CreateNewVersionWhenUpdated = false)]
 		public class Info : Repository<Info>
 		{
+			internal static int Period { get; set; } = 10;
+
 			public Info() : base() { }
 
 			public Info((int Year, string Month, Day Day) info) : base()

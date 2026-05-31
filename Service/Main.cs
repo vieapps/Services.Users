@@ -2963,28 +2963,24 @@ namespace net.vieapps.Services.Users
 
 		async Task<JToken> ProcessSystemStatisticsAsync(RequestInfo requestInfo, bool isSystemAdministrator, CancellationToken cancellationToken)
 		{
-			DateTime start, end;
-
-			if (isSystemAdministrator || await this.CanModerateAsync(requestInfo, "Statistics", cancellationToken).ConfigureAwait(false))
-			{
-				if (!DateTime.TryParse(requestInfo.GetParameter("x-end"), out end))
-					end = DateTime.Now.AddMinutes(-1);
-
-				if (DateTime.TryParse(requestInfo.GetParameter("x-start"), out start))
-				{
-					if (!DateTime.TryParse(requestInfo.GetParameter("x-end"), out var _))
-						end = start.AddMinutes(10);
-				}
-				else
-					start = DateTime.TryParse(requestInfo.GetParameter("x-end"), out var _) ? end.AddMinutes(-10) : DateTime.Now.AddMinutes(-1);
-			}
-			else if (requestInfo.IsAuthenticated() && requestInfo.ContainsKey("x-period"))
-			{
+			if (!DateTime.TryParse(requestInfo.GetParameter("x-end"), out var end))
 				end = DateTime.Now.AddMinutes(-1);
-				start = end.AddMinutes(-9);
+
+			if (DateTime.TryParse(requestInfo.GetParameter("x-start"), out var start))
+			{
+				if (!DateTime.TryParse(requestInfo.GetParameter("x-end"), out var _))
+					end = start.AddMinutes(10);
 			}
 			else
+				start = DateTime.TryParse(requestInfo.GetParameter("x-end"), out var _)
+					? end.AddMinutes(-Statistics.Info.Period)
+					: DateTime.Now.AddMinutes(-1);
+
+			if (!isSystemAdministrator)
 				start = end = DateTime.Now.AddMinutes(-1);
+
+			if (requestInfo.ContainsKey("x-period"))
+				start = end.AddMinutes(-Statistics.Info.Period);
 
 			new CommunicateMessage(this.ServiceName)
 			{
@@ -2999,7 +2995,7 @@ namespace net.vieapps.Services.Users
 				}
 			}.Send(Router.GotBackupRouter());
 
-			return await this.PrepareStatisticsAsync(start, end, requestInfo.ContainsKey("x-logs"), requestInfo.CorrelationID, cancellationToken).ConfigureAwait(false) ?? new JObject { ["Time"] = end.ToIsoString() };
+			return await this.PrepareStatisticsAsync(start, end, true, requestInfo.ContainsKey("x-logs"), requestInfo.CorrelationID, cancellationToken).ConfigureAwait(false) ?? new JObject { ["Time"] = end.ToIsoString() };
 		}
 
 		async Task<JToken> ProcessSessionStatisticsAsync(RequestInfo requestInfo, bool isSystemAdministrator, CancellationToken cancellationToken)
@@ -3356,7 +3352,7 @@ namespace net.vieapps.Services.Users
 			}
 		}
 
-		async Task<JToken> PrepareStatisticsAsync(DateTime start, DateTime end, bool writeLogs, string correlationID, CancellationToken cancellationToken)
+		async Task<JToken> PrepareStatisticsAsync(DateTime start, DateTime end, bool returnJson, bool writeLogs, string correlationID, CancellationToken cancellationToken)
 		{
 			start = new DateTime(start.Year, start.Month, start.Day, start.Hour, start.Minute, 0);
 			end = new DateTime(end.Year, end.Month, end.Day, end.Hour, end.Minute, 0);
@@ -3383,9 +3379,12 @@ namespace net.vieapps.Services.Users
 				minuteStatistics = systemStatistics?[startIndex];
 			}
 
+			if (!returnJson)
+				return null;
+
 			var json = isOneMinute
 				? minuteStatistics?.GetString().ToJson(json => json["Time"] = start.ToIsoString())
-				: systemStatistics.Skip(startIndex).Take(endIndex - startIndex).Select((statistics, index) => statistics?.GetString().ToJson(json => json["Time"] = start.AddMinutes(index).ToIsoString()) ?? new JObject { ["Time"] = start.AddMinutes(index).ToIsoString() }).ToJArray();
+				: systemStatistics.Skip(startIndex).Take(endIndex - startIndex + 1).Select((statistics, index) => statistics?.GetString().ToJson(json => json["Time"] = start.AddMinutes(index).ToIsoString()) ?? new JObject { ["Time"] = start.AddMinutes(index).ToIsoString() }).ToJArray();
 
 			if (!isOneMinute)
 			{
@@ -3565,7 +3564,7 @@ namespace net.vieapps.Services.Users
 				this.Statistics.UpdateSystemStatistics(message.Data);
 
 			else if (message.Type.IsEquals("Statistics#Prepare"))
-				this.PrepareStatisticsAsync(DateTime.TryParse(data.Get<string>("X-Start"), out var start) ? start : DateTime.Now, DateTime.TryParse(data.Get<string>("X-End"), out var end) ? end : DateTime.Now, data.Get("X-Logs", false), data.Get<string>("X-Correlation-ID"), this.CancellationToken).Execute(ex => this.Logger.LogInformation($"Error occurred while preparing => {ex.Message}", ex));
+				this.PrepareStatisticsAsync(DateTime.TryParse(data.Get<string>("X-Start"), out var start) ? start : DateTime.Now.AddMinutes(-1), DateTime.TryParse(data.Get<string>("X-End"), out var end) ? end : DateTime.Now.AddMinutes(-1), false, data.Get("X-Logs", false), data.Get<string>("X-Correlation-ID"), this.CancellationToken).Execute(ex => this.Logger.LogInformation($"Error occurred while preparing => {ex.Message}", ex));
 
 			else if (message.Type.IsEquals("Statistics#Normalize") && this.IsUpdater)
 				this.NormalizeStatisticsAsync(data.Get<string>("X-Clone-Date"), data.Get<string>("X-Clone-Date-By"), data.Get<string>("X-Clone-Min"), data.Get<string>("X-Clone-Max"), data.Get("X-Clone-As-Set", false), data.Get<string>("X-Suffix")).Execute(ex => this.Logger.LogInformation($"Error occurred while normalizing => {ex.Message}", ex));
@@ -3624,7 +3623,7 @@ namespace net.vieapps.Services.Users
 				}, 5 * 60, delayMilliseconds);
 
 				// persist statistics
-				this.StartTimer(() => this.Statistics.SaveAsync(this.CancellationToken), 10 * 60);
+				this.StartTimer(() => this.Statistics.SaveAsync(this.CancellationToken), Statistics.Info.Period * 60);
 
 				// clean expired sessions (12 hours)
 				this.StartTimer(async () =>
@@ -3650,7 +3649,7 @@ namespace net.vieapps.Services.Users
 			else
 			{
 				this.StartTimer(this.PrepareStatistics, 60);
-				this.StartTimer(() => this.Statistics.Normalize(), 10 * 60);
+				this.StartTimer(() => this.Statistics.Normalize(), Statistics.Info.Period * 60);
 			}
 
 			// dump JSONs
