@@ -617,8 +617,8 @@ namespace net.vieapps.Services.Users
 
 		internal void UpdateSystemStatistics(JToken message)
 		{
-			var time = message.Get<DateTime>("Time").ToLocalTime();
-			message.Remove("Time");
+			var jobj = message.Get<JObject>("Time");
+			var time = (jobj != null ? jobj.Get<DateTime>("At") : message.Get<DateTime>("Time")).ToLocalTime();
 			this.UpdateSystemStatistics(time, message.ToBytes("Statistics", TextFileReader.BufferSize));
 		}
 

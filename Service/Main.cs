@@ -36,7 +36,7 @@ namespace net.vieapps.Services.Users
 		#region Properties
 		Sessions Sessions { get; }
 
-		Statistics Statistics { get; } = new();
+		new Statistics Statistics { get; } = new();
 
 		(long Total, long TotalOfCurrentYear, long TotalOfCurrentMonth, long TotalOfCurrentDay) VisitStatistics { get; set; } = (0, 0, 0, 0);
 
@@ -154,6 +154,7 @@ namespace net.vieapps.Services.Users
 		public override async Task<JToken> ProcessRequestAsync(RequestInfo requestInfo, CancellationToken cancellationToken = default)
 		{
 			var stopwatch = Stopwatch.StartNew();
+			base.Statistics.RpcEntered();
 			await this.WriteLogsAsync(requestInfo, $"Begin request ({requestInfo.Verb} {requestInfo.GetURI()})").ConfigureAwait(false);
 
 			using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, this.CancellationToken);
@@ -252,6 +253,10 @@ namespace net.vieapps.Services.Users
 			catch (Exception ex)
 			{
 				throw this.GetRuntimeException(requestInfo, ex, stopwatch);
+			}
+			finally
+			{
+				base.Statistics.RpcCompleted(stopwatch);
 			}
 		}
 
@@ -3383,8 +3388,8 @@ namespace net.vieapps.Services.Users
 				return null;
 
 			var json = isOneMinute
-				? minuteStatistics?.GetString().ToJson(json => json["Time"] = start.ToIsoString())
-				: systemStatistics.Skip(startIndex).Take(endIndex - startIndex + 1).Select((statistics, index) => statistics?.GetString().ToJson(json => json["Time"] = start.AddMinutes(index).ToIsoString()) ?? new JObject { ["Time"] = start.AddMinutes(index).ToIsoString() }).ToJArray();
+				? minuteStatistics?.GetString().ToJson()
+				: systemStatistics.Skip(startIndex).Take(endIndex - startIndex + 1).Select((statistics, index) => statistics?.GetString().ToJson() ?? new JObject { ["Time"] = start.AddMinutes(index).ToIsoString() }).ToJArray();
 
 			if (!isOneMinute)
 			{
