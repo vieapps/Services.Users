@@ -54,7 +54,7 @@ namespace net.vieapps.Services.Users
 
 		string PhoneCountryCode { get; } = UtilityService.GetAppSetting("Users:Phone:CountryCode", "84");
 
-		bool IsUpdater { get; } = "true".IsEquals(UtilityService.GetAppSetting("Users:Updater", "true"));
+		bool IsUpdater { get; } = "true".IsEquals(UtilityService.GetAppSetting("Users:Updater"));
 
 		int UpdaterFrequency { get; } = Int32.TryParse(UtilityService.GetAppSetting("Users:Updater:Frequency", "0"), out var frequency) && frequency > 13 && frequency < 300 ? frequency : 0;
 
@@ -165,10 +165,8 @@ namespace net.vieapps.Services.Users
 				{
 					case "statistics":
 					case "visit.statistics":
-					case "system.statistics":
 					case "session.statistics":
 					case "visitstatistics":
-					case "systemstatistics":
 					case "sessionstatistics":
 						json = await this.ProcessStatisticsAsync(requestInfo, cts.Token).ConfigureAwait(false);
 						break;
@@ -2873,9 +2871,7 @@ namespace net.vieapps.Services.Users
 
 				return requestInfo.ObjectName.IsEquals("Visit.Statistics")
 					? await this.ProcessVisitStatisticsAsync(requestInfo, cancellationToken).ConfigureAwait(false)
-					: requestInfo.ObjectName.IsEquals("System.Statistics")
-						? await this.ProcessSystemStatisticsAsync(requestInfo, isSystemAdministrator, cancellationToken).ConfigureAwait(false)
-						: await this.ProcessSessionStatisticsAsync(requestInfo, isSystemAdministrator, cancellationToken).ConfigureAwait(false);
+					: await this.ProcessSessionStatisticsAsync(requestInfo, isSystemAdministrator, cancellationToken).ConfigureAwait(false);
 			}
 
 			throw new MethodNotAllowedException(requestInfo.Verb);
@@ -2964,43 +2960,6 @@ namespace net.vieapps.Services.Users
 			}
 
 			return statistics;
-		}
-
-		async Task<JToken> ProcessSystemStatisticsAsync(RequestInfo requestInfo, bool isSystemAdministrator, CancellationToken cancellationToken)
-		{
-			if (!DateTime.TryParse(requestInfo.GetParameter("x-end"), out var end))
-				end = DateTime.Now.AddMinutes(-1);
-
-			if (DateTime.TryParse(requestInfo.GetParameter("x-start"), out var start))
-			{
-				if (!DateTime.TryParse(requestInfo.GetParameter("x-end"), out var _))
-					end = start.AddMinutes(10);
-			}
-			else
-				start = DateTime.TryParse(requestInfo.GetParameter("x-end"), out var _)
-					? end.AddMinutes(-Statistics.Info.Period)
-					: DateTime.Now.AddMinutes(-1);
-
-			if (!isSystemAdministrator)
-				start = end = DateTime.Now.AddMinutes(-1);
-
-			if (requestInfo.ContainsKey("x-period"))
-				start = end.AddMinutes(-Statistics.Info.Period);
-
-			new CommunicateMessage(this.ServiceName)
-			{
-				Type = "Statistics#Prepare",
-				ExcludedNodeID = this.NodeID,
-				Data = new JObject
-				{
-					["X-Start"] = start.ToIsoString(),
-					["X-End"] = end.ToIsoString(),
-					["X-Logs"] = requestInfo.ContainsKey("x-logs"),
-					["X-Correlation-ID"] = requestInfo.CorrelationID
-				}
-			}.Send(Router.GotBackupRouter());
-
-			return await this.PrepareStatisticsAsync(start, end, true, requestInfo.ContainsKey("x-logs"), requestInfo.CorrelationID, cancellationToken).ConfigureAwait(false) ?? new JObject { ["Time"] = end.ToIsoString() };
 		}
 
 		async Task<JToken> ProcessSessionStatisticsAsync(RequestInfo requestInfo, bool isSystemAdministrator, CancellationToken cancellationToken)
@@ -3227,7 +3186,6 @@ namespace net.vieapps.Services.Users
 			=> Task.WhenAll
 			(
 				this.Statistics.DumpVisitStatisticsAsync(all, this.CancellationToken, suffix),
-				this.Statistics.DumpSystemStatisticsAsync(all, this.CancellationToken, suffix),
 				this.Sessions.DumpAsync(this.CancellationToken)
 			);
 
@@ -3272,9 +3230,8 @@ namespace net.vieapps.Services.Users
 					}
 
 				var info = (dateBeCloned.Year, dateBeCloned.Month.ToString("00"), beCloned);
-				var systemStatistics = await this.Statistics.GetSystemStatisticsAsync(dateBeCloned, null, this.CancellationToken).ConfigureAwait(false);
 				var instance = await Statistics.Info.LoadAsync(dateBeCloned, this.CancellationToken).ConfigureAwait(false);
-				await Statistics.Info.SaveAsync(instance, info, systemStatistics, this.CancellationToken).ConfigureAwait(false);
+				await Statistics.Info.SaveAsync(instance, info, this.CancellationToken).ConfigureAwait(false);
 
 				this.Logger?.LogInformation($"------------- Statistics were cloned [{dateCloneOf:yyyy-MM-dd} => {dateBeCloned:yyyy-MM-dd}] - Counters: {cloneOf.Sum():###,###,###,##0} => {beCloned.Sum():###,###,###,##0} {this.GetDataLogsOfStatistics()}");
 				new CommunicateMessage(this.ServiceName)
@@ -3304,9 +3261,7 @@ namespace net.vieapps.Services.Users
 							try
 							{
 								var instance = await Statistics.Info.LoadAsync(info, this.CancellationToken).ConfigureAwait(false);
-								instance = instance != null
-									? await Statistics.Info.SaveAsync(instance, info, instance._systemStatistics, this.CancellationToken).ConfigureAwait(false)
-									: await Statistics.Info.SaveAsync(instance, info, this.Statistics.GetSystemStatistics(info), this.CancellationToken).ConfigureAwait(false);
+								instance = await Statistics.Info.SaveAsync(instance, info, this.CancellationToken).ConfigureAwait(false);
 								this.Logger?.LogInformation($"------ Normalized {counter:###,##0}/{total:###,##0} [#{instance.ID}] => {info.Day.Sum():###,###,##0} @ {info.Year:0000}-{info.Month}-{info.Day.Name}");
 							}
 							catch (Exception ex)
@@ -3338,7 +3293,7 @@ namespace net.vieapps.Services.Users
 				if (instance != null)
 				{
 					var now = DateTime.Now;
-					var day = this.Statistics.GetDay(specifiedDay.Day.ToString("00"), specifiedDay.Month.ToString("00"), specifiedDay.Year.ToString("0000"), specifiedDay.Day == now.Day && specifiedDay.Month == now.Month && specifiedDay.Year == now.Year).Load(instance.VisitStatisticsJson, true);
+					var day = this.Statistics.GetDay(specifiedDay.Day.ToString("00"), specifiedDay.Month.ToString("00"), specifiedDay.Year.ToString("0000"), specifiedDay.Day == now.Day && specifiedDay.Month == now.Month && specifiedDay.Year == now.Year).Load(instance.Counters, true);
 					this.Logger?.LogInformation($"Statistics of a specified day [{specifiedDay:yyyy-MM-dd}] had been re-loaded => {day.Counters:###,###,##0} --------------");
 				}
 				else
@@ -3355,49 +3310,6 @@ namespace net.vieapps.Services.Users
 				}
 				this.Logger?.LogInformation($"Statistics had been re-loaded {(this.IsUpdater ? this.GetDataLogsOfStatistics(() => this.SendStatistics()) : "")}");
 			}
-		}
-
-		async Task<JToken> PrepareStatisticsAsync(DateTime start, DateTime end, bool returnJson, bool writeLogs, string correlationID, CancellationToken cancellationToken)
-		{
-			start = new DateTime(start.Year, start.Month, start.Day, start.Hour, start.Minute, 0);
-			end = new DateTime(end.Year, end.Month, end.Day, end.Hour, end.Minute, 0);
-			var isOneMinute = start.Year == end.Year && start.Month == end.Month && start.Day == end.Day && start.Hour == end.Hour && start.Minute == end.Minute;
-			if (writeLogs)
-				await this.WriteLogsAsync(correlationID, $"Prepare system statistics [{(isOneMinute ? start.ToString("yyyy-MM-dd HH:mm") : $"{start:yyyy-MM-dd HH:mm} - {end:HH:mm}")}]").ConfigureAwait(false);
-
-			var systemStatistics = await this.Statistics.GetSystemStatisticsAsync(isOneMinute ? start : end, writeLogs ? log => this.WriteLogsAsync(correlationID, log) : null, cancellationToken).ConfigureAwait(false);
-
-			var startIndex = start.Hour * 60 + start.Minute;
-			var endIndex = end.Hour * 60 + end.Minute;
-			var minuteStatistics = isOneMinute ? systemStatistics?[startIndex] : null;
-
-			if (isOneMinute && minuteStatistics == null)
-			{
-				new CommunicateMessage(this.ServiceName)
-				{
-					Type = "SystemStatistics#Sync",
-					ExcludedNodeID = this.NodeID,
-					Data = new JObject { ["Time"] = start }
-				}.Send(Router.GotBackupRouter());
-				await Task.Delay(UtilityService.GetRandomNumber(1234, 1234), cancellationToken).ConfigureAwait(false);
-				systemStatistics = this.Statistics.GetSystemStatistics(start);
-				minuteStatistics = systemStatistics?[startIndex];
-			}
-
-			if (!returnJson)
-				return null;
-
-			var json = isOneMinute
-				? minuteStatistics?.GetString().ToJson()
-				: systemStatistics.Skip(startIndex).Take(endIndex - startIndex + 1).Select((statistics, index) => statistics?.GetString().ToJson() ?? new JObject { ["Time"] = start.AddMinutes(index).ToIsoString() }).ToJArray();
-
-			if (!isOneMinute)
-			{
-				var filePath = Path.Combine(UtilityService.GetAppSetting("Path:Status", "status"), $"statistics.system-{start:yyyyMMdd}-{start:HH_mm}-{end:HH_mm}.json");
-				await json.SaveAsTextAsync(filePath, cancellationToken).ConfigureAwait(false);
-			}
-
-			return json;
 		}
 
 		string GetDataLogsOfStatistics(System.Action onCompleted = null)
@@ -3508,25 +3420,6 @@ namespace net.vieapps.Services.Users
 				Type = "SessionStatistics#Sync",
 				ExcludedNodeID = this.NodeID
 			}.Send(Router.GotBackupRouter());
-
-		void SendSystemStatistic(DateTime? time = null)
-		{
-			time = time != null ? time : DateTime.Now.AddMinutes(-1);
-			time = new DateTime(time.Value.Year, time.Value.Month, time.Value.Day, time.Value.Hour, time.Value.Minute, 0);
-			var systemStatistics = this.Statistics.GetSystemStatistics(time);
-			var index = time.Value.Hour * 60 + time.Value.Minute;
-			var statistics = systemStatistics?[index]?.GetString().ToJson();
-			if (statistics != null)
-			{
-				statistics["Time"] = time.Value;
-				new CommunicateMessage(this.ServiceName)
-				{
-					Type = "SystemStatistics#Update",
-					ExcludedNodeID = this.NodeID,
-					Data = statistics
-				}.Send(Router.GotBackupRouter());
-			}
-		}
 		#endregion
 
 		#region Process communicate messages
@@ -3562,15 +3455,6 @@ namespace net.vieapps.Services.Users
 			else if (message.Type.IsEquals("SessionStatistics#Sync"))
 				this.SendSessionStatistics();
 
-			else if (message.Type.IsEquals("SystemStatistics#Sync"))
-				this.SendSystemStatistic(DateTime.TryParse(message.Data.Get<string>("Time"), out var time) ? time : null);
-
-			else if (message.Type.IsEquals("SystemStatistics#Update"))
-				this.Statistics.UpdateSystemStatistics(message.Data);
-
-			else if (message.Type.IsEquals("Statistics#Prepare"))
-				this.PrepareStatisticsAsync(DateTime.TryParse(data.Get<string>("X-Start"), out var start) ? start : DateTime.Now.AddMinutes(-1), DateTime.TryParse(data.Get<string>("X-End"), out var end) ? end : DateTime.Now.AddMinutes(-1), false, data.Get("X-Logs", false), data.Get<string>("X-Correlation-ID"), this.CancellationToken).Execute(ex => this.Logger.LogInformation($"Error occurred while preparing => {ex.Message}", ex));
-
 			else if (message.Type.IsEquals("Statistics#Normalize") && this.IsUpdater)
 				this.NormalizeStatisticsAsync(data.Get<string>("X-Clone-Date"), data.Get<string>("X-Clone-Date-By"), data.Get<string>("X-Clone-Min"), data.Get<string>("X-Clone-Max"), data.Get("X-Clone-As-Set", false), data.Get<string>("X-Suffix")).Execute(ex => this.Logger.LogInformation($"Error occurred while normalizing => {ex.Message}", ex));
 
@@ -3586,13 +3470,6 @@ namespace net.vieapps.Services.Users
 			if (this.IsDebugResultsEnabled)
 				await this.WriteLogsAsync(data.Get<string>("CorrelationID") ?? data.Get<string>("X-Correlation-ID"), $"Got an inter-communicate message => {message.ToJson().AsString(this.JsonFormat)})", null, this.ServiceName, "Communicates", LogLevel.Warning).ConfigureAwait(false);
 		}
-
-		protected override Task ProcessGatewayCommunicateMessageAsync(CommunicateMessage message, CancellationToken cancellationToken = default)
-		{
-			if (message.Type.IsEquals("System#Statistics"))
-				this.Statistics.UpdateSystemStatistics(message.Data);
-			return Task.CompletedTask;
-		}
 		#endregion
 
 		#region Timers for working with background workers & schedulers
@@ -3600,7 +3477,7 @@ namespace net.vieapps.Services.Users
 		{
 			if (this.IsUpdater)
 			{
-				// send session statistics to controller
+				// send session statistics to collector
 				var now = DateTime.Now;
 				var time = now.AddMinutes(1);
 				var delayMilliseconds = (int)(new DateTime(time.Year, time.Month, time.Day, time.Hour, time.Minute, 55) - now).TotalMilliseconds;
@@ -3679,8 +3556,7 @@ namespace net.vieapps.Services.Users
 				return null;
 
 			var visitStatistics = this.Statistics.GetDay();
-			var systemStatistics = this.Statistics.GetSystemStatistics();
-			return $"Updater: {this.IsUpdater} - Session statistics: {this.Sessions.Count:###,###0} - Visit statistics: {visitStatistics.Minutes.Count(counter => counter > 0):###,###0} - System statistics: {systemStatistics.Count(info => info != null):###,###0}\r\n--------------------";
+			return $"Updater: {this.IsUpdater} - Session statistics: {this.Sessions.Count:###,###0} - Visit statistics: {visitStatistics.Minutes.Count(counter => counter > 0):###,###0}\r\n--------------------";
 		}
 		#endregion
 
@@ -3778,37 +3654,6 @@ namespace net.vieapps.Services.Users
 			}, cancellationToken);
 		}
 		#endregion
-
-		public override void DoWork(string[] args = null)
-		{
-			var writeDebugLogs = args?.FirstOrDefault(arg => arg.IsStartsWith("/logs")) != null;
-
-			if (args?.FirstOrDefault(arg => arg.IsStartsWith("/reset-statistics")) != null)
-				this.SendInterCommunicateMessage(new CommunicateMessage("APIGateway")
-				{
-					Type = "Statistics#Reset"
-				}, false, writeDebugLogs);
-
-			if (args?.FirstOrDefault(arg => arg.IsStartsWith("/rpc-gate-max")) != null || args?.FirstOrDefault(arg => arg.IsStartsWith("/change-rpc-gate")) != null)
-			{
-				var serviceName = args?.FirstOrDefault(arg => arg.IsStartsWith("/service:"))?.Replace("/service:", "", StringComparison.OrdinalIgnoreCase);
-				var nodeID = args?.FirstOrDefault(arg => arg.IsStartsWith("/node:"))?.Replace("/node:", "", StringComparison.OrdinalIgnoreCase);
-				var max = args?.FirstOrDefault(arg => arg.IsStartsWith("/max:"))?.Replace("/max:", "", StringComparison.OrdinalIgnoreCase);
-				this.SendInterCommunicateMessage(new CommunicateMessage("APIGateway")
-				{
-					Type = "RpcGate#Max",
-					Data = new JObject
-					{
-						["Service"] = serviceName,
-						["NodeID"] = nodeID,
-						["MaxCapacity"] = Int32.TryParse(max, out var maxCapacity) && maxCapacity > -1 && maxCapacity <= 20000 ? maxCapacity : 0
-					}
-				}, false, writeDebugLogs);
-			}
-
-			this.Logger?.LogWarning("Press ENTER to terminate...");
-			Console.ReadLine();
-		}
 
 	}
 }

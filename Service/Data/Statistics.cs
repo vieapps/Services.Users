@@ -351,23 +351,6 @@ namespace net.vieapps.Services.Users
 			var currentDay = this.GetDay(currentDayID, currentMonthID, currentYearID, true);
 			this.GetMonth(currentMonthID, currentYearID, false).Days[currentDay.Name] = currentDay;
 
-			var date = now.ToString("yyyyMMdd");
-			this.SystemStatistics.Where(kvp => kvp.Key != date).Select(kvp => kvp.Key).ToList().ForEach(key =>
-			{
-				if (this.SystemStatistics.TryRemove(key, out var minutes))
-					Array.Clear(minutes, 0, minutes.Length);
-			});
-
-			var systemStatistics = this.GetSystemStatistics(date);
-			checkpoint ??= now.AddMinutes(0 - Info.Period - 1);
-			var start = checkpoint.Value.Hour * 60 + checkpoint.Value.Minute;
-			var end = now.Hour * 60 + now.Minute;
-			var min = Math.Min(start, end);
-			var max = Math.Max(start, end);
-			Array.Clear(systemStatistics, 0, min);
-			if (max < systemStatistics.Length - 1)
-				Array.Clear(systemStatistics, max + 1, systemStatistics.Length - max - 1);
-
 			return this;
 		}
 
@@ -411,7 +394,7 @@ namespace net.vieapps.Services.Users
 			}
 
 			int counter = 0, refined = 0;
-			objects.OrderByDescending(@object => @object.ID).ForEach((@object, index) =>
+			objects.OrderByDescending(@object => @object.ID).ForEach(async (@object, index) =>
 			{
 				var date = @object.ID.Left(8);
 				var yearID = @object.Year > 0 ? @object.Year.ToString("0000") : date.Left(4);
@@ -439,11 +422,9 @@ namespace net.vieapps.Services.Users
 
 				else
 				{
-					this.GetDay(dayID, monthID, yearID, current).Load(@object.VisitStatisticsJson, true, _ => counter++);
-					if (@object.Day == now.Day && @object.Month == now.Month && @object.Year == now.Year)
-						this.SystemStatistics[date] = @object.SystemStatistics;
+					this.GetDay(dayID, monthID, yearID, current).Load(@object.Counters, true, _ => counter++);
 					if (logOnDays)
-						Utility.Logger?.LogInformation($"Load data from JSONs #{index} - {@object.ID} => {yearID}-{monthID}-{dayID} [{@object.VisitStatisticsJson.Count}] -----------");
+						Utility.Logger?.LogInformation($"Load data from JSONs #{index} - {@object.ID} => {yearID}-{monthID}-{dayID} -----------");
 				}
 			});
 
@@ -463,7 +444,7 @@ namespace net.vieapps.Services.Users
 			await this.Current.Months.Values.Select(month => month.Days.Values.Select(day => (month.Year, Month: month.Name, Day: day))).SelectMany(info => info).ToList().ForEachAsync(async info =>
 			{
 				var instance = await Info.LoadAsync(info, cancellationToken).ConfigureAwait(false);
-				await Info.SaveAsync(instance, info, this.GetSystemStatistics(info), cancellationToken).ConfigureAwait(false);
+				await Info.SaveAsync(instance, info, cancellationToken).ConfigureAwait(false);
 			}, true, false).ConfigureAwait(false);
 			return this.Normalize();
 		}
@@ -484,30 +465,6 @@ namespace net.vieapps.Services.Users
 			return this;
 		}
 
-		public async Task<Statistics> DumpSystemStatisticsAsync(bool all, CancellationToken cancellationToken, string suffix = null)
-		{
-			var dumpJson = new JObject();
-			var statistics = all ? this.SystemStatistics.Select(kvp => kvp) : [this.SystemStatistics.OrderByDescending(kvp => kvp.Key).FirstOrDefault()];
-			statistics.ForEach(kvp => dumpJson[kvp.Key] = Info.GetSystemStatisticsJson(kvp.Value));
-			await dumpJson.SaveAsTextAsync(this.GetFilePath($"statistics.system{suffix}.json"), cancellationToken).ConfigureAwait(false);
-
-			if (all)
-			{
-				var date = DateTime.Now.ToString("yyyyMMdd");
-				var dayJson = dumpJson.Get<JObject>(date);
-				if (dayJson != null)
-					for (var hour = 0; hour < 24; hour++)
-					{
-						var hourID = hour.ToString("00");
-						var hourJson = dayJson.Get<JObject>(hourID);
-						if (hourJson != null)
-							await hourJson.SaveAsTextAsync(this.GetFilePath($"statistics.system{suffix}.{date}-{hourID}.json"), cancellationToken).ConfigureAwait(false);
-					}
-			}
-
-			return this;
-		}
-
 		public async Task<Statistics> LoadDumpStatisticsAsync(CancellationToken cancellationToken, string suffix = null)
 		{
 			var filePath = this.GetFilePath($"statistics.visit{suffix}.json");
@@ -521,108 +478,8 @@ namespace net.vieapps.Services.Users
 				{
 					Utility.Logger?.LogInformation($"Load dump visit JSONs error => {ex.Message}", ex);
 				}
-
-			filePath = this.GetFilePath($"statistics.system{suffix}.json");
-			if (File.Exists(filePath))
-				try
-				{
-					var json = await UtilityService.ReadAsJsonAsync(filePath, cancellationToken).ConfigureAwait(false) as JObject;
-					var date = json.First()?.GetName() ?? DateTime.Now.ToString("yyyyMMdd");
-					this.SystemStatistics[date] = Info.GetSystemStatistics(json.Get<JObject>(date));
-				}
-				catch (Exception ex)
-				{
-					Utility.Logger?.LogInformation($"Load dump system JSONs error => {ex.Message}", ex);
-				}
-
 			return this;
 		}
-
-		internal byte[][] GetSystemStatistics(string date = null, bool returnNullWhenNotExisted = false)
-		{
-			date ??= DateTime.Now.ToString("yyyyMMdd");
-			if (!this.SystemStatistics.TryGetValue(date, out var systemStatistics) || systemStatistics == null)
-			{
-				if (!returnNullWhenNotExisted)
-					this.SystemStatistics[date] = systemStatistics = Info.GetSystemStatistics();
-			}
-			return systemStatistics;
-		}
-
-		internal byte[][] GetSystemStatistics(DateTime? time, bool returnNullWhenNotExisted = false)
-			=> this.GetSystemStatistics((time != null ? time.Value : DateTime.Now).ToString("yyyyMMdd"), returnNullWhenNotExisted);
-
-		internal byte[][] GetSystemStatistics((int Year, string Month, Day Day) info)
-			=> this.GetSystemStatistics($"{info.Year:0000}{info.Month}{info.Day.Name}");
-
-		internal async Task<byte[][]> GetSystemStatisticsAsync(DateTime time, Func<string, Task> writeLogsAsync, CancellationToken cancellationToken)
-		{
-			var stepwatch = Stopwatch.StartNew();
-			var systemStatistics = this.GetSystemStatistics(time, true);
-
-			var doReload = systemStatistics == null;
-			if (doReload)
-			{
-				systemStatistics = Info.GetSystemStatistics();
-				if (writeLogsAsync != null)
-					await writeLogsAsync($"Prepare to load statistics [{time:yyyy-MM-dd}]").ConfigureAwait(false);
-			}
-			else
-			{
-				if (writeLogsAsync != null)
-					await writeLogsAsync($"Get statistics successful [{time:yyyy-MM-dd}] - Execution time: {stepwatch.GetElapsedTimes()}").ConfigureAwait(false);
-
-				var start = time.AddMinutes(-Info.Period);
-				var startIndex = start.Hour * 60 + start.Minute;
-				var endIndex = time.Hour * 60 + time.Minute;
-				doReload = systemStatistics.Skip(startIndex).Take(endIndex - startIndex + 1).Any(statistics => statistics == null);
-
-				if (doReload && writeLogsAsync != null)
-					await writeLogsAsync($"Prepare to re-load statistics [{time:yyyy-MM-dd}]").ConfigureAwait(false);
-			}
-
-			if (doReload)
-			{
-				stepwatch.Restart();
-				var info = await Statistics.Info.LoadAsync(time, cancellationToken).ConfigureAwait(false);
-				if (writeLogsAsync != null)
-					await writeLogsAsync($"Load statistics successful [{time:yyyy-MM-dd}] - Execution time: {stepwatch.GetElapsedTimes()}").ConfigureAwait(false);
-
-				stepwatch.Restart();
-				var systemStats = info?.SystemStatistics;
-				if (systemStats != null)
-				{
-					if (writeLogsAsync != null)
-						await writeLogsAsync($"Prepare statistics successful [{time:yyyy-MM-dd}] - Execution time: {stepwatch.GetElapsedTimes()}").ConfigureAwait(false);
-
-					stepwatch.Restart();
-					for (var index = 0; index < systemStats.Length; index++)
-						systemStatistics[index] ??= systemStats[index] ?? new JObject().ToBytes();
-
-					if (writeLogsAsync != null)
-						await writeLogsAsync($"Assign statistics successful [{time:yyyy-MM-dd}] - Execution time: {stepwatch.GetElapsedTimes()}").ConfigureAwait(false);
-				}
-
-				stepwatch.Restart();
-				this.SystemStatistics[time.ToString("yyyyMMdd")] = systemStatistics;
-				if (writeLogsAsync != null)
-					await writeLogsAsync($"Update statistics successful [{time:yyyy-MM-dd}] - Execution time: {stepwatch.GetElapsedTimes()}").ConfigureAwait(false);
-			}
-
-			return systemStatistics;
-		}
-
-		internal void UpdateSystemStatistics(DateTime time, byte[] statistics)
-			=> this.GetSystemStatistics(time)[time.Hour * 60 + time.Minute] = statistics;
-
-		internal void UpdateSystemStatistics(JToken message)
-		{
-			var jobj = message.Get<JObject>("Time");
-			var time = (jobj != null ? jobj.Get<DateTime>("At") : message.Get<DateTime>("Time")).ToLocalTime();
-			this.UpdateSystemStatistics(time, message.ToBytes("Statistics", TextFileReader.BufferSize));
-		}
-
-		internal ConcurrentDictionary<string, byte[][]> SystemStatistics { get; } = [];
 
 		[BsonIgnoreExtraElements, DebuggerDisplay("Year = {Year}, Month = {Month}, Day = {Day}")]
 		[Entity(CollectionName = "Statistics", TableName = "T_Users_Statistics", CacheClass = typeof(Utility), CacheName = "Cache", CreateNewVersionWhenUpdated = false)]
@@ -635,14 +492,41 @@ namespace net.vieapps.Services.Users
 			public Info((int Year, string Month, Day Day) info) : base()
 				=> this.ID = $"{info.Year:0000}{info.Month}{info.Day.Name}{UtilityService.BlankUUID}".Left(32);
 
-			[Sortable(IndexName = "Times")]
+			[Sortable(IndexName = "Times", Reverse = true)]
 			public int Year { get; set; }
 
-			[Sortable(IndexName = "Times")]
+			[Sortable(IndexName = "Times", Reverse = true)]
 			public int Month { get; set; }
 
-			[Sortable(IndexName = "Times")]
+			[Sortable(IndexName = "Times", Reverse = true)]
 			public int Day { get; set; }
+
+			string _statistics;
+
+			[Property(IsCLOB = true)]
+			public string Statistics
+			{
+				get => this._statistics;
+				set
+				{
+					this._statistics = value;
+					var json = JObject.Parse(string.IsNullOrWhiteSpace(this._statistics) ? "{}" : this._statistics);
+					this._counters = json.Get<JObject>("Visit") ?? json;
+				}
+			}
+
+			JObject _counters;
+
+			[Ignore, JsonIgnore, BsonIgnore, XmlIgnore, MessagePackIgnore]
+			public JObject Counters
+			{
+				get => this._counters;
+				set
+				{
+					this._counters = value;
+					this._statistics = this._counters.AsString();
+				}
+			}
 
 			[Ignore, JsonIgnore, BsonIgnore, XmlIgnore, MessagePackIgnore]
 			public override string Title { get; set; }
@@ -659,72 +543,6 @@ namespace net.vieapps.Services.Users
 			[Ignore, JsonIgnore, BsonIgnore, XmlIgnore, MessagePackIgnore]
 			public override Privileges OriginalPrivileges { get; set; }
 
-			internal string _statistics, _systemStatistics;
-			internal byte[][] __systemStatistics;
-			internal JObject _visitStatisticsJson, _systemStatisticsJson;
-
-			[Property(IsCLOB = true)]
-			public string Statistics
-			{
-				get => this._statistics;
-				set => this._statistics = value;
-			}
-
-			[Ignore, JsonIgnore, BsonIgnore, XmlIgnore, MessagePackIgnore]
-			public JObject VisitStatisticsJson
-			{
-				get
-				{
-					if (this._visitStatisticsJson == null)
-						this.Prepare();
-					return this._visitStatisticsJson;
-				}
-			}
-
-			[Ignore, JsonIgnore, BsonIgnore, XmlIgnore, MessagePackIgnore]
-			public byte[][] SystemStatistics
-			{
-				get
-				{
-					if (this.__systemStatistics == null)
-					{
-						this.Prepare();
-						this.__systemStatistics = Info.GetSystemStatistics(this._systemStatistics);
-					}
-					return this.__systemStatistics;
-				}
-			}
-
-			[Ignore, JsonIgnore, BsonIgnore, XmlIgnore, MessagePackIgnore]
-			public JObject SystemStatisticsJson => this._systemStatisticsJson ??= Info.GetSystemStatisticsJson(this.SystemStatistics);
-
-			void Prepare(JObject visitStatistics = null, string systemStatistics = null)
-			{
-				if (visitStatistics != null && systemStatistics != null)
-				{
-					this._statistics = new JObject
-					{
-						["Visit"] = visitStatistics,
-						["System"] = systemStatistics
-					}.AsString();
-					this._visitStatisticsJson = visitStatistics;
-					this._systemStatistics = systemStatistics;
-				}
-				else
-					try
-					{
-						var json = (string.IsNullOrWhiteSpace(this._statistics) ? "{}" : this._statistics).ToJson();
-						this._visitStatisticsJson = json.Get<JObject>("Visit") ?? json as JObject;
-						this._systemStatistics = json.Get<string>("System");
-					}
-					catch (Exception ex)
-					{
-						Utility.Logger?.LogInformation($"Prepare error [{this.ID}] => {ex.Message}", ex);
-					}
-				this.__systemStatistics = null;
-				this._systemStatisticsJson = null;
-			}
-
 			internal static Task<Info> LoadAsync(string date, CancellationToken cancellationToken)
 				=> Info.GetAsync($"{date}{UtilityService.BlankUUID}".Left(32), cancellationToken);
 
@@ -734,91 +552,19 @@ namespace net.vieapps.Services.Users
 			internal static Task<Info> LoadAsync((int Year, string Month, Day Day) info, CancellationToken cancellationToken)
 				=> Info.LoadAsync($"{info.Year:0000}{info.Month}{info.Day.Name}", cancellationToken);
 
-			internal static async Task<Info> SaveAsync(Info instance, (int Year, string Month, Day Day) info, string systemStatistics, CancellationToken cancellationToken)
+			internal static async Task<Info> SaveAsync(Info instance, (int Year, string Month, Day Day) info, CancellationToken cancellationToken)
 			{
 				var isCreateNew = instance == null;
 				instance ??= new(info);
 				instance.Year = info.Year;
 				instance.Month = info.Month.As<int>();
 				instance.Day = info.Day.Name.As<int>();
-				instance.Prepare(info.Day.ToJson(false), systemStatistics);
+				instance.Counters = info.Day.ToJson(false);
 				if (isCreateNew)
 					await Info.CreateAsync(instance, cancellationToken).ConfigureAwait(false);
 				else
 					await Info.UpdateAsync(instance, true, cancellationToken).ConfigureAwait(false);
 				return instance;
-			}
-
-			internal static Task<Info> SaveAsync(Info instance, (int Year, string Month, Day Day) info, byte[][] systemStatistics, CancellationToken cancellationToken)
-			{
-				var statistics = instance?.SystemStatistics;
-				if (statistics != null)
-					for (var index = 0; index < 1440; index++)
-						systemStatistics[index] = systemStatistics[index] ?? statistics[index];
-				return Info.SaveAsync(instance, info, Info.GetSystemStatistics(systemStatistics), cancellationToken);
-			}
-
-			internal static byte[][] GetSystemStatistics(string statistics)
-			{
-				var systemStatistics = new byte[1440][];
-				if (!string.IsNullOrWhiteSpace(statistics))
-					try
-					{
-						var statisticsBytes = CacheUtils.Helper.DeserializeByMsgPackCLI(statistics.Base64ToBytes().Decompress("zstd")) as byte[][];
-						for (var index = 0; index < statisticsBytes.Length; index++)
-							systemStatistics[index] = statisticsBytes[index];
-					}
-					catch (Exception ex)
-					{
-						Utility.Logger?.LogInformation($"Deserialize error => {ex.Message}", ex);
-					}
-				return systemStatistics;
-			}
-
-			internal static string GetSystemStatistics(byte[][] systemStatistics)
-				=> CacheUtils.Helper.SerializeByMsgPackCLI(systemStatistics).Compress("zstd").ToBase64();
-
-			internal static byte[][] GetSystemStatistics(JObject systemStatisticsJson = null)
-			{
-				var systemStatistics = new byte[1440][];
-				if (systemStatisticsJson != null)
-					for (var hour = 0; hour < 24; hour++)
-					{
-						var hourJson = systemStatisticsJson.Get<JObject>(hour.ToString("00"));
-						if (hourJson != null)
-						{
-							var start = hour * 60;
-							for (var minute = 0; minute < 60; minute++)
-								systemStatistics[start + minute] = hourJson.Get<JObject>(minute.ToString("00"))?.ToBytes("Statistics", TextFileReader.BufferSize);
-						}
-					}
-				return systemStatistics;
-			}
-
-			internal static JObject GetSystemStatisticsJson(byte[][] systemStatistics)
-			{
-				var json = new JObject();
-				for (var hour = 0; hour < 24; hour++)
-				{
-					var start = hour * 60;
-					var minutes = new JObject();
-					for (var minute = 0; minute < 60; minute++)
-					{
-						var minuteJson = systemStatistics[start + minute]?.GetString();
-						if (minuteJson != null)
-							minutes[minute.ToString("00")] = minuteJson.ToJson();
-					}
-					if (minutes.Count > 0)
-						json[hour.ToString("00")] = minutes;
-				}
-				for (var hour = 0; hour < 24; hour++)
-				{
-					var hourID = hour.ToString("00");
-					var hourJson = json.Get<JObject>(hourID);
-					if (hourJson == null || hourJson.Count < 1)
-						json.Remove(hourID);
-				}
-				return json;
 			}
 		}
 	}
