@@ -2514,9 +2514,10 @@ namespace net.vieapps.Services.Users
 			return asJSON
 				? token.ToJson(json => json["Token"] = new JObject
 					{
-						["Bearer"] = $"Bearer {authenticateToken}",
-						["Basic"] = $"Basic {$"{token.ID}:{$"{token.UserID}:{token.SessionID}".Encrypt(this.EncryptionKey, true)}".ToBase64Url()}"
-					})
+						["Bearer"] = "Bearer ngx*" + $"{token.ID}:{token.UserID}:{token.SessionID}:{token.Created.ToUnixTimestamp()}".ToBytes().Encrypt(this.EncryptionKey).Compress().ToBase64Url(),
+						["Basic"] = "Basic " + $"{token.ID}:{$"{token.UserID}:{token.SessionID}".Encrypt(this.EncryptionKey, true)}".ToBase64Url(),
+						["JWT"] = "JWT " + authenticateToken
+				})
 				: new JObject
 				{
 					["Token"] = authenticateToken,
@@ -2589,7 +2590,15 @@ namespace net.vieapps.Services.Users
 			if (!asJSON)
 				try
 				{
-					if ("Basic".IsEquals(requestInfo.GetHeaderParameter("x-authorization-mode")))
+					var tokenMode = requestInfo.GetHeaderParameter("x-authorization-mode") ?? "JWT";
+					if ("Bearer".IsEquals(tokenMode))
+					{
+						var data = identity.ToArray("*").Last().Base64UrlToBytes().Decompress().Decrypt(this.EncryptionKey).GetString().ToArray(":", true);
+						identity = data[0];
+						userID = data[1];
+						sessionID = data[2];
+					}
+					else if ("Basic".IsEquals(tokenMode))
 					{
 						var data = identity.FromBase64Url().ToList(":");
 						identity = data.First();

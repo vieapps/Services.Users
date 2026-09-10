@@ -6,12 +6,13 @@ using MongoDB.Bson.Serialization.Attributes;
 using Newtonsoft.Json;
 using net.vieapps.Components.Repository;
 using net.vieapps.Components.Security;
+using net.vieapps.Services.MCP;
 #endregion
 
 namespace net.vieapps.Services.Users
 {
 	[BsonIgnoreExtraElements, DebuggerDisplay("ID = {ID}, UserID = {UserID}, SessionID = {SessionID}")]
-	[Entity(CollectionName = "Tokens", TableName = "T_Users_Tokens", CacheClass = typeof(Utility), CacheName = "Cache", CreateNewVersionWhenUpdated = false, Searchable = true)]
+	[Entity(CollectionName = "Tokens", TableName = "T_Users_Tokens", CacheClass = typeof(Utility), CacheName = "Cache", CreateNewVersionWhenUpdated = false, Searchable = true), McpResource(Ignore = true)]
 	public class Token : Repository<Token>
 	{
 		public Token() : base() { }
